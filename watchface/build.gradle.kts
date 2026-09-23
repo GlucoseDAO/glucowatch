@@ -17,8 +17,8 @@ android {
         // Watch Face Format v1 needs Wear OS 4 (API 33) or newer.
         minSdk = 33
         targetSdk = 36
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = 2
+        versionName = "0.1.1"
     }
 
     buildTypes {

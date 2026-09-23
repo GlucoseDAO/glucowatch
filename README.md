@@ -55,10 +55,9 @@ From a phone, without a computer: download both APKs in the phone's browser, ins
 
 ## Build
 
-Requirements: Android SDK (`ANDROID_HOME`, or `sdk.dir` in `local.properties`). The wrapper
-runs on Java 17 through 25, including the JDKs on the F-Droid build server, and compiles with a
-JDK 21 toolchain. Release builds (`assembleRelease`) leave the Dexcom fields empty, so they are
-safe to publish.
+Requirements: Android SDK (`ANDROID_HOME`, or `sdk.dir` in `local.properties`) and a JDK 21
+compiler on the machine that runs Gradle. The wrapper itself runs on Java 17 through 25. Release
+builds (`assembleRelease`) leave the Dexcom fields empty, so they are safe to publish.
 
 ```bash
 ./gradlew :core:test                 # unit tests
