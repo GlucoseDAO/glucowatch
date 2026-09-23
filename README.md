@@ -206,12 +206,8 @@ goes to [fdroiddata](https://gitlab.com/fdroid/fdroiddata), as a merge request, 
 
 1. The license is Apache-2.0, in `LICENSE`. Use that same identifier in the metadata.
 2. Tag the commit that matches `versionName`, for example `v0.1.0`, and push the tag. `versionCode` in both `app/build.gradle.kts` and `watchface/build.gradle.kts` has to go up for every later release, followed by a new tag.
-3. Fork fdroiddata and add one metadata file per package, because these are two separate installs:
-   - `metadata/io.github.antonkulaga.glucowatch.yml`
-   - `metadata/io.github.antonkulaga.glucowatch.watchface.yml`
-4. Both recipes use this git repository, `RepoType: git`, and `gradle: [yes]` from the repository root (no `subdir`). Point `output` at the unsigned release APK:
-   - `app/build/outputs/apk/release/app-release-unsigned.apk`
-   - `watchface/build/outputs/apk/release/watchface-release-unsigned.apk`
+3. Fork fdroiddata and open one merge request per package. The recipes are `metadata/io.github.antonkulaga.glucowatch.yml` and `metadata/io.github.antonkulaga.glucowatch.watchface.yml`.
+4. Each recipe uses this git repository, `RepoType: git`, and `gradle: [yes]`. The `commit` field is the full hash of the tag, not the tag name. Publish a signed APK in the GitHub release for that version and set `Binaries` plus `AllowedAPKSigningKeys` so the build is reproducible.
 5. Set `UpdateCheckMode: Tags` and `AutoUpdateMode: Version`, so a later tag is picked up without a new request.
 6. Declare the `NonFreeNet` anti-feature. Live readings come from Dexcom Share, which is a proprietary service. Demo data works with no account.
 7. Open the merge request and answer the review. The store text is taken from `fastlane/metadata/android/en-US/` in this repository.
