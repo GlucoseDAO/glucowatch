@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">GlucoWatch</string>
+    <string name="complication_value">Glucose</string>
+    <string name="complication_chart">Glucose chart</string>
+    <string name="complication_prediction">Glucose forecast</string>
+</resources>

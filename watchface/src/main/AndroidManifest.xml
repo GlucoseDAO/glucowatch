@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <uses-feature android:name="android.hardware.type.watch" />
+
+    <!-- Watch Face Format: declarative only, no code. -->
+    <application
+        android:hasCode="false"
+        android:label="@string/watchface_name">
+        <property
+            android:name="com.google.wear.watchface.format.version"
+            android:value="1" />
+        <property
+            android:name="com.google.wear.watchface.format.publisher"
+            android:value="glucowatch" />
+    </application>
+</manifest>

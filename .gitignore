@@ -1,0 +1,13 @@
+.gradle/
+build/
+bin/
+local.properties
+.idea/
+*.iml
+.kotlin/
+captures/
+*.apk
+*.aab
+
+# Local developer secrets (see .env.example)
+.env
