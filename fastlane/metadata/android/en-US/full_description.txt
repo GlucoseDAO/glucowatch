@@ -1,0 +1,24 @@
+Shows your Dexcom glucose on a Wear OS watch: the current value with a trend arrow, a chart, and an optional forecast.
+
+The watch talks to Dexcom Share directly. There is no phone app and no extra server. Live readings need Share turned on in the official Dexcom app, with at least one follower.
+
+This is not a medical device. Do not make treatment decisions from it. Keep using the official Dexcom app and its alarms.
+
+Install both packages on the watch: this app, and the GlucoWatch watch face. The watch has no F-Droid app, and installing F-Droid on a phone does not copy these packages to the watch.
+
+Download both APKs from their F-Droid pages. On the watch, open Settings, About watch, Software information, and tap Software version 5 times. In Developer options, turn on ADB debugging and Wireless debugging. The watch and the computer have to be on the same Wi-Fi.
+
+Open Wireless debugging, tap Pair new device, and note the IP address, the pairing port, and the 6-digit code. The main Wireless debugging screen shows a second port. That one is the connection port.
+
+On a computer with Android platform-tools installed:
+
+adb pair <watch-ip>:<pair-port>
+adb connect <watch-ip>:<connect-port>
+adb install -r <the app apk>
+adb install -r <the watch face apk>
+
+Open GlucoWatch, tap Settings, choose Dexcom Share, enter your username, password and region, and tap Save & test. Long-press the current watch face, swipe to GlucoWatch and tap it. If a slot is empty, long-press the face, tap Customize, tap the slot, and choose Glucose or Glucose chart.
+
+Turn Wireless debugging off afterwards. It uses extra battery. A newer version is installed the same way: adb install -r replaces the copy already on the watch.
+
+From a phone, download both APKs in the browser, install Wear Installer 2, pair it from the watch's Wireless debugging screen, and send each file with Custom APK.

@@ -2,7 +2,6 @@ import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
     id("com.android.application")
-    kotlin("android")
 }
 
 // Developer defaults from <project>/.env (see .env.example), same rules as core's DotEnv.

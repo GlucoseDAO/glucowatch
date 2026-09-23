@@ -9,6 +9,42 @@ no Google Play Services (so it can go to F-Droid).
 > Not a medical device. Do not make treatment decisions based on this app; keep using the
 > official Dexcom app and its alarms.
 
+## Install from F-Droid
+
+F-Droid is a catalog of free Android apps. You do not need a Google account. GlucoWatch is two
+packages, and both go on the watch:
+
+- the app, [GlucoWatch](https://f-droid.org/packages/io.github.antonkulaga.glucowatch/)
+- the watch face, [GlucoWatch face](https://f-droid.org/packages/io.github.antonkulaga.glucowatch.watchface/)
+
+The watch has no F-Droid app of its own, and installing F-Droid on a phone does not install these
+packages onto the watch. Download both APKs from those pages (open the latest version, then
+**Download APK**), then send them to the watch.
+
+On the watch:
+
+1. Settings → About watch → Software information → tap **Software version** 5 times, until Developer options appear.
+2. Settings → Developer options → turn on **ADB debugging** and **Wireless debugging**. The watch and the computer must be on the same Wi-Fi.
+3. Open **Wireless debugging** and tap **Pair new device**. Leave that screen open. It shows an IP address, a pairing port, and a 6-digit code.
+4. Go back to the main Wireless debugging screen. The port shown there is the connection port. It is a different number from the pairing port.
+
+On a computer, install [Android platform-tools](https://developer.android.com/tools/releases/platform-tools) so you have the `adb` command. Then, with the APKs in the current directory:
+
+```bash
+adb pair <watch-ip>:<pair-port>          # type the 6-digit code
+adb connect <watch-ip>:<connect-port>
+adb install -r io.github.antonkulaga.glucowatch_<version>.apk
+adb install -r io.github.antonkulaga.glucowatch.watchface_<version>.apk
+```
+
+On the watch, open **GlucoWatch** → **Settings** → **Dexcom Share**, enter your username, password, and region, and tap **Save & test**. Then long-press the current watch face, swipe to **GlucoWatch**, and tap it. If a slot is empty, long-press the face → **Customize** → tap the slot → **Glucose** or **Glucose chart**.
+
+Turn **Wireless debugging** off when you are done. It uses extra battery.
+
+A later version is installed the same way. `adb install -r` replaces the copy already on the watch.
+
+From a phone, without a computer: download both APKs in the phone's browser, install **Wear Installer 2**, pair it with the watch from the Wireless debugging screen, and install each file with **Custom APK**.
+
 ## Modules
 
 | Module | What it is |
@@ -19,8 +55,10 @@ no Google Play Services (so it can go to F-Droid).
 
 ## Build
 
-Requirements: Android SDK (`sdk.dir` in `local.properties`). Gradle downloads a JDK 21 toolchain
-automatically; any Java 17+ runtime is enough to start it.
+Requirements: Android SDK (`ANDROID_HOME`, or `sdk.dir` in `local.properties`). The wrapper
+runs on Java 17 through 25, including the JDKs on the F-Droid build server, and compiles with a
+JDK 21 toolchain. Release builds (`assembleRelease`) leave the Dexcom fields empty, so they are
+safe to publish.
 
 ```bash
 ./gradlew :core:test                 # unit tests
@@ -159,3 +197,28 @@ test models on the PC with `:core:run --args="--predict"` against your real Shar
 - Refresh: exact alarm ~20 s after the next expected reading, polling every minute if Dexcom is
   late; after a fetch all complications are asked to update.
 - Credentials are stored only in the app's private storage on the watch and sent only to Dexcom.
+
+## Publish on F-Droid
+
+F-Droid builds the tag you push. It does not publish whatever happens to be on `main`. The request
+goes to [fdroiddata](https://gitlab.com/fdroid/fdroiddata), as a merge request, following their
+[quick start](https://f-droid.org/docs/Submitting_to_F-Droid_Quick_Start_Guide/) and
+[inclusion policy](https://f-droid.org/docs/Inclusion_Policy/).
+
+1. Add a free-software license file to this repository and use that same identifier in the metadata. There is no license file yet, and F-Droid will not accept the app without one.
+2. Tag the commit that matches `versionName`, for example `v0.1.0`, and push the tag. `versionCode` in both `app/build.gradle.kts` and `watchface/build.gradle.kts` has to go up for every later release, followed by a new tag.
+3. Fork fdroiddata and add one metadata file per package, because these are two separate installs:
+   - `metadata/io.github.antonkulaga.glucowatch.yml`
+   - `metadata/io.github.antonkulaga.glucowatch.watchface.yml`
+4. Both recipes use this git repository, `RepoType: git`, and `gradle: [yes]` from the repository root (no `subdir`). Point `output` at the unsigned release APK:
+   - `app/build/outputs/apk/release/app-release-unsigned.apk`
+   - `watchface/build/outputs/apk/release/watchface-release-unsigned.apk`
+5. Set `UpdateCheckMode: Tags` and `AutoUpdateMode: Version`, so a later tag is picked up without a new request.
+6. Declare the `NonFreeNet` anti-feature. Live readings come from Dexcom Share, which is a proprietary service. Demo data works with no account.
+7. Open the merge request and answer the review. The store text is taken from `fastlane/metadata/android/en-US/` in this repository.
+
+Check the release build locally before tagging:
+
+```bash
+./gradlew :app:assembleRelease :watchface:assembleRelease
+```

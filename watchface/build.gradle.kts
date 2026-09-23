@@ -2,6 +2,12 @@ plugins {
     id("com.android.application")
 }
 
+java {
+    toolchain {
+        languageVersion.set(JavaLanguageVersion.of(21))
+    }
+}
+
 android {
     namespace = "io.github.antonkulaga.glucowatch.watchface"
     compileSdk = 36
