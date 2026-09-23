@@ -205,7 +205,7 @@ goes to [fdroiddata](https://gitlab.com/fdroid/fdroiddata), as a merge request, 
 [quick start](https://f-droid.org/docs/Submitting_to_F-Droid_Quick_Start_Guide/) and
 [inclusion policy](https://f-droid.org/docs/Inclusion_Policy/).
 
-1. Add a free-software license file to this repository and use that same identifier in the metadata. There is no license file yet, and F-Droid will not accept the app without one.
+1. The license is Apache-2.0, in `LICENSE`. Use that same identifier in the metadata.
 2. Tag the commit that matches `versionName`, for example `v0.1.0`, and push the tag. `versionCode` in both `app/build.gradle.kts` and `watchface/build.gradle.kts` has to go up for every later release, followed by a new tag.
 3. Fork fdroiddata and add one metadata file per package, because these are two separate installs:
    - `metadata/io.github.antonkulaga.glucowatch.yml`
