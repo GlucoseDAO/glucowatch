@@ -12,7 +12,9 @@ import android.util.Log
 import androidx.wear.watchface.complications.datasource.ComplicationDataSourceUpdateRequester
 import io.github.antonkulaga.glucowatch.complications.GlucoseChartComplicationService
 import io.github.antonkulaga.glucowatch.complications.GlucoseValueComplicationService
+import io.github.antonkulaga.glucowatch.complications.LoopComplicationService
 import io.github.antonkulaga.glucowatch.complications.PredictionComplicationService
+import io.github.antonkulaga.glucowatch.complications.TreatmentComplicationService
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -55,12 +57,14 @@ class RefreshReceiver : BroadcastReceiver() {
                 GlucoseValueComplicationService::class.java,
                 GlucoseChartComplicationService::class.java,
                 PredictionComplicationService::class.java,
+                LoopComplicationService::class.java,
+                TreatmentComplicationService::class.java,
             ).forEach {
                 ComplicationDataSourceUpdateRequester.create(context, ComponentName(context, it)).requestUpdateAll()
             }
         }
 
-        /** Dexcom uploads every 5 min: aim ~20 s after the next expected reading, retry sooner if it is late. */
+        /** CGMs upload every 5 min: aim ~20 s after the next expected reading, retry sooner if it is late. */
         private fun scheduleNext(context: Context, state: GlucoseState) {
             val now = System.currentTimeMillis()
             val latest = state.latest?.timeMillis

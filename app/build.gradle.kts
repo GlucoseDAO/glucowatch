@@ -15,13 +15,18 @@ val dotEnv: Map<String, String> = rootProject.file(".env").takeIf { it.isFile }?
         else value.replace(Regex("""\s+#.*$"""), "")
 }.toMap()
 
-val devDefaults = listOf("DEXCOM_USERNAME", "DEXCOM_PASSWORD", "DEXCOM_REGION", "GLUCOWATCH_UNIT", "GLUCOWATCH_PREDICTION")
-    .associateWith { System.getenv(it) ?: dotEnv[it] ?: "" }
+val devDefaults = listOf(
+    "DEXCOM_USERNAME", "DEXCOM_PASSWORD", "DEXCOM_REGION",
+    "NIGHTSCOUT_URL", "NIGHTSCOUT_TOKEN", "NIGHTSCOUT_API",
+    "GLUCOWATCH_SOURCE", "GLUCOWATCH_UNIT", "GLUCOWATCH_PREDICTION",
+).associateWith { System.getenv(it) ?: dotEnv[it] ?: "" }
 
 fun checkDefault(key: String, allowed: Set<String>) = devDefaults.getValue(key).lowercase().let {
     require(it.isEmpty() || it in allowed) { ".env: $key must be one of $allowed, got '$it'" }
 }
 checkDefault("DEXCOM_REGION", setOf("eu", "ous", "us", "jp"))
+checkDefault("NIGHTSCOUT_API", setOf("v1", "v3"))
+checkDefault("GLUCOWATCH_SOURCE", setOf("demo", "share", "nightscout"))
 checkDefault("GLUCOWATCH_UNIT", setOf("mmol", "mmol/l", "mgdl", "mg/dl"))
 checkDefault("GLUCOWATCH_PREDICTION", setOf("true", "false"))
 

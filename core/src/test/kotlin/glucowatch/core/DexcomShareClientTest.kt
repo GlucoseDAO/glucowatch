@@ -12,9 +12,9 @@ class DexcomShareClientTest {
 
     private class FakeTransport(val handler: (String, String) -> HttpResponse) : HttpTransport {
         val calls = mutableListOf<String>()
-        override fun postJson(url: String, body: String): HttpResponse {
-            calls += url.substringAfter("/Services/").substringBefore("?")
-            return handler(url, body)
+        override fun execute(request: HttpRequest): HttpResponse {
+            calls += request.url.substringAfter("/Services/").substringBefore("?")
+            return handler(request.url, request.body.orEmpty())
         }
     }
 

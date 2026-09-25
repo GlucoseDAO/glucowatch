@@ -1,1 +1,1 @@
-Dexcom glucose, chart and forecast on a Wear OS watch
+Dexcom or Nightscout glucose, chart and forecast on a Wear OS watch

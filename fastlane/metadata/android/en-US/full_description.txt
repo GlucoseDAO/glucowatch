@@ -1,6 +1,8 @@
-Shows your Dexcom glucose on a Wear OS watch: the current value with a trend arrow, a chart, and an optional forecast.
+Shows your glucose on a Wear OS watch: the current value with a trend arrow, a chart, and an optional forecast.
 
-The watch talks to Dexcom Share directly. There is no phone app and no extra server. Live readings need Share turned on in the official Dexcom app, with at least one follower.
+The watch reads Dexcom Share or your own Nightscout directly. There is no phone app and no extra server. Dexcom readings need Share turned on in the official Dexcom app, with at least one follower.
+
+With Nightscout the watch also shows insulin and carbs on board from your loop (AAPS, Trio, iAPS, Loop), boluses and carbs on the chart, the last bolus and carbs, and the loop's own forecast. Nightscout works through API v1 or v3, with an access token or none for a public site.
 
 This is not a medical device. Do not make treatment decisions from it. Keep using the official Dexcom app and its alarms.
 
@@ -17,7 +19,7 @@ adb connect <watch-ip>:<connect-port>
 adb install -r <the app apk>
 adb install -r <the watch face apk>
 
-Open GlucoWatch, tap Settings, choose Dexcom Share, enter your username, password and region, and tap Save & test. Long-press the current watch face, swipe to GlucoWatch and tap it. If a slot is empty, long-press the face, tap Customize, tap the slot, and choose Glucose or Glucose chart.
+Open GlucoWatch, tap Settings, and choose Dexcom Share (username, password and region) or Nightscout (the site's address and, for a private site, an access token with the readable role). Tap Save & test. Long-press the current watch face, swipe to GlucoWatch and tap it. If a slot is empty, long-press the face, tap Customize, tap the slot, and choose Glucose or Glucose chart.
 
 Turn Wireless debugging off afterwards. It uses extra battery. A newer version is installed the same way: adb install -r replaces the copy already on the watch.
 

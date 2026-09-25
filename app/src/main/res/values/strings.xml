@@ -4,4 +4,6 @@
     <string name="complication_value">Glucose</string>
     <string name="complication_chart">Glucose chart</string>
     <string name="complication_prediction">Glucose forecast</string>
+    <string name="complication_loop">Insulin and carbs on board</string>
+    <string name="complication_treatments">Last bolus and carbs</string>
 </resources>

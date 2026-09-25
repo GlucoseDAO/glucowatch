@@ -11,8 +11,6 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import java.io.IOException
-import java.net.HttpURLConnection
-import java.net.URI
 import java.net.URLEncoder
 
 /**
@@ -41,38 +39,6 @@ sealed class ShareException(message: String, cause: Throwable? = null) : Excepti
     class SessionInvalid(code: String) : ShareException("Session invalid ($code)")
     class Server(val code: String?, message: String) : ShareException("Dexcom: ${code ?: "error"}: $message")
     class Network(cause: Throwable) : ShareException("Network error: ${cause.message}", cause)
-}
-
-data class HttpResponse(val status: Int, val body: String)
-
-fun interface HttpTransport {
-    fun postJson(url: String, body: String): HttpResponse
-}
-
-/** Plain HttpURLConnection transport: works on the JVM and on Android without extra dependencies. */
-class UrlConnectionTransport(
-    private val connectTimeoutMs: Int = 8_000,
-    private val readTimeoutMs: Int = 10_000,
-) : HttpTransport {
-    override fun postJson(url: String, body: String): HttpResponse {
-        val conn = URI(url).toURL().openConnection() as HttpURLConnection
-        try {
-            conn.requestMethod = "POST"
-            conn.connectTimeout = connectTimeoutMs
-            conn.readTimeout = readTimeoutMs
-            conn.doOutput = true
-            conn.setRequestProperty("Content-Type", "application/json")
-            conn.setRequestProperty("Accept", "application/json")
-            conn.setRequestProperty("User-Agent", "glucowatch")
-            conn.outputStream.use { it.write(body.toByteArray()) }
-            val status = conn.responseCode
-            val stream = if (status in 200..299) conn.inputStream else conn.errorStream
-            val text = stream?.bufferedReader()?.use { it.readText() } ?: ""
-            return HttpResponse(status, text)
-        } finally {
-            conn.disconnect()
-        }
-    }
 }
 
 /**
@@ -134,7 +100,7 @@ class DexcomShareClient(
 
     private fun post(endpoint: String, body: String): JsonElement {
         val response = try {
-            transport.postJson(region.baseUrl + endpoint, body)
+            transport.execute(HttpRequest.postJson(region.baseUrl + endpoint, body))
         } catch (e: IOException) {
             throw ShareException.Network(e)
         }

@@ -3,15 +3,23 @@ package io.github.antonkulaga.glucowatch.data
 import android.content.Context
 import glucowatch.core.GlucoseUnit
 import glucowatch.core.LinearTrendPredictor
+import glucowatch.core.NightscoutApi
 import glucowatch.core.Region
 
-enum class DataSource { DEMO, SHARE }
+enum class DataSource(val label: String) {
+    DEMO("Demo data"),
+    SHARE("Dexcom Share"),
+    NIGHTSCOUT("Nightscout"),
+}
 
 data class Settings(
     val source: DataSource = DataSource.DEMO,
     val username: String = "",
     val password: String = "",
     val region: Region = Region.OUS,
+    val nightscoutUrl: String = "",
+    val nightscoutToken: String = "",
+    val nightscoutApi: NightscoutApi = NightscoutApi.V1,
     val unit: GlucoseUnit = GlucoseUnit.MMOL,
     val lowMgdl: Int = 70,
     val highMgdl: Int = 180,
@@ -21,11 +29,18 @@ data class Settings(
     val horizonMinutes: Int = 30,
 ) {
     val hasCredentials get() = username.isNotBlank() && password.isNotBlank()
+
+    /** Changes when readings would come from another account or server, so the cache must go. */
+    val accountKey get() = when (source) {
+        DataSource.DEMO -> "demo"
+        DataSource.SHARE -> "share:$region:$username"
+        DataSource.NIGHTSCOUT -> "nightscout:${nightscoutUrl.trim().trimEnd('/').lowercase()}:$nightscoutApi"
+    }
 }
 
 /**
  * Settings live only on the watch, in app-private storage (never backed up or sent anywhere
- * except to the Dexcom server itself).
+ * except to the Dexcom server or the user's own Nightscout).
  */
 class SettingsStore(context: Context) {
     private val appContext = context.applicationContext
@@ -45,7 +60,7 @@ class SettingsStore(context: Context) {
         val old = read()
         val new = BuildDefaults.applyTo(old)
         // Another account or server: cached readings and session belong to the old one.
-        if (new.username != old.username || new.region != old.region) GlucoseRepository(appContext).clearCache()
+        if (new.accountKey != old.accountKey) GlucoseRepository(appContext).clearCache()
         save(new)
         prefs.edit().putString("buildDefaults", BuildDefaults.fingerprint).apply()
     }
@@ -57,6 +72,9 @@ class SettingsStore(context: Context) {
             username = prefs.getString("username", d.username)!!,
             password = prefs.getString("password", d.password)!!,
             region = enumOr(prefs.getString("region", null), d.region),
+            nightscoutUrl = prefs.getString("nightscoutUrl", d.nightscoutUrl)!!,
+            nightscoutToken = prefs.getString("nightscoutToken", d.nightscoutToken)!!,
+            nightscoutApi = enumOr(prefs.getString("nightscoutApi", null), d.nightscoutApi),
             unit = enumOr(prefs.getString("unit", null), d.unit),
             lowMgdl = prefs.getInt("low", d.lowMgdl),
             highMgdl = prefs.getInt("high", d.highMgdl),
@@ -73,6 +91,9 @@ class SettingsStore(context: Context) {
             .putString("username", s.username)
             .putString("password", s.password)
             .putString("region", s.region.name)
+            .putString("nightscoutUrl", s.nightscoutUrl)
+            .putString("nightscoutToken", s.nightscoutToken)
+            .putString("nightscoutApi", s.nightscoutApi.name)
             .putString("unit", s.unit.name)
             .putInt("low", s.lowMgdl)
             .putInt("high", s.highMgdl)

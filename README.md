@@ -1,10 +1,11 @@
 # glucowatch
 
-Shows your Dexcom glucose on a Wear OS watch (Galaxy Watch and others): current value with trend
-arrow, a glucose chart, and an optional forecast from your own prediction model.
+Shows your glucose on a Wear OS watch (Galaxy Watch and others): current value with trend
+arrow, a glucose chart, and an optional forecast. With Nightscout it also shows insulin and carbs
+on board, boluses and carbs on the chart, and your loop's own forecast (AAPS, Trio, iAPS, Loop).
 
-It talks to **Dexcom Share** directly from the watch: no phone app, no third-party server,
-no Google Play Services (so it can go to F-Droid).
+The watch talks to **Dexcom Share** or to **your Nightscout** directly: no phone app, no
+third-party server, no Google Play Services (so it can go to F-Droid).
 
 > Not a medical device. Do not make treatment decisions based on this app; keep using the
 > official Dexcom app and its alarms.
@@ -37,7 +38,7 @@ adb install -r io.github.antonkulaga.glucowatch_<version>.apk
 adb install -r io.github.antonkulaga.glucowatch.watchface_<version>.apk
 ```
 
-On the watch, open **GlucoWatch** → **Settings** → **Dexcom Share**, enter your username, password, and region, and tap **Save & test**. Then long-press the current watch face, swipe to **GlucoWatch**, and tap it. If a slot is empty, long-press the face → **Customize** → tap the slot → **Glucose** or **Glucose chart**.
+On the watch, open **GlucoWatch** → **Settings** and pick a data source: **Dexcom Share** (username, password, region) or **Nightscout** (your site's address and an access token, see [Nightscout](#nightscout)). Tap **Save & test**. Then long-press the current watch face, swipe to **GlucoWatch**, and tap it. If a slot is empty, long-press the face → **Customize** → tap the slot → **Glucose** or **Glucose chart**.
 
 Turn **Wireless debugging** off when you are done. It uses extra battery.
 
@@ -49,9 +50,9 @@ From a phone, without a computer: download both APKs in the phone's browser, ins
 
 | Module | What it is |
 |---|---|
-| `core/` | Pure Kotlin: Dexcom Share client, models, `GlucosePredictor` interface, demo data, desktop CLI. Unit-tested on the JVM. |
-| `app/` | Wear OS app: fetches every 5 min, caches 24 h, provides 3 complications (value, chart, forecast), app screen + settings. |
-| `watchface/` | Watch Face Format (XML, no code) face that shows the three complications. |
+| `core/` | Pure Kotlin: Dexcom Share and Nightscout clients, models, `GlucosePredictor` interface, demo data, desktop CLI. Unit-tested on the JVM. |
+| `app/` | Wear OS app: fetches every 5 min, caches 24 h, provides 5 complications (value, chart, forecast, IOB/COB, last bolus and carbs), app screen + settings. |
+| `watchface/` | Watch Face Format (XML, no code) face that shows the five complications. |
 
 ## Build
 
@@ -78,6 +79,10 @@ cp .env.example .env     # then edit it
 DEXCOM_USERNAME=you@example.com
 DEXCOM_PASSWORD="your password"
 DEXCOM_REGION=eu          # eu (= outside US), us or jp
+NIGHTSCOUT_URL=https://your-site.example
+NIGHTSCOUT_TOKEN=         # access token, empty for a public site
+NIGHTSCOUT_API=v1         # v1 or v3 (v3 needs a token)
+GLUCOWATCH_SOURCE=        # demo, share or nightscout; empty picks share if the Dexcom login is set
 GLUCOWATCH_UNIT=mmol      # mmol or mgdl
 GLUCOWATCH_PREDICTION=false
 ```
@@ -90,7 +95,8 @@ GLUCOWATCH_PREDICTION=false
   is safe to give to friends or publish. The debug APK does contain your password in plain text:
   keep it to yourself.
 - Environment variables with the same names override the file. A typo in `DEXCOM_REGION`,
-  `GLUCOWATCH_UNIT` or `GLUCOWATCH_PREDICTION` fails the build with a clear message.
+  `NIGHTSCOUT_API`, `GLUCOWATCH_SOURCE`, `GLUCOWATCH_UNIT` or `GLUCOWATCH_PREDICTION` fails the
+  build with a clear message.
 
 ## 1. Check your Share account from the PC (no watch needed)
 
@@ -104,6 +110,13 @@ accept in the Dexcom Follow app). Then:
 ```
 
 Expected: `Login OK (Outside US (EU)), 12 readings in the last 1 h` and the last values.
+
+For Nightscout, the same check also lists boluses, carbs and the loop's status:
+
+```bash
+./gradlew -q --console=plain :core:run --args="--source nightscout --url https://your-site.example --hours 3 --predict"
+# --token <access token>, --api v1|v3; or NIGHTSCOUT_URL / NIGHTSCOUT_TOKEN / NIGHTSCOUT_API in .env
+```
 
 ## 2. Emulator
 
@@ -142,6 +155,14 @@ adb shell am start -n io.github.antonkulaga.glucowatch/.ui.SettingsActivity \
 unset DXP
 ```
 
+Nightscout works the same way:
+
+```bash
+adb shell am start -n io.github.antonkulaga.glucowatch/.ui.SettingsActivity \
+  --es source NIGHTSCOUT --es nightscoutUrl https://your-site.example --es nightscoutApi v1 \
+  --es nightscoutToken "'$NS_TOKEN'" --ez prediction true --es predictor loop --ez save true
+```
+
 (Use `adb -e` for the emulator, `adb -s <ip:port>` for a specific watch.) Release builds ignore these extras.
 
 ## 4. Install on a Galaxy Watch
@@ -166,6 +187,28 @@ You can also use the three complications on any other watch face that has matchi
 
 Tip: turn Wireless debugging off again when you are done; it drains the battery.
 
+## Nightscout
+
+Pick **Nightscout** in Settings and enter your site's address (`https://` is added if you leave
+it out). A public site needs nothing else. For a private one, create an access token in Nightscout
+under *Admin tools → Subjects* with the `readable` role and enter it. The API secret works with
+API v1 too, but it grants full write access, so a token is the better choice.
+
+**API v1 (classic)** works with every Nightscout. **API v3** is the newer API of Nightscout 14 and
+later and always needs a token. Pick v1 unless you have a reason not to.
+
+With Nightscout the watch also shows:
+
+- **Insulin and carbs on board** from your loop (AAPS, Trio, iAPS, OpenAPS, Loop), as a
+  complication and in the app. They disappear when the loop has not reported for 30 minutes, and
+  the app then says how long it has been quiet.
+- **Boluses and carbs** on the chart (automatic boluses as small ticks), and the last bolus and
+  carbs with how long ago, as a complication.
+- **The loop's forecast**: choose *Loop (Nightscout)* under Forecast. It is shown only while it is
+  less than 15 minutes old.
+
+Details, including how each uploader writes its data: [docs/nightscout.md](docs/nightscout.md).
+
 ## Forecast (optional, off by default)
 
 Enable in Settings → *Show forecast*. It adds a dashed line with an uncertainty band to the chart
@@ -186,16 +229,28 @@ object Predictors { val all = listOf(LinearTrendPredictor(), MyModel()) }
 ```
 
 It then appears as a choice in Settings. `LinearTrendPredictor` is the reference example. You can
-test models on the PC with `:core:run --args="--predict"` against your real Share data.
+test models on the PC with `:core:run --args="--predict"` against your real Share or Nightscout data.
+With Nightscout there is one more choice, *Loop (Nightscout)*, which shows your loop's own forecast
+instead of running a model on the watch.
+
+## Screenshots
+
+`python3 scripts/screenshots.py` builds the debug APKs, boots an emulator shaped like a Galaxy
+Watch5 (round, 450 px, density 340) and saves round screenshots of the face and the app for demo
+data, Dexcom Share and Nightscout into `data/output/screenshots/`. See
+[docs/screenshots.md](docs/screenshots.md).
 
 ## How it works
 
 - Dexcom Share login: `AuthenticatePublisherAccount` → accountId, `LoginPublisherAccountById` →
   sessionId, `ReadPublisherLatestGlucoseValues`. The session id is cached and renewed on expiry.
   Servers: `shareous1.dexcom.com` (outside US), `share2.dexcom.com` (US), `share.dexcom.jp`.
-- Refresh: exact alarm ~20 s after the next expected reading, polling every minute if Dexcom is
-  late; after a fetch all complications are asked to update.
-- Credentials are stored only in the app's private storage on the watch and sent only to Dexcom.
+- Nightscout: `entries`, `treatments` and `devicestatus`, read-only, through API v1 or v3. Only
+  new readings are fetched after the first run. See [docs/nightscout.md](docs/nightscout.md).
+- Refresh: exact alarm ~20 s after the next expected reading, polling every minute if the reading
+  is late; after a fetch all complications are asked to update.
+- Credentials are stored only in the app's private storage on the watch and sent only to Dexcom
+  or to your Nightscout.
 
 ## Publish on F-Droid
 
@@ -209,11 +264,21 @@ goes to [fdroiddata](https://gitlab.com/fdroid/fdroiddata), as a merge request, 
 3. Fork fdroiddata and open one merge request per package. The recipes are `metadata/io.github.antonkulaga.glucowatch.yml` and `metadata/io.github.antonkulaga.glucowatch.watchface.yml`.
 4. Each recipe uses this git repository, `RepoType: git`, and `gradle: [yes]`. Set `subdir` to the module (`app` or `watchface`), so F-Droid runs Gradle there and finds the APK in its `build/` directory. Leave out `output` and `prebuild`. The `commit` field is the full hash of the tag, not the tag name. Publish a signed APK in the GitHub release for that version and set `Binaries` plus `AllowedAPKSigningKeys` so the build is reproducible.
 5. Set `UpdateCheckMode: Tags` and `AutoUpdateMode: Version`, so a later tag is picked up without a new request.
-6. Declare the `NonFreeNet` anti-feature. Live readings come from Dexcom Share, which is a proprietary service. Demo data works with no account.
+6. Declare the `NonFreeNet` anti-feature. Live readings can come from Dexcom Share, which is a proprietary service. Nightscout is free software, and demo data works with no account.
 7. Open the merge request and answer the review. The store text is taken from `fastlane/metadata/android/en-US/` in this repository.
 
-Check the release build locally before tagging:
+Check the release build locally before tagging. F-Droid runs Gradle inside each module, so do
+the same. The APKs you sign for the GitHub release must come from these builds:
 
 ```bash
-./gradlew :app:assembleRelease :watchface:assembleRelease
+(cd app && ../gradlew assembleRelease)
+(cd watchface && ../gradlew assembleRelease)
 ```
+
+## Other stores
+
+Google Play is the only store that installs straight onto the watch. The app does not pass Play's
+Wear OS review yet, because it asks for the Dexcom password on the watch. IzzyOnDroid and
+Obtainium use the APKs from the GitHub release. Galaxy Store takes watch apps only in China.
+[docs/store-publishing.md](docs/store-publishing.md) covers what each store needs, and what can go
+into a tagged commit without breaking the F-Droid build.

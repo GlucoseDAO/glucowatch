@@ -17,6 +17,9 @@ import android.widget.RadioGroup
 import android.widget.ScrollView
 import android.widget.TextView
 import glucowatch.core.GlucoseUnit
+import glucowatch.core.LinearTrendPredictor
+import glucowatch.core.LoopStatus
+import glucowatch.core.NightscoutApi
 import glucowatch.core.Predictors
 import glucowatch.core.Region
 import io.github.antonkulaga.glucowatch.data.DataSource
@@ -29,7 +32,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 
 /**
- * Source, Dexcom login, units and the optional forecast.
+ * Source (demo, Dexcom Share or Nightscout), its login, units and the optional forecast.
  * For development the fields can be prefilled from adb, see README ("Connect real Share data").
  */
 class SettingsActivity : Activity() {
@@ -40,21 +43,28 @@ class SettingsActivity : Activity() {
     private lateinit var username: EditText
     private lateinit var password: EditText
     private lateinit var region: RadioGroup
+    private lateinit var nightscoutUrl: EditText
+    private lateinit var nightscoutToken: EditText
+    private lateinit var nightscoutApi: RadioGroup
     private lateinit var unit: RadioGroup
     private lateinit var prediction: CheckBox
     private lateinit var predictor: RadioGroup
     private lateinit var result: TextView
     private lateinit var shareFields: List<View>
+    private lateinit var nightscoutFields: List<View>
+    private lateinit var loopPredictor: View
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val s = fromIntent(store.load())
+        // Round screens clip the corners: inset the column and let the ends scroll to the middle.
+        val screen = resources.displayMetrics.widthPixels
         val column = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(22), dp(30), dp(22), dp(48))
+            setPadding((screen * 0.11).toInt(), (screen * 0.17).toInt(), (screen * 0.11).toInt(), (screen * 0.3).toInt())
         }
 
-        source = radios(DataSource.entries.map { it.name to if (it == DataSource.DEMO) "Demo data" else "Dexcom Share" }, s.source.name)
+        source = radios(DataSource.entries.map { it.name to it.label }, s.source.name)
         username = EditText(this).apply {
             hint = "Dexcom username / email"; setText(s.username); isSingleLine = true
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS
@@ -64,15 +74,31 @@ class SettingsActivity : Activity() {
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
         }
         region = radios(Region.entries.map { it.name to it.label }, s.region.name)
+        nightscoutUrl = EditText(this).apply {
+            hint = "https://your-site.example"; setText(s.nightscoutUrl); isSingleLine = true
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI
+        }
+        nightscoutToken = EditText(this).apply {
+            hint = "optional"; setText(s.nightscoutToken); isSingleLine = true
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
+        }
+        nightscoutApi = radios(NightscoutApi.entries.map { it.name to it.label }, s.nightscoutApi.name)
         unit = radios(GlucoseUnit.entries.map { it.name to it.label }, s.unit.name)
         prediction = CheckBox(this).apply { text = "Show forecast"; isChecked = s.predictionEnabled }
-        predictor = radios(Predictors.all.map { it.id to it.displayName }, s.predictorId)
+        predictor = radios(Predictors.all.map { it.id to it.displayName } + (LoopStatus.MODEL_ID to "Loop (Nightscout)"), s.predictorId)
+        loopPredictor = predictor.findViewWithTag(LoopStatus.MODEL_ID)
         result = TextView(this).apply { textSize = 12f; gravity = Gravity.CENTER; setTextColor(Color.LTGRAY) }
         val save = Button(this).apply { text = "Save & test"; setOnClickListener { saveAndTest() } }
 
         shareFields = listOf(label("Account"), username, password, label("Region"), region)
+        nightscoutFields = listOf(
+            label("Nightscout address"), nightscoutUrl,
+            label("Token or API secret"), nightscoutToken, hint("A token with the readable role is safer. v3 needs a token."),
+            label("API"), nightscoutApi,
+        )
         listOf(label("Data source"), source).forEach(column::addView)
         shareFields.forEach(column::addView)
+        nightscoutFields.forEach(column::addView)
         listOf(label("Units"), unit, label("Forecast"), prediction, predictor, save, result).forEach(column::addView)
         setContentView(ScrollView(this).apply { addView(column) })
 
@@ -89,9 +115,14 @@ class SettingsActivity : Activity() {
     }
 
     private fun updateVisibility() {
-        val share = selected(source) == DataSource.SHARE.name
-        shareFields.forEach { it.visibility = if (share) View.VISIBLE else View.GONE }
-        predictor.visibility = if (prediction.isChecked && Predictors.all.size > 1) View.VISIBLE else View.GONE
+        val source = DataSource.valueOf(selected(source))
+        shareFields.forEach { it.visibility = if (source == DataSource.SHARE) View.VISIBLE else View.GONE }
+        nightscoutFields.forEach { it.visibility = if (source == DataSource.NIGHTSCOUT) View.VISIBLE else View.GONE }
+        val loop = source == DataSource.NIGHTSCOUT
+        loopPredictor.visibility = if (loop) View.VISIBLE else View.GONE
+        if (!loop && selected(predictor) == LoopStatus.MODEL_ID) predictor.check(predictor.findViewWithTag<View>(LinearTrendPredictor.ID).id)
+        val choices = Predictors.all.size + if (loop) 1 else 0
+        predictor.visibility = if (prediction.isChecked && choices > 1) View.VISIBLE else View.GONE
     }
 
     private fun saveAndTest() {
@@ -101,12 +132,15 @@ class SettingsActivity : Activity() {
             username = username.text.toString().trim(),
             password = password.text.toString(),
             region = Region.valueOf(selected(region)),
+            nightscoutUrl = nightscoutUrl.text.toString().trim(),
+            nightscoutToken = nightscoutToken.text.toString().trim(),
+            nightscoutApi = NightscoutApi.valueOf(selected(nightscoutApi)),
             unit = GlucoseUnit.valueOf(selected(unit)),
             predictionEnabled = prediction.isChecked,
             predictorId = selected(predictor),
         )
         val repo = GlucoseRepository(this)
-        if (new.source != old.source || new.username != old.username || new.region != old.region) repo.clearCache()
+        if (new.accountKey != old.accountKey) repo.clearCache()
         store.save(new)
         result.text = "Testing…"
         scope.launch {
@@ -114,13 +148,18 @@ class SettingsActivity : Activity() {
             val latest = state.latest
             result.text = when {
                 state.lastError != null -> "⚠ ${state.lastError}"
+                latest == null && new.source == DataSource.NIGHTSCOUT -> "Connected, but no readings in the last 24 h"
                 latest == null -> "Logged in, but no readings. Is Share on with at least one follower?"
-                else -> "OK: ${new.unit.format(latest.mgdl.toDouble())} ${new.unit.label}, ${state.ageMinutes()} min ago"
+                else -> "OK: ${new.unit.format(latest.mgdl.toDouble())} ${new.unit.label}, ${state.ageMinutes()} min ago" +
+                    state.loop?.let { "\nLoop reported ${it.ageMinutes()} min ago" }.orEmpty()
             }
         }
     }
 
-    /** adb shell am start -n …/.ui.SettingsActivity --es source SHARE --es username … (debug builds only). */
+    /**
+     * adb shell am start -n …/.ui.SettingsActivity --es source SHARE --es username … (debug builds only).
+     * Nightscout: --es source NIGHTSCOUT --es nightscoutUrl https://… --es nightscoutToken … --es nightscoutApi v1.
+     */
     private fun fromIntent(s: Settings): Settings {
         if (!isDebuggable) return s
         val e = intent.extras ?: return s
@@ -129,8 +168,12 @@ class SettingsActivity : Activity() {
             username = e.getString("username") ?: s.username,
             password = e.getString("password") ?: s.password,
             region = e.getString("region")?.let(Region::parse) ?: s.region,
+            nightscoutUrl = e.getString("nightscoutUrl") ?: s.nightscoutUrl,
+            nightscoutToken = e.getString("nightscoutToken") ?: s.nightscoutToken,
+            nightscoutApi = e.getString("nightscoutApi")?.let(NightscoutApi::parse) ?: s.nightscoutApi,
             unit = e.getString("unit")?.let(GlucoseUnit::parse) ?: s.unit,
             predictionEnabled = if (e.containsKey("prediction")) e.getBoolean("prediction") else s.predictionEnabled,
+            predictorId = e.getString("predictor") ?: s.predictorId,
         )
     }
 
@@ -150,6 +193,10 @@ class SettingsActivity : Activity() {
 
     private fun label(text: String) = TextView(this).apply {
         this.text = text; textSize = 12f; setTextColor(0xFF90CAF9.toInt()); setPadding(0, dp(10), 0, 0)
+    }
+
+    private fun hint(text: String) = TextView(this).apply {
+        this.text = text; textSize = 11f; setTextColor(Color.LTGRAY)
     }
 
     private fun dp(v: Int) = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, v.toFloat(), resources.displayMetrics).toInt()

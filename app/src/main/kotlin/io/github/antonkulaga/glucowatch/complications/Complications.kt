@@ -22,7 +22,13 @@ import androidx.wear.watchface.complications.data.TimeDifferenceStyle
 import androidx.wear.watchface.complications.datasource.ComplicationRequest
 import androidx.wear.watchface.complications.datasource.SuspendingComplicationDataSourceService
 import glucowatch.core.DemoData
+import glucowatch.core.LoopStatus
+import glucowatch.core.Treatment
+import glucowatch.core.formatAge
+import glucowatch.core.formatAmount
+import glucowatch.core.lastCarbs
 import glucowatch.core.lastDelta
+import glucowatch.core.lastManualBolus
 import io.github.antonkulaga.glucowatch.chart.ChartRenderer
 import io.github.antonkulaga.glucowatch.data.GlucoseRepository
 import io.github.antonkulaga.glucowatch.data.GlucoseState
@@ -33,7 +39,7 @@ import java.io.ByteArrayOutputStream
 import java.time.Instant
 import java.util.concurrent.TimeUnit
 
-/** Shared plumbing: all three data sources read the cached state and open the app on tap. */
+/** Shared plumbing: all data sources read the cached state and open the app on tap. */
 abstract class GlucoseComplicationService : SuspendingComplicationDataSourceService() {
 
     abstract fun build(type: ComplicationType, state: GlucoseState): ComplicationData?
@@ -46,8 +52,9 @@ abstract class GlucoseComplicationService : SuspendingComplicationDataSourceServ
         build(request.complicationType, GlucoseRepository(this).state())
 
     override fun getPreviewData(type: ComplicationType): ComplicationData? {
-        val readings = DemoData.readings(System.currentTimeMillis(), hours = 3)
-        return build(type, GlucoseState(Settings(), readings, null, null, 0))
+        val now = System.currentTimeMillis()
+        val readings = DemoData.readings(now, hours = 3)
+        return build(type, GlucoseState(Settings(), readings, null, null, 0, DemoData.treatments(now, hours = 3), DemoData.loopStatus(now)))
     }
 
     protected fun tapAction(): PendingIntent = PendingIntent.getActivity(
@@ -56,6 +63,12 @@ abstract class GlucoseComplicationService : SuspendingComplicationDataSourceServ
     )
 
     protected fun plain(text: String) = PlainComplicationText.Builder(text).build()
+
+    /** "35m", "3h 26m": counts up on the watch face by itself between refreshes. */
+    protected fun since(timeMillis: Long) = TimeDifferenceComplicationText.Builder(
+        TimeDifferenceStyle.SHORT_DUAL_UNIT,
+        CountUpTimeReference(Instant.ofEpochMilli(timeMillis)),
+    ).setMinimumTimeUnit(TimeUnit.MINUTES).build()
 }
 
 class GlucoseValueComplicationService : GlucoseComplicationService() {
@@ -128,7 +141,8 @@ class PredictionComplicationService : GlucoseComplicationService() {
         val unit = state.settings.unit
         val minutes = state.settings.horizonMinutes
         val value = unit.format(point.mgdl)
-        val description = plain("Forecast $value ${unit.label} in $minutes minutes")
+        val fromLoop = state.prediction?.modelId == LoopStatus.MODEL_ID
+        val description = plain("Forecast $value ${unit.label} in $minutes minutes" + if (fromLoop) ", from the loop" else "")
         return when (type) {
             ComplicationType.SHORT_TEXT -> ShortTextComplicationData.Builder(plain(value), description)
                 .setTitle(plain("${minutes}m"))
@@ -136,10 +150,72 @@ class PredictionComplicationService : GlucoseComplicationService() {
                 .build()
             ComplicationType.LONG_TEXT -> {
                 val range = if (point.lower != null && point.upper != null) " (${unit.format(point.lower!!)}–${unit.format(point.upper!!)})" else ""
-                LongTextComplicationData.Builder(plain("in ${minutes}m: $value$range"), description)
+                LongTextComplicationData.Builder(plain("in ${minutes}m: $value$range" + if (fromLoop) " (loop)" else ""), description)
                     .setTapAction(tapAction())
                     .build()
             }
+            else -> null
+        }
+    }
+}
+
+/**
+ * Nightscout: insulin and carbs on board as the loop (AAPS, Trio, iAPS, Loop) last reported them.
+ * Empty without a loop, or once it has not reported for 30 minutes.
+ */
+class LoopComplicationService : GlucoseComplicationService() {
+    override fun build(type: ComplicationType, state: GlucoseState): ComplicationData? {
+        val loop = state.freshLoop() ?: return NoDataComplicationData()
+        val iob = loop.iob?.let { formatAmount(it, 1) + "U" }
+        val cob = loop.cob?.let { formatAmount(it, 0) + "g" }
+        if (iob == null && cob == null) return NoDataComplicationData()
+        val description = plain(
+            listOfNotNull(loop.iob?.let { "Insulin on board ${formatAmount(it)} units" }, loop.cob?.let { "carbs on board ${formatAmount(it, 0)} grams" })
+                .joinToString(", "),
+        )
+        return when (type) {
+            // Big line IOB, small line COB, as on AAPS watch faces.
+            ComplicationType.SHORT_TEXT -> ShortTextComplicationData.Builder(plain(iob ?: cob!!), description)
+                .setTitle(plain(if (iob != null) cob ?: "IOB" else "COB"))
+                .setTapAction(tapAction())
+                .build()
+            ComplicationType.LONG_TEXT -> LongTextComplicationData.Builder(
+                plain(listOfNotNull(iob?.let { "IOB $it" }, cob?.let { "COB $it" }).joinToString("  ")), description,
+            ).setTitle(since(loop.timeMillis)).setTapAction(tapAction()).build()
+            else -> null
+        }
+    }
+}
+
+/** Nightscout: the last bolus given by hand (not SMBs) and the last carbs, with how long ago. */
+class TreatmentComplicationService : GlucoseComplicationService() {
+    override fun build(type: ComplicationType, state: GlucoseState): ComplicationData? {
+        val now = System.currentTimeMillis()
+        val bolus = state.treatments.lastManualBolus(now)
+        val carbs = state.treatments.lastCarbs(now)
+        val latest = listOfNotNull(bolus, carbs).maxByOrNull { it.timeMillis } ?: return NoDataComplicationData()
+        fun ago(t: Treatment) = formatAge((now - t.timeMillis) / 60_000)
+        val bolusText = bolus?.let { formatAmount(it.insulin) + "U" }
+        val carbsText = carbs?.let { formatAmount(it.carbs, 0) + "g" }
+        val description = plain(
+            listOfNotNull(
+                bolus?.let { "Bolus ${formatAmount(it.insulin)} units ${ago(it)} ago" },
+                carbs?.let { "carbs ${formatAmount(it.carbs, 0)} grams ${ago(it)} ago" },
+            ).joinToString(", "),
+        )
+        return when (type) {
+            ComplicationType.SHORT_TEXT -> ShortTextComplicationData.Builder(
+                plain((if (latest === bolus) bolusText else carbsText).orEmpty()), description,
+            ).setTitle(since(latest.timeMillis)).setTapAction(tapAction()).build()
+            ComplicationType.LONG_TEXT -> LongTextComplicationData.Builder(
+                plain(
+                    listOfNotNull(
+                        bolus?.let { "$bolusText ${ago(it)}" },
+                        carbs?.let { "$carbsText ${ago(it)}" },
+                    ).joinToString("  "),
+                ),
+                description,
+            ).setTitle(plain("Bolus, carbs")).setTapAction(tapAction()).build()
             else -> null
         }
     }

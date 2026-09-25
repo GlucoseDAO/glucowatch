@@ -2,14 +2,17 @@ package glucowatch.core
 
 import kotlin.math.roundToInt
 
-/** One CGM reading as reported by Dexcom Share. */
+/** One CGM reading as reported by Dexcom Share or Nightscout. */
 data class GlucoseReading(
     val timeMillis: Long,
     val mgdl: Int,
     val trend: Trend,
 )
 
-/** Trend directions as returned by Dexcom Share, in the order of their legacy numeric codes. */
+/**
+ * Trend directions as returned by Dexcom Share, in the order of their legacy numeric codes.
+ * Nightscout uses the same names and codes, spelled `NOT COMPUTABLE`, `RATE OUT OF RANGE`, `NONE`.
+ */
 enum class Trend(val arrow: String, val description: String) {
     None("", ""),
     DoubleUp("⇈", "rising quickly"),
@@ -23,10 +26,12 @@ enum class Trend(val arrow: String, val description: String) {
     RateOutOfRange("-", "trend unavailable");
 
     companion object {
-        fun parse(value: String): Trend =
-            entries.firstOrNull { it.name == value }
-                ?: value.toIntOrNull()?.let { entries.getOrNull(it) }
+        fun parse(value: String): Trend {
+            val key = value.filter { it.isLetterOrDigit() }.lowercase()
+            return entries.firstOrNull { it.name.lowercase() == key }
+                ?: value.trim().toIntOrNull()?.let { entries.getOrNull(it) }
                 ?: None
+        }
 
         /** Dexcom-style trend from a rate of change in mg/dL per minute. */
         fun fromRate(mgdlPerMinute: Double): Trend = when {
@@ -69,11 +74,16 @@ enum class GlucoseUnit(val label: String) {
     }
 }
 
-/** Change between the two most recent readings, if they are roughly 5 minutes apart. */
+/**
+ * Change since the reading closest to 5 minutes before the latest one, looking back at most 12 minutes.
+ * With 5-minute sensors that is the previous reading; with 1-minute uploads it is the one 5 readings back.
+ */
 fun List<GlucoseReading>.lastDelta(): Double? {
-    if (size < 2) return null
-    val (prev, last) = takeLast(2)
-    val minutes = (last.timeMillis - prev.timeMillis) / 60_000.0
-    if (minutes <= 0 || minutes > 12) return null
+    val last = lastOrNull() ?: return null
+    val prev = asReversed().asSequence().drop(1)
+        .takeWhile { last.timeMillis - it.timeMillis <= 12 * 60_000L }
+        .filter { it.timeMillis < last.timeMillis }
+        .minByOrNull { kotlin.math.abs(last.timeMillis - it.timeMillis - 5 * 60_000L) }
+        ?: return null
     return (last.mgdl - prev.mgdl).toDouble()
 }
