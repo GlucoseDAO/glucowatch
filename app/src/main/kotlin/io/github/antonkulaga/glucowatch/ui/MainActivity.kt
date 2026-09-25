@@ -21,6 +21,7 @@ import glucowatch.core.formatAmount
 import glucowatch.core.lastCarbs
 import glucowatch.core.lastDelta
 import glucowatch.core.lastManualBolus
+import glucowatch.core.link.PhoneLink
 import io.github.antonkulaga.glucowatch.chart.ChartRenderer
 import io.github.antonkulaga.glucowatch.data.DataSource
 import io.github.antonkulaga.glucowatch.data.GlucoseRepository
@@ -136,11 +137,13 @@ class MainActivity : Activity() {
         chart.setImageBitmap(ChartRenderer.render(state, width, (width * 0.38).toInt(), edge = true))
 
         val p = state.prediction?.points?.lastOrNull()
-        val fromLoop = state.settings.predictorId == LoopStatus.MODEL_ID && state.settings.source == DataSource.NIGHTSCOUT
+        val fromLoop = state.settings.predictorId == LoopStatus.MODEL_ID && state.settings.source in GlucoseRepository.LOOP_SOURCES
+        val fromPhone = state.settings.predictorId == PhoneLink.MODEL_ID && state.settings.source == DataSource.PHONE
         val minutes = state.settings.horizonMinutes
         forecast.text = when {
             !state.settings.predictionEnabled -> ""
             p == null && fromLoop -> "No fresh loop forecast"
+            p == null && fromPhone -> "No fresh phone forecast"
             p == null -> ""
             else -> "${unit.format(p.mgdl)} in $minutes min" + if (fromLoop) "  ·  ${loop?.forecastName ?: "loop"}" else ""
         }
@@ -161,6 +164,7 @@ class MainActivity : Activity() {
                 DataSource.DEMO -> "Demo data"
                 DataSource.SHARE -> "Dexcom Share · $region"
                 DataSource.NIGHTSCOUT -> "Nightscout · API ${state.settings.nightscoutApi.name.lowercase()}"
+                DataSource.PHONE -> "Phone app" + state.relayedSource?.let { " · $it" }.orEmpty()
             },
             state.lastError?.let { "⚠ $it" },
         ).joinToString("\n")

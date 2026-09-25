@@ -5,11 +5,13 @@ import glucowatch.core.GlucoseUnit
 import glucowatch.core.LinearTrendPredictor
 import glucowatch.core.NightscoutApi
 import glucowatch.core.Region
+import glucowatch.core.SourceAccount
 
 enum class DataSource(val label: String) {
     DEMO("Demo data"),
     SHARE("Dexcom Share"),
     NIGHTSCOUT("Nightscout"),
+    PHONE("Phone app"),
 }
 
 data class Settings(
@@ -27,20 +29,31 @@ data class Settings(
     val predictionEnabled: Boolean = false,
     val predictorId: String = LinearTrendPredictor.ID,
     val horizonMinutes: Int = 30,
+    /** Hex id of the paired phone app (see PhonePairingStore); empty before pairing. */
+    val phoneId: String = "",
 ) {
     val hasCredentials get() = username.isNotBlank() && password.isNotBlank()
+
+    /** The login the watch fetches with itself; null for demo data and for the phone app. */
+    val account: SourceAccount? get() = when (source) {
+        DataSource.SHARE -> SourceAccount.Share(region, username, password)
+        DataSource.NIGHTSCOUT -> SourceAccount.Nightscout(nightscoutUrl, nightscoutToken, nightscoutApi)
+        DataSource.DEMO, DataSource.PHONE -> null
+    }
 
     /** Changes when readings would come from another account or server, so the cache must go. */
     val accountKey get() = when (source) {
         DataSource.DEMO -> "demo"
         DataSource.SHARE -> "share:$region:$username"
         DataSource.NIGHTSCOUT -> "nightscout:${nightscoutUrl.trim().trimEnd('/').lowercase()}:$nightscoutApi"
+        DataSource.PHONE -> "phone:$phoneId"
     }
 }
 
 /**
  * Settings live only on the watch, in app-private storage (never backed up or sent anywhere
- * except to the Dexcom server or the user's own Nightscout).
+ * except to the Dexcom server or the user's own Nightscout). A login copied from the phone app
+ * arrives encrypted over the paired Bluetooth link, see docs/phone-link.md.
  */
 class SettingsStore(context: Context) {
     private val appContext = context.applicationContext
@@ -82,6 +95,7 @@ class SettingsStore(context: Context) {
             predictionEnabled = prefs.getBoolean("prediction", d.predictionEnabled),
             predictorId = prefs.getString("predictor", d.predictorId)!!,
             horizonMinutes = prefs.getInt("horizon", d.horizonMinutes),
+            phoneId = prefs.getString("phoneId", d.phoneId)!!,
         )
     }
 
@@ -101,6 +115,7 @@ class SettingsStore(context: Context) {
             .putBoolean("prediction", s.predictionEnabled)
             .putString("predictor", s.predictorId)
             .putInt("horizon", s.horizonMinutes)
+            .putString("phoneId", s.phoneId)
             .apply()
     }
 

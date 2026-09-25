@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">GlucoWatch</string>
+    <string name="channel_link">Watch connection</string>
+</resources>

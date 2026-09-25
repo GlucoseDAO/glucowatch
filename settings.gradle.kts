@@ -15,4 +15,4 @@ dependencyResolutionManagement {
 }
 
 rootProject.name = "glucowatch"
-include(":core", ":app", ":watchface")
+include(":core", ":app", ":watchface", ":phone")

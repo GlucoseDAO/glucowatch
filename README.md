@@ -6,8 +6,10 @@ in the app, in GlucoseDAO colours. The face and one tile also show your heart ra
 watch's own sensor, smaller than glucose. With Nightscout it also shows insulin and carbs
 on board, boluses and carbs on the chart, and your loop's own forecast (AAPS, Trio, iAPS, Loop).
 
-The watch talks to **Dexcom Share** or to **your Nightscout** directly: no phone app, no
-third-party server, no Google Play Services (so it can go to F-Droid).
+The watch talks to **Dexcom Share** or to **your Nightscout** directly: no phone app needed, no
+third-party server, no Google Play Services (so it can go to F-Droid). An optional phone app can
+fetch for the watch over Bluetooth, or hand the watch its login so you do not type it on the
+watch. See [Phone app](#phone-app-optional).
 
 > Not a medical device. Do not make treatment decisions based on this app; keep using the
 > official Dexcom app and its alarms.
@@ -55,6 +57,7 @@ From a phone, without a computer: download both APKs in the phone's browser, ins
 | `core/` | Pure Kotlin: Dexcom Share and Nightscout clients, models, `GlucosePredictor` interface, demo data, desktop CLI. Unit-tested on the JVM. |
 | `app/` | Wear OS app: fetches every 5 min, caches 24 h, provides 5 complications (value, chart, forecast, IOB/COB, last bolus and carbs), 3 tiles, app screen + settings. |
 | `watchface/` | Watch Face Format (XML, no code) face that shows the five complications. |
+| `phone/` | Optional phone app: fetches Dexcom Share, Nightscout or demo data and relays it to the watch over Bluetooth, or gives the watch its login. |
 
 The icon is GlucoseDAO's glucose molecule, and the colours are GlucoseDAO's (`ui/Brand.kt`):
 teal for glucose, orange for insulin, green for carbs, purple for the forecast, as on its posters.
@@ -70,10 +73,11 @@ builds (`assembleRelease`) leave the Dexcom fields empty, so they are safe to pu
 
 ```bash
 ./gradlew :core:test                 # unit tests
-./gradlew :app:assembleDebug :watchface:assembleDebug
+./gradlew :app:assembleDebug :watchface:assembleDebug :phone:assembleDebug
 ```
 
-APKs: `app/build/outputs/apk/debug/app-debug.apk`, `watchface/build/outputs/apk/debug/watchface-debug.apk`.
+APKs: `app/build/outputs/apk/debug/app-debug.apk`, `watchface/build/outputs/apk/debug/watchface-debug.apk`,
+`phone/build/outputs/apk/debug/phone-debug.apk` (this one goes on the phone).
 
 ## 0. Your settings in `.env` (optional)
 
@@ -195,6 +199,24 @@ You can also use the three complications on any other watch face that has matchi
 
 Tip: turn Wireless debugging off again when you are done; it drains the battery.
 
+## Phone app (optional)
+
+Install `phone/` on the phone that the watch is paired with. It needs Bluetooth and no Google
+Play Services. The watch keeps working without it.
+
+1. On the phone, open **GlucoWatch**, pick a source (Demo data, Dexcom Share or Nightscout), enter
+   the login and tap **Save & test**. Allow **Nearby devices** when asked.
+2. Tap **Pair a watch**. On the watch, open GlucoWatch → Settings → **Pair with phone**.
+3. Both screens show the same six-digit code. Tap **Codes match** on both.
+4. On the watch, either pick the source **Phone app** (the phone fetches, the watch needs no
+   login and no internet), or keep **Dexcom Share** / **Nightscout** and tap **Copy login from
+   phone**. Then tap **Save & test**.
+
+With the source **Phone app**, the watch's forecast can also be **Phone app model**: the phone
+runs the model picked in its own settings. How the link works, and why it is not the Wearable
+Data Layer, is in [docs/phone-link.md](docs/phone-link.md). The link has passed its unit tests but
+has not yet been tried between a real watch and phone.
+
 ## Nightscout
 
 Pick **Nightscout** in Settings and enter your site's address (`https://` is added if you leave
@@ -262,8 +284,9 @@ Watch6 Classic 47 mm and Ultra). GlucoWatch needs Wear OS 4 or later. See
 - Heart rate is not fetched: the face reads it through Watch Face Format (`[HEART_RATE]`), and
   the glucose-all tile through the tile renderer (`PlatformHealthSources`). Both come from the
   watch's own sensor, with the heart-rate permission the watch asks for. No library is added.
-- Credentials are stored only in the app's private storage on the watch and sent only to Dexcom
-  or to your Nightscout.
+- Credentials are stored only in the app's private storage on the watch (and on the phone, if you
+  use the phone app) and sent only to Dexcom, to your Nightscout, or to your paired watch, with
+  every message encrypted with the key from pairing ([docs/phone-link.md](docs/phone-link.md)).
 
 ## Publish on F-Droid
 

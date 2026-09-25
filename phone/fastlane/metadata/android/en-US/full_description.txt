@@ -1,0 +1,12 @@
+The optional phone companion of GlucoWatch, the glucose watch face and app for Wear OS. The watch app works without it.
+
+The phone app reads Dexcom Share, your own Nightscout, or demo data, and does one of two things for the watch:
+
+* Relay: pick "Phone app" as the source on the watch. The phone fetches, and the watch gets readings, insulin and carbs, the loop's status and an optional forecast over Bluetooth. The watch then needs no login and no internet.
+* Copy the login: keep Dexcom Share or Nightscout on the watch and tap "Copy login from phone", so you do not type a password on the watch. The watch then fetches by itself.
+
+The watch and the phone talk over the Bluetooth link Wear OS already uses. There is no Google Play Services and no extra server. You pair the two apps once by comparing a six-digit code on both screens. Only paired watches get anything, and every message is encrypted with the key from pairing.
+
+Dexcom readings need Share turned on in the official Dexcom app, with at least one follower.
+
+This is not a medical device. Do not make treatment decisions from it. Keep using the official Dexcom app and its alarms.

@@ -1,6 +1,6 @@
 Shows your glucose on a Wear OS watch: the current value with a trend arrow, a chart across the whole round screen, and an optional forecast. It comes as a watch face, three tiles (glucose only; clock, glucose, heart rate and battery; and a light one), and an app, in GlucoseDAO colours. The face and one tile also show your heart rate from the watch's own sensor.
 
-The watch reads Dexcom Share or your own Nightscout directly. There is no phone app and no extra server. Dexcom readings need Share turned on in the official Dexcom app, with at least one follower.
+The watch reads Dexcom Share or your own Nightscout directly. It needs no phone app and no extra server. Dexcom readings need Share turned on in the official Dexcom app, with at least one follower.
 
 With Nightscout the watch also shows insulin and carbs on board from your loop (AAPS, Trio, iAPS, Loop), boluses and carbs on the chart, the last bolus and carbs, and the loop's own forecast. Nightscout works through API v1 or v3, with an access token or none for a public site.
 

@@ -38,6 +38,29 @@ object CacheFormat {
         return head + "|" + status.forecast.joinToString(";") { "${it.timeMillis}:${it.mgdl}" }
     }
 
+    /** `model|t:v:lower:upper;…`, with empty bounds when the model gives none. */
+    fun encodePrediction(prediction: Prediction?): String {
+        if (prediction == null) return ""
+        return prediction.modelId + "|" + prediction.points.joinToString(";") {
+            "${it.timeMillis}:${it.mgdl}:${it.lower?.toString().orEmpty()}:${it.upper?.toString().orEmpty()}"
+        }
+    }
+
+    fun decodePrediction(text: String): Prediction? {
+        if ('|' !in text) return null
+        val points = text.substringAfter('|').split(';').mapNotNull { point ->
+            val p = point.split(':')
+            if (p.size != 4) return@mapNotNull null
+            PredictedPoint(
+                timeMillis = p[0].toLongOrNull() ?: return@mapNotNull null,
+                mgdl = p[1].toDoubleOrNull() ?: return@mapNotNull null,
+                lower = p[2].toDoubleOrNull(),
+                upper = p[3].toDoubleOrNull(),
+            )
+        }
+        return Prediction(text.substringBefore('|'), points)
+    }
+
     fun decodeLoop(text: String): LoopStatus? {
         val head = text.substringBefore('|').split(',')
         if (head.size != 5) return null

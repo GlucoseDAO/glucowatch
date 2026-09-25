@@ -84,6 +84,11 @@ Google suggests three other ways to sign in:
 So every fix means building a phone app or adding a proprietary dependency. A proprietary
 dependency must stay on a branch that is never tagged for F-Droid (see `AGENTS.md`).
 
+Since the phone app (`phone/`, see `docs/phone-link.md`), the watch can copy the login from the
+phone, or read everything through the phone, over Bluetooth without Play Services. A Play build
+still has to remove the username and password fields on the watch, for example in a Play-only
+build type, and the Play listing would then need the phone app to set up Dexcom Share.
+
 **`USE_EXACT_ALARM`.** Play allows this permission only for alarm and timer apps, and for calendar
 apps that show event notifications. It also requires a declaration in Play Console. A glucose
 display is neither kind of app. `RefreshReceiver` already falls back to `setAndAllowWhileIdle`

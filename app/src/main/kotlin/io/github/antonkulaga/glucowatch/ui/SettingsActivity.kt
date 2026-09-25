@@ -26,23 +26,35 @@ import glucowatch.core.LoopStatus
 import glucowatch.core.NightscoutApi
 import glucowatch.core.Predictors
 import glucowatch.core.Region
+import glucowatch.core.link.LinkAccount
+import glucowatch.core.link.LinkSource
+import glucowatch.core.link.PhoneLink
+import glucowatch.core.link.WatchLinkClient
 import io.github.antonkulaga.glucowatch.R
 import io.github.antonkulaga.glucowatch.data.DataSource
 import io.github.antonkulaga.glucowatch.data.GlucoseRepository
+import io.github.antonkulaga.glucowatch.data.PhoneConnection
+import io.github.antonkulaga.glucowatch.data.PhonePairing
+import io.github.antonkulaga.glucowatch.data.PhonePairingStore
 import io.github.antonkulaga.glucowatch.data.RefreshReceiver
 import io.github.antonkulaga.glucowatch.data.Settings
 import io.github.antonkulaga.glucowatch.data.SettingsStore
+import io.github.antonkulaga.glucowatch.data.toHex
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
- * Source (demo, Dexcom Share or Nightscout), its login, units and the optional forecast.
+ * Source (demo, Dexcom Share, Nightscout or the phone app), its login, pairing with the phone,
+ * units and the optional forecast.
  * For development the fields can be prefilled from adb, see README ("Connect real Share data").
  */
 class SettingsActivity : Activity() {
     private val scope = MainScope()
     private val store by lazy { SettingsStore(this) }
+    private val pairings by lazy { PhonePairingStore(this) }
 
     private lateinit var source: RadioGroup
     private lateinit var username: EditText
@@ -58,6 +70,22 @@ class SettingsActivity : Activity() {
     private lateinit var shareFields: List<View>
     private lateinit var nightscoutFields: List<View>
     private lateinit var loopPredictor: View
+    private lateinit var phonePredictor: View
+    private lateinit var phoneFields: List<View>
+    private lateinit var phoneStatus: TextView
+    private lateinit var pairButton: Button
+    private lateinit var copyButton: Button
+    private lateinit var codeBlock: View
+    private lateinit var codeView: TextView
+
+    /** Pairing and copy messages, beside their buttons rather than at the end of the screen. */
+    private lateinit var phoneResult: TextView
+
+    /** A pairing the phone agreed to, shown as a code until the user confirms it here. */
+    private var pendingPairing: PhonePairing? = null
+
+    /** What to do once the user allows Nearby devices. */
+    private var afterBluetooth: (() -> Unit)? = null
     private lateinit var heartButton: Button
     private lateinit var heartStatus: TextView
 
@@ -92,10 +120,17 @@ class SettingsActivity : Activity() {
         nightscoutApi = radios(NightscoutApi.entries.map { it.name to it.label }, s.nightscoutApi.name)
         unit = radios(GlucoseUnit.entries.map { it.name to it.label }, s.unit.name)
         prediction = CheckBox(this).apply { text = "Show forecast"; isChecked = s.predictionEnabled }
-        predictor = radios(Predictors.all.map { it.id to it.displayName } + (LoopStatus.MODEL_ID to "Loop (Nightscout)"), s.predictorId)
+        predictor = radios(
+            Predictors.all.map { it.id to it.displayName } + (LoopStatus.MODEL_ID to "Loop (Nightscout)") + (PhoneLink.MODEL_ID to "Phone app model"),
+            s.predictorId,
+        )
         loopPredictor = predictor.findViewWithTag(LoopStatus.MODEL_ID)
+        phonePredictor = predictor.findViewWithTag(PhoneLink.MODEL_ID)
         result = TextView(this).apply { textSize = 12f; gravity = Gravity.CENTER; setTextColor(Brand.TEXT) }
-        val save = Button(this).apply { text = "Save & test"; setOnClickListener { saveAndTest() }; Brand.style(this, primary = true) }
+        val save = Button(this).apply {
+            text = "Save & test"; Brand.style(this, primary = true)
+            setOnClickListener { if (DataSource.valueOf(selected(source)) == DataSource.PHONE) withBluetooth(::saveAndTest) else saveAndTest() }
+        }
 
         shareFields = listOf(label("Account"), username, revealable(password), label("Region"), region)
         nightscoutFields = listOf(
@@ -103,9 +138,26 @@ class SettingsActivity : Activity() {
             label("Token or API secret"), revealable(nightscoutToken), hint("A token with the readable role is safer. v3 needs a token."),
             label("API"), nightscoutApi,
         )
+        phoneFields = listOf(hint("The phone app fetches and passes it on over Bluetooth. No login or internet on the watch."))
+        phoneStatus = hint("")
+        pairButton = Button(this).apply { Brand.style(this, primary = false); setOnClickListener { pair() } }
+        codeView = TextView(this).apply {
+            textSize = 26f; gravity = Gravity.CENTER; setTextColor(Brand.TEAL_LIGHT); typeface = Typeface.DEFAULT_BOLD
+        }
+        codeBlock = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            addView(codeView)
+            addView(Button(this@SettingsActivity).apply { text = "Codes match"; Brand.style(this, primary = true); setOnClickListener { confirmPairing() } })
+            addView(Button(this@SettingsActivity).apply { text = "Cancel"; Brand.style(this, primary = false); setOnClickListener { pendingPairing = null; phoneResult.text = ""; updatePhone() } })
+        }
+        phoneResult = TextView(this).apply { textSize = 12f; gravity = Gravity.CENTER; setTextColor(Brand.TEXT) }
+        copyButton = Button(this).apply { text = "Copy login from phone"; Brand.style(this, primary = false); setOnClickListener { copyLogin() } }
+
         listOf(label("Data source"), source).forEach(column::addView)
         shareFields.forEach(column::addView)
         nightscoutFields.forEach(column::addView)
+        phoneFields.forEach(column::addView)
+        listOf(label("Phone"), phoneStatus, pairButton, codeBlock, copyButton, phoneResult).forEach(column::addView)
         heartButton = Button(this).apply {
             text = "Allow heart rate"; Brand.style(this, primary = false)
             setOnClickListener { requestPermissions(arrayOf(heartPermission), REQUEST_HEART_RATE) }
@@ -116,6 +168,7 @@ class SettingsActivity : Activity() {
             label("Heart rate"), heartButton, heartStatus, save, result,
         ).forEach(column::addView)
         updateHeartRate()
+        updatePhone()
         setContentView(ScrollView(this).apply { addView(column) })
 
         source.setOnCheckedChangeListener { _, _ -> updateVisibility() }
@@ -131,6 +184,101 @@ class SettingsActivity : Activity() {
             updateHeartRate()
             RefreshReceiver.updateComplications(this)
         }
+        if (requestCode == REQUEST_BLUETOOTH) {
+            val action = afterBluetooth
+            afterBluetooth = null
+            if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) action?.invoke()
+            else phoneResult.text = "⚠ The phone app needs the Nearby devices permission"
+        }
+    }
+
+    /** Runs [action] now, or after the user allows Nearby devices (Android 12 and later). */
+    private fun withBluetooth(action: () -> Unit) {
+        if (PhoneConnection(this).hasPermission()) return action()
+        afterBluetooth = action
+        requestPermissions(arrayOf(Manifest.permission.BLUETOOTH_CONNECT), REQUEST_BLUETOOTH)
+    }
+
+    private fun updatePhone() {
+        val pairing = pairings.load()
+        val pending = pendingPairing != null
+        phoneStatus.text = pairing?.let { "Paired with ${it.phoneName}." }
+            ?: "Not paired. Tap Pair a watch in the phone app, then Pair here."
+        pairButton.text = if (pairing == null) "Pair with phone" else "Pair again"
+        pairButton.visibility = if (pending) View.GONE else View.VISIBLE
+        codeBlock.visibility = if (pending) View.VISIBLE else View.GONE
+        copyButton.visibility = if (pairing != null && !pending) View.VISIBLE else View.GONE
+    }
+
+    /** Agrees on a key with the phone and shows the code the user compares on both screens. */
+    private fun pair() = withBluetooth {
+        phoneResult.text = "Looking for GlucoWatch on the phone…"
+        pairButton.isEnabled = false
+        scope.launch {
+            val found = runCatching {
+                withContext(Dispatchers.IO) {
+                    PhoneConnection(this@SettingsActivity).open(null) { device, input, output ->
+                        val offer = WatchLinkClient(pairings.watchId).pair(input, output)
+                        PhonePairing(offer.phoneId.toHex(), offer.phoneName, device.address, offer.keys.key) to offer.keys.displayCode
+                    }
+                }
+            }
+            pairButton.isEnabled = true
+            found.onSuccess { (pairing, code) ->
+                pendingPairing = pairing
+                codeView.text = code
+                phoneResult.text = "Check that ${pairing.phoneName} shows the same code, then confirm on both."
+            }.onFailure { phoneResult.text = "⚠ ${it.message}" }
+            updatePhone()
+        }
+    }
+
+    private fun confirmPairing() {
+        val pairing = pendingPairing ?: return
+        pendingPairing = null
+        pairings.save(pairing)
+        val old = store.load()
+        val new = old.copy(phoneId = pairing.phoneId)
+        if (new.accountKey != old.accountKey) GlucoseRepository(this).clearCache()
+        store.save(new)
+        phoneResult.text = "Paired. Confirm on the phone too. Then pick Phone app above, or copy the phone's login."
+        updatePhone()
+    }
+
+    private fun copyLogin() = withBluetooth {
+        val pairing = pairings.load() ?: return@withBluetooth
+        phoneResult.text = "Asking the phone…"
+        scope.launch {
+            runCatching {
+                withContext(Dispatchers.IO) {
+                    PhoneConnection(this@SettingsActivity).open(pairing.address) { _, input, output ->
+                        WatchLinkClient(pairings.watchId).account(input, output, pairing.key)
+                    }
+                }
+            }.onSuccess(::fillFrom).onFailure { phoneResult.text = "⚠ ${it.message}" }
+        }
+    }
+
+    /** Puts the phone's login into the fields. Nothing is saved until Save & test. */
+    private fun fillFrom(account: LinkAccount) {
+        when (account.source) {
+            LinkSource.DEMO -> {
+                phoneResult.text = "The phone shows demo data, so there is no login to copy."
+                return
+            }
+            LinkSource.SHARE -> {
+                username.setText(account.username)
+                password.setText(account.password)
+                check(region, account.region.name)
+            }
+            LinkSource.NIGHTSCOUT -> {
+                nightscoutUrl.setText(account.nightscoutUrl)
+                nightscoutToken.setText(account.nightscoutToken)
+                check(nightscoutApi, account.nightscoutApi.name)
+            }
+        }
+        check(source, account.source.name)
+        phoneResult.text = "Copied the phone's ${DataSource.valueOf(account.source.name).label} login. Tap Save & test to use it."
     }
 
     /** Wear OS 6 asks per health data type; older watches have the one body-sensors permission. */
@@ -152,10 +300,14 @@ class SettingsActivity : Activity() {
         val source = DataSource.valueOf(selected(source))
         shareFields.forEach { it.visibility = if (source == DataSource.SHARE) View.VISIBLE else View.GONE }
         nightscoutFields.forEach { it.visibility = if (source == DataSource.NIGHTSCOUT) View.VISIBLE else View.GONE }
-        val loop = source == DataSource.NIGHTSCOUT
+        phoneFields.forEach { it.visibility = if (source == DataSource.PHONE) View.VISIBLE else View.GONE }
+        val loop = source in GlucoseRepository.LOOP_SOURCES
+        val phone = source == DataSource.PHONE
         loopPredictor.visibility = if (loop) View.VISIBLE else View.GONE
-        if (!loop && selected(predictor) == LoopStatus.MODEL_ID) predictor.check(predictor.findViewWithTag<View>(LinearTrendPredictor.ID).id)
-        val choices = Predictors.all.size + if (loop) 1 else 0
+        phonePredictor.visibility = if (phone) View.VISIBLE else View.GONE
+        val chosen = selected(predictor)
+        if ((!loop && chosen == LoopStatus.MODEL_ID) || (!phone && chosen == PhoneLink.MODEL_ID)) check(predictor, LinearTrendPredictor.ID)
+        val choices = Predictors.all.size + (if (loop) 1 else 0) + (if (phone) 1 else 0)
         predictor.visibility = if (prediction.isChecked && choices > 1) View.VISIBLE else View.GONE
     }
 
@@ -183,6 +335,7 @@ class SettingsActivity : Activity() {
             result.text = when {
                 state.lastError != null -> "⚠ ${state.lastError}"
                 latest == null && new.source == DataSource.NIGHTSCOUT -> "Connected, but no readings in the last 24 h"
+                latest == null && new.source == DataSource.PHONE -> "Connected, but the phone has no readings yet"
                 latest == null -> "Logged in, but no readings. Is Share on with at least one follower?"
                 else -> "OK: ${new.unit.format(latest.mgdl.toDouble())} ${new.unit.label}, ${state.ageMinutes()} min ago" +
                     state.loop?.let { "\nLoop reported ${it.ageMinutes()} min ago" }.orEmpty()
@@ -213,6 +366,7 @@ class SettingsActivity : Activity() {
 
     private companion object {
         const val REQUEST_HEART_RATE = 1
+        const val REQUEST_BLUETOOTH = 2
     }
 
     private val isDebuggable get() = applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0
@@ -224,6 +378,8 @@ class SettingsActivity : Activity() {
             })
         }
     }
+
+    private fun check(group: RadioGroup, key: String) = group.check(group.findViewWithTag<View>(key).id)
 
     private fun selected(group: RadioGroup): String =
         group.findViewById<RadioButton>(group.checkedRadioButtonId)?.tag as? String

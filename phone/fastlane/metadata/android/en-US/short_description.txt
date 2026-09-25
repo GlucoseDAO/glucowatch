@@ -1,0 +1,1 @@
+Relays Dexcom Share or Nightscout glucose to the GlucoWatch Wear OS app

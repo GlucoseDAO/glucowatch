@@ -2,21 +2,24 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <uses-feature android:name="android.hardware.type.watch" />
+    <uses-feature
+        android:name="android.hardware.bluetooth"
+        android:required="false" />
 
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <!-- The optional phone app, over the Bluetooth link Wear OS already has (docs/phone-link.md).
+         The watch asks the user ("Nearby devices") when they pair or pick the phone as source. -->
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
     <!-- Heart rate on the glucose-all tile, asked for in Settings. Wear OS 6 replaced BODY_SENSORS
          with the per-type health permission. -->
     <uses-permission
         android:name="android.permission.BODY_SENSORS"
         android:maxSdkVersion="35" />
     <uses-permission android:name="android.permission.health.READ_HEART_RATE" />
-    <!-- Exact 5-minute refresh. USE_EXACT_ALARM is auto-granted on API 33+; older watches ask the user. -->
+    <!-- Exact 5-minute refresh. USE_EXACT_ALARM is granted at install on API 33 and later. -->
     <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
-    <uses-permission
-        android:name="android.permission.SCHEDULE_EXACT_ALARM"
-        android:maxSdkVersion="32" />
 
     <application
         android:allowBackup="false"

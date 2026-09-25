@@ -26,7 +26,7 @@ fun checkDefault(key: String, allowed: Set<String>) = devDefaults.getValue(key).
 }
 checkDefault("DEXCOM_REGION", setOf("eu", "ous", "us", "jp"))
 checkDefault("NIGHTSCOUT_API", setOf("v1", "v3"))
-checkDefault("GLUCOWATCH_SOURCE", setOf("demo", "share", "nightscout"))
+checkDefault("GLUCOWATCH_SOURCE", setOf("demo", "share", "nightscout", "phone"))
 checkDefault("GLUCOWATCH_UNIT", setOf("mmol", "mmol/l", "mgdl", "mg/dl"))
 checkDefault("GLUCOWATCH_PREDICTION", setOf("true", "false"))
 
