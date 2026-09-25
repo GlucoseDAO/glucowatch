@@ -186,8 +186,8 @@ health apps ([1](https://support.google.com/googleplay/android-developer/answer/
 - It keeps apps that are also on F-Droid, as long as they stay well inside its limits (30 MB per
   app, three versions).
 - It takes the APKs attached to the GitHub release for each tag. Each package gets its own
-  `ApkMatch` regex. The current asset names, `glucowatch-<version>.apk` and
-  `glucowatch-watchface-<version>.apk`, can be told apart by `watchface`, so keep that naming.
+  `ApkMatch` regex. Match the watch app, watch face and optional phone app by their complete
+  filename pattern; excluding `watchface` alone also matches the phone APK.
 - APKs must be release-signed, not debuggable, and free of the AGP dependency-info block.
   - AGP writes that block only when AGP itself signs the APK. This build leaves the APK unsigned
     and `apksigner` signs it, so the block is absent.
@@ -207,10 +207,14 @@ Sources: [FAQ](https://izzyondroid.org/faq/),
 
 ## Obtainium
 
-Obtainium follows the GitHub releases, so nothing in the repo has to change for it. Add the repo
-twice: once with "Filter APKs by regular expression" set to `watchface` for the face, and once
-with the same regex inverted for the app. Obtainium installs only on the device it runs on and
-cannot push an APK to a paired watch.
+Obtainium follows the GitHub releases. Add the repo separately for each installed package and
+set "Filter APKs by regular expression" to its exact filename pattern:
+
+- Watch app: `^glucowatch-[0-9]+\.[0-9]+\.[0-9]+\.apk$`
+- Watch face: `^glucowatch-watchface-[0-9]+\.[0-9]+\.[0-9]+\.apk$`
+- Optional phone app: `^glucowatch-phone-[0-9]+\.[0-9]+\.[0-9]+\.apk$`
+
+Obtainium installs only on the device it runs on and cannot push an APK to a paired watch.
 
 ## Samsung Galaxy Store
 
