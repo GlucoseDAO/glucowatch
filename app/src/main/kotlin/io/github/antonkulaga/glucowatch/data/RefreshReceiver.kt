@@ -6,7 +6,6 @@ import android.content.BroadcastReceiver
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
-import android.os.Build
 import android.os.SystemClock
 import android.util.Log
 import androidx.wear.tiles.TileService
@@ -89,7 +88,8 @@ class RefreshReceiver : BroadcastReceiver() {
                 PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
             )
             val at = SystemClock.elapsedRealtime() + delay
-            val exact = Build.VERSION.SDK_INT < Build.VERSION_CODES.S || am.canScheduleExactAlarms()
+            // USE_EXACT_ALARM is granted on install from API 33 (the minimum); a user can still revoke it.
+            val exact = am.canScheduleExactAlarms()
             if (exact) {
                 am.setExactAndAllowWhileIdle(AlarmManager.ELAPSED_REALTIME_WAKEUP, at, pi)
             } else {

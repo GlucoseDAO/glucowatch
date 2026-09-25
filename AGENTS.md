@@ -9,8 +9,8 @@ device.
 | Module | Id | Role |
 |---|---|---|
 | `core/` | JVM library | Dexcom Share and Nightscout clients, glucose and treatment models, `GlucosePredictor`, demo data, desktop CLI (`:core:run`) |
-| `app/` | `io.github.antonkulaga.glucowatch` | Wear app, minSdk 30. Fetches on a schedule, caches readings, settings, five complications, three tiles |
-| `watchface/` | `io.github.antonkulaga.glucowatch.watchface` | Watch Face Format XML, minSdk 33. No Kotlin sources. Shows the app's complications |
+| `app/` | `io.github.antonkulaga.glucowatch` | Wear app, minSdk 33 (Wear OS 4). Fetches on a schedule, caches readings, settings, five complications, three tiles |
+| `watchface/` | `io.github.antonkulaga.glucowatch.watchface` | Watch Face Format XML, minSdk 33 (Wear OS 4). No Kotlin sources. Shows the app's complications |
 
 `versionCode` and `versionName` live in both `app/build.gradle.kts` and `watchface/build.gradle.kts`.
 Keep the two modules on the same pair. A store that publishes a higher `versionCode` is the only
