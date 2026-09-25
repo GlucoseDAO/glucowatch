@@ -15,33 +15,57 @@ import android.graphics.Typeface
 import glucowatch.core.Treatment
 import glucowatch.core.formatAmount
 import io.github.antonkulaga.glucowatch.data.GlucoseState
+import io.github.antonkulaga.glucowatch.ui.Brand
 import kotlin.math.max
 import kotlin.math.min
 
 /**
- * The glucose chart for the face and the app: a smooth line coloured by range over a faint
- * target band, the forecast as a dashed continuation, boluses as blue dots under the plot and
- * carbs as orange dots above it. The background is transparent, so it sits on any face.
+ * The glucose chart for the face, the tile and the app: a smooth line coloured by range over a
+ * faint target band, the forecast as a dashed continuation, boluses as dots under the plot and
+ * carbs as dots above it, all in GlucoseDAO colours (see [Brand]). The background is
+ * transparent, so it sits on any face.
  */
 object ChartRenderer {
-    const val COLOR_LOW = 0xFFF87171.toInt()
-    const val COLOR_HIGH = 0xFFFBBF24.toInt()
-    const val COLOR_IN_RANGE = 0xFF4ADE80.toInt()
-    const val COLOR_INSULIN = 0xFF60A5FA.toInt()
-    const val COLOR_CARBS = 0xFFFB923C.toInt()
-    const val COLOR_FORECAST = 0xFFC4B5FD.toInt()
-    private const val COLOR_BAND = 0x14FFFFFF
-    private const val COLOR_GUIDE = 0x38FFFFFF
-    private const val COLOR_GRID = 0x12FFFFFF
-    private const val COLOR_LABEL = 0x8CFFFFFF.toInt()
+    const val COLOR_LOW = Brand.LOW
+    const val COLOR_HIGH = Brand.HIGH
+    const val COLOR_IN_RANGE = Brand.TEAL_BRIGHT
+    const val COLOR_INSULIN = Brand.INSULIN
+    const val COLOR_CARBS = Brand.CARBS
+    const val COLOR_FORECAST = Brand.FORECAST
+
+    /** What the chart draws with: [DARK] on the black face, tile and app, [LIGHT] on the light tile. */
+    class Palette(
+        val low: Int, val high: Int, val inRange: Int, val insulin: Int, val carbs: Int, val forecast: Int,
+        val band: Int, val guide: Int, val grid: Int, val label: Int, val background: Int,
+    ) {
+        companion object {
+            val DARK = Palette(
+                low = COLOR_LOW, high = COLOR_HIGH, inRange = COLOR_IN_RANGE,
+                insulin = COLOR_INSULIN, carbs = COLOR_CARBS, forecast = COLOR_FORECAST,
+                band = Brand.TEAL_BRIGHT and 0x00FFFFFF or 0x1A000000,
+                guide = Brand.TEAL_LIGHT and 0x00FFFFFF or 0x4D000000,
+                grid = 0x12FFFFFF, label = 0x8CFFFFFF.toInt(), background = 0xFF000000.toInt(),
+            )
+
+            /** GlucoseDAO's poster colours as printed: they are made for a light background. */
+            val LIGHT = Palette(
+                low = Brand.LIGHT_LOW, high = Brand.LIGHT_HIGH, inRange = Brand.TEAL,
+                insulin = Brand.LIGHT_INSULIN, carbs = Brand.LIGHT_CARBS, forecast = Brand.LIGHT_FORECAST,
+                band = Brand.TEAL and 0x00FFFFFF or 0x1A000000,
+                guide = Brand.TEAL and 0x00FFFFFF or 0x66000000,
+                grid = Brand.NAVY and 0x00FFFFFF or 0x1A000000, label = Brand.NAVY and 0x00FFFFFF or 0xB3000000.toInt(),
+                background = Brand.LIGHT_BACKGROUND,
+            )
+        }
+    }
 
     /** Readings further apart than this are not joined by the line. */
     private const val GAP_MS = 12 * 60_000L
 
-    fun colorFor(mgdl: Double, state: GlucoseState): Int = when {
-        mgdl < state.settings.lowMgdl -> COLOR_LOW
-        mgdl > state.settings.highMgdl -> COLOR_HIGH
-        else -> COLOR_IN_RANGE
+    fun colorFor(mgdl: Double, state: GlucoseState, palette: Palette = Palette.DARK): Int = when {
+        mgdl < state.settings.lowMgdl -> palette.low
+        mgdl > state.settings.highMgdl -> palette.high
+        else -> palette.inRange
     }
 
     /**
@@ -51,7 +75,7 @@ object ChartRenderer {
      */
     fun render(
         state: GlucoseState, width: Int, height: Int, labels: Boolean = true, edge: Boolean = false,
-        now: Long = System.currentTimeMillis(),
+        palette: Palette = Palette.DARK, now: Long = System.currentTimeMillis(),
     ): Bitmap {
         val bmp = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
         val c = Canvas(bmp)
@@ -74,7 +98,7 @@ object ChartRenderer {
         val stroke = max(2.5f, height / 60f)
         val dot = stroke * 1.25f
         val font = Typeface.create(Typeface.DEFAULT, Typeface.NORMAL)
-        val label = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = COLOR_LABEL; this.textSize = textSize; typeface = font }
+        val label = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = palette.label; this.textSize = textSize; typeface = font }
 
         // Rows: carbs above the plot, boluses and then the time axis below it. Empty rows take no space.
         val carbRow = if (carbs.isEmpty()) 0f else textSize * 1.25f
@@ -95,7 +119,7 @@ object ChartRenderer {
         val paint = Paint(Paint.ANTI_ALIAS_FLAG)
 
         // Hour grid and labels.
-        val grid = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = COLOR_GRID; strokeWidth = max(1f, stroke / 2.5f) }
+        val grid = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = palette.grid; strokeWidth = max(1f, stroke / 2.5f) }
         label.textAlign = Paint.Align.CENTER
         for (h in s.chartHours downTo 1) {
             val gx = x(now - h * 3_600_000L)
@@ -105,10 +129,10 @@ object ChartRenderer {
         }
 
         // Target range: a faint band with thin dashed edges, labelled on the left.
-        paint.color = COLOR_BAND
+        paint.color = palette.band
         c.drawRect(plot.left, yHigh, plot.right, yLow, paint)
         val guide = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            style = Paint.Style.STROKE; color = COLOR_GUIDE; strokeWidth = max(1f, stroke / 2.5f)
+            style = Paint.Style.STROKE; color = palette.guide; strokeWidth = max(1f, stroke / 2.5f)
             pathEffect = DashPathEffect(floatArrayOf(stroke * 1.5f, stroke * 1.5f), 0f)
         }
         c.drawLine(plot.left, yHigh, plot.right, yHigh, guide)
@@ -117,7 +141,7 @@ object ChartRenderer {
             // Inside the plot, just above each guide, on a black outline so the line can pass behind.
             label.textAlign = Paint.Align.LEFT
             listOf(s.lowMgdl, s.highMgdl).forEach { v ->
-                outlined(c, s.unit.format(v.toDouble()), inset, y(v.toDouble()) - textSize * 0.3f, label, COLOR_LABEL)
+                outlined(c, s.unit.format(v.toDouble()), inset, y(v.toDouble()) - textSize * 0.3f, label, palette.label, palette.background)
             }
         } else if (labels) {
             label.textAlign = Paint.Align.RIGHT
@@ -137,12 +161,12 @@ object ChartRenderer {
                     forecast.asReversed().forEach { lineTo(x(it.timeMillis), y(it.lower!!)) }
                     close()
                 }
-                paint.color = COLOR_FORECAST and 0x00FFFFFF or 0x2E000000
+                paint.color = palette.forecast and 0x00FFFFFF or 0x2E000000
                 c.drawPath(cone, paint)
             }
             val line = smooth(listOf(from) + forecast.map { PointF(x(it.timeMillis), y(it.mgdl)) })
             c.drawPath(line, Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                style = Paint.Style.STROKE; color = COLOR_FORECAST; strokeWidth = stroke * 0.85f; strokeCap = Paint.Cap.ROUND
+                style = Paint.Style.STROKE; color = palette.forecast; strokeWidth = stroke * 0.85f; strokeCap = Paint.Cap.ROUND
                 pathEffect = DashPathEffect(floatArrayOf(stroke * 2.2f, stroke * 1.8f), 0f)
             })
         }
@@ -155,7 +179,7 @@ object ChartRenderer {
             if (i > 0 && r.timeMillis - visible[i - 1].timeMillis > GAP_MS) runs += mutableListOf<PointF>()
             runs.last() += PointF(x(r.timeMillis), y(r.mgdl.toDouble()))
         }
-        val bands = listOf(Triple(0f, yHigh, COLOR_HIGH), Triple(yHigh, yLow, COLOR_IN_RANGE), Triple(yLow, height.toFloat(), COLOR_LOW))
+        val bands = listOf(Triple(0f, yHigh, palette.high), Triple(yHigh, yLow, palette.inRange), Triple(yLow, height.toFloat(), palette.low))
         fun bandColor(py: Float) = bands.first { py < it.second || it === bands.last() }.third
         val lineStroke = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             style = Paint.Style.STROKE; strokeWidth = stroke; strokeCap = Paint.Cap.ROUND; strokeJoin = Paint.Join.ROUND
@@ -185,10 +209,10 @@ object ChartRenderer {
         if (last != null) {
             val cx = x(last.timeMillis)
             val cy = y(last.mgdl.toDouble())
-            val color = colorFor(last.mgdl.toDouble(), state)
+            val color = colorFor(last.mgdl.toDouble(), state, palette)
             paint.color = color and 0x00FFFFFF or 0x40000000
             c.drawCircle(cx, cy, stroke * 3.2f, paint)
-            paint.color = 0xFF000000.toInt()
+            paint.color = palette.background
             c.drawCircle(cx, cy, stroke * 2.1f, paint)
             paint.color = color
             c.drawCircle(cx, cy, stroke * 1.5f, paint)
@@ -210,14 +234,14 @@ object ChartRenderer {
                 paint.color = color
                 c.drawCircle(cx, rowY, dot, paint)
                 val tx = cx + dot * 1.6f
-                if (labels && tx >= free && tx + markLabel.measureText(t) <= width - inset) {
-                    outlined(c, t, tx, rowY + textSize * 0.34f, markLabel, color)
+                if (labels && tx >= free && tx >= inset && tx + markLabel.measureText(t) <= width - inset) {
+                    outlined(c, t, tx, rowY + textSize * 0.34f, markLabel, color, palette.background)
                     free = tx + markLabel.measureText(t) + dot * 2
                 }
             }
         }
-        if (carbs.isNotEmpty()) row(carbs, carbRow / 2 + stroke, COLOR_CARBS) { "${formatAmount(it.carbs, 0)}g" }
-        if (boluses.isNotEmpty()) row(boluses, plot.bottom + stroke + bolusRow / 2, COLOR_INSULIN) { if (it.automatic) null else "${formatAmount(it.insulin, 1)}U" }
+        if (carbs.isNotEmpty()) row(carbs, carbRow / 2 + stroke, palette.carbs) { "${formatAmount(it.carbs, 0)}g" }
+        if (boluses.isNotEmpty()) row(boluses, plot.bottom + stroke + bolusRow / 2, palette.insulin) { if (it.automatic) null else "${formatAmount(it.insulin, 1)}U" }
 
         if (visible.isEmpty()) {
             label.textAlign = Paint.Align.CENTER
@@ -255,11 +279,11 @@ object ChartRenderer {
         return LinearGradient(x0, 0f, x0 + span, 0f, colors.toIntArray(), stops.toFloatArray(), Shader.TileMode.CLAMP)
     }
 
-    /** [text] with a black outline first, so lines and ticks never run into it. */
-    private fun outlined(c: Canvas, text: String, x: Float, y: Float, paint: Paint, color: Int) {
+    /** [text] with an outline in the [background] colour first, so lines and ticks never run into it. */
+    private fun outlined(c: Canvas, text: String, x: Float, y: Float, paint: Paint, color: Int, background: Int) {
         val style = paint.style
         val strokeWidth = paint.strokeWidth
-        paint.style = Paint.Style.STROKE; paint.strokeWidth = paint.textSize * 0.3f; paint.color = 0xFF000000.toInt()
+        paint.style = Paint.Style.STROKE; paint.strokeWidth = paint.textSize * 0.3f; paint.color = background
         c.drawText(text, x, y, paint)
         paint.style = Paint.Style.FILL; paint.color = color
         c.drawText(text, x, y, paint)

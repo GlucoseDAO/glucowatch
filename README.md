@@ -1,8 +1,9 @@
 # glucowatch
 
 Shows your glucose on a Wear OS watch (Galaxy Watch and others): current value with trend
-arrow, a glucose chart from rim to rim, and an optional forecast, on a watch face, a tile and in
-the app. With Nightscout it also shows insulin and carbs
+arrow, a glucose chart from rim to rim, and an optional forecast, on a watch face, three tiles and
+in the app, in GlucoseDAO colours. The face and one tile also show your heart rate from the
+watch's own sensor, smaller than glucose. With Nightscout it also shows insulin and carbs
 on board, boluses and carbs on the chart, and your loop's own forecast (AAPS, Trio, iAPS, Loop).
 
 The watch talks to **Dexcom Share** or to **your Nightscout** directly: no phone app, no
@@ -39,7 +40,7 @@ adb install -r io.github.antonkulaga.glucowatch_<version>.apk
 adb install -r io.github.antonkulaga.glucowatch.watchface_<version>.apk
 ```
 
-On the watch, open **GlucoWatch** → **Settings** and pick a data source: **Dexcom Share** (username, password, region) or **Nightscout** (your site's address and an access token, see [Nightscout](#nightscout)). Tap **Save & test**. Then long-press the current watch face, swipe to the end, tap **+ Add watch face** and pick **GlucoWatch face**. If a slot is empty, long-press the face → **Customize** → tap the slot → **Glucose** or **Glucose chart**. For the tile, swipe left from the face to the end of the tiles, tap **+ Add tiles** and pick **Glucose** (GlucoWatch).
+On the watch, open **GlucoWatch** → **Settings** and pick a data source: **Dexcom Share** (username, password, region) or **Nightscout** (your site's address and an access token, see [Nightscout](#nightscout)). Tap **Save & test**. Then long-press the current watch face, swipe to the end, tap **+ Add watch face** and pick **GlucoWatch face**. If a slot is empty, long-press the face → **Customize** → tap the slot → **Glucose** or **Glucose chart**. For a tile, swipe left from the face to the end of the tiles, tap **+ Add tiles** and pick one of the three: **Glucose** (glucose-only), **Glucose, time and heart** (clock, glucose, heart rate and battery), or **Glucose (light)** (the glucose tile on a light background). The face asks for heart-rate access when you choose it; for heart rate on the tile, tap **Allow heart rate** in GlucoWatch → Settings.
 
 Turn **Wireless debugging** off when you are done. It uses extra battery.
 
@@ -52,10 +53,12 @@ From a phone, without a computer: download both APKs in the phone's browser, ins
 | Module | What it is |
 |---|---|
 | `core/` | Pure Kotlin: Dexcom Share and Nightscout clients, models, `GlucosePredictor` interface, demo data, desktop CLI. Unit-tested on the JVM. |
-| `app/` | Wear OS app: fetches every 5 min, caches 24 h, provides 5 complications (value, chart, forecast, IOB/COB, last bolus and carbs), a tile, app screen + settings. |
+| `app/` | Wear OS app: fetches every 5 min, caches 24 h, provides 5 complications (value, chart, forecast, IOB/COB, last bolus and carbs), 3 tiles, app screen + settings. |
 | `watchface/` | Watch Face Format (XML, no code) face that shows the five complications. |
 
-The icon is GlucoseDAO's glucose molecule. `python3 scripts/make_icon.py` draws the launcher
+The icon is GlucoseDAO's glucose molecule, and the colours are GlucoseDAO's (`ui/Brand.kt`):
+teal for glucose, orange for insulin, green for carbs, purple for the forecast, as on its posters.
+The light tile uses the poster colours unchanged. `python3 scripts/make_icon.py` draws the launcher
 vector and the store icon from one geometry. `python3 scripts/store_images.py` makes the store
 screenshots and the face and tile previews from a `demo` run of the screenshot script.
 
@@ -242,7 +245,7 @@ instead of running a model on the watch.
 
 `python3 scripts/screenshots.py` builds the debug APKs, boots an emulator shaped like a Galaxy
 Watch6 Classic 43 mm (round, 432 px, density 340) and saves round screenshots of the face, the
-tile and the app for demo data, Dexcom Share and Nightscout into `data/output/screenshots/`. See
+three tiles and the app for demo data, Dexcom Share and Nightscout into `data/output/screenshots/`. See
 [docs/screenshots.md](docs/screenshots.md).
 
 ## How it works
@@ -253,7 +256,10 @@ tile and the app for demo data, Dexcom Share and Nightscout into `data/output/sc
 - Nightscout: `entries`, `treatments` and `devicestatus`, read-only, through API v1 or v3. Only
   new readings are fetched after the first run. See [docs/nightscout.md](docs/nightscout.md).
 - Refresh: exact alarm ~20 s after the next expected reading, polling every minute if the reading
-  is late; after a fetch all complications and the tile are asked to update.
+  is late; after a fetch all complications and tiles are asked to update.
+- Heart rate is not fetched: the face reads it through Watch Face Format (`[HEART_RATE]`), and
+  the glucose-all tile through the tile renderer (`PlatformHealthSources`). Both come from the
+  watch's own sensor, with the heart-rate permission the watch asks for. No library is added.
 - Credentials are stored only in the app's private storage on the watch and sent only to Dexcom
   or to your Nightscout.
 

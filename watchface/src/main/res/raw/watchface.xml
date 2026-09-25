@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
   GlucoWatch face (Watch Face Format v1, 450x450 design canvas, laid out for a round screen).
-  From the top: date, time, the glucose chart from rim to rim through the middle of the circle,
+  From the top: date and heart rate, time, the glucose chart from rim to rim through the middle of the circle,
   then the value with IOB/COB on its left and the last bolus on its right, the change since the
   previous reading, and the optional forecast. The chart runs across the widest part of the
   circle; everything else stays inside the circle at its height.
@@ -15,7 +15,8 @@
   Every slot can be re-assigned to any other data source from the watch face editor.
   Keep the ComplicationSlot elements in slotId order: the Wear runtime keeps a user's providers
   by the position of the slot in this file, so reordering them swaps providers on update.
-  Colours match the app: insulin #60A5FA, carbs #FB923C, forecast #C4B5FD.
+  GlucoseDAO colours as in the app (app/.../ui/Brand.kt): date #6CCBD8, insulin #F0923A,
+  carbs #4FBF85, forecast #A78BDB, secondary text #8FA0AA. Change both together.
 -->
 <WatchFace width="450" height="450">
     <Metadata key="CLOCK_TYPE" value="DIGITAL" />
@@ -23,17 +24,54 @@
 
     <Scene backgroundColor="#FF000000">
 
-        <PartText x="75" y="34" width="300" height="32">
-            <Text align="CENTER" ellipsis="TRUE">
-                <Font family="SYNC_TO_DEVICE" size="24" weight="MEDIUM" color="#FF9CA3AF">
-                    <Template>%s %s %s<Parameter expression="[DAY_OF_WEEK_S]" /><Parameter expression="[DAY]" /><Parameter expression="[MONTH_S]" /></Template>
-                </Font>
-            </Text>
-        </PartText>
+        <!-- Date, and the heart rate from the watch's own sensor beside it once there is a reading.
+             Muted on purpose: glucose stays the thing that stands out. The watch asks for the
+             heart-rate permission when the face is chosen (AndroidManifest.xml). -->
+        <Group name="date_and_heart_rate" x="60" y="34" width="330" height="32">
+            <Condition>
+                <Expressions>
+                    <Expression name="hasHeartRate"><![CDATA[[HEART_RATE] > 0]]></Expression>
+                </Expressions>
+                <Compare expression="hasHeartRate">
+                    <Group name="with_heart_rate" x="0" y="0" width="330" height="32">
+                    <PartText x="0" y="0" width="196" height="32">
+                        <Text align="END" ellipsis="TRUE">
+                            <Font family="SYNC_TO_DEVICE" size="24" weight="MEDIUM" color="#FF6CCBD8">
+                                <Template>%s %s %s<Parameter expression="[DAY_OF_WEEK_S]" /><Parameter expression="[DAY]" /><Parameter expression="[MONTH_S]" /></Template>
+                            </Font>
+                        </Text>
+                    </PartText>
+                    <PartText x="206" y="0" width="28" height="32">
+                        <Text align="START">
+                            <Font family="SYNC_TO_DEVICE" size="22" color="#FFF0525A">
+                                <Template>♥</Template>
+                            </Font>
+                        </Text>
+                    </PartText>
+                    <PartText x="234" y="0" width="96" height="32">
+                        <Text align="START" ellipsis="TRUE">
+                            <Font family="SYNC_TO_DEVICE" size="24" weight="MEDIUM" color="#FF8FA0AA">
+                                <Template>%s<Parameter expression="round([HEART_RATE])" /></Template>
+                            </Font>
+                        </Text>
+                    </PartText>
+                    </Group>
+                </Compare>
+                <Default>
+                    <PartText x="0" y="0" width="330" height="32">
+                        <Text align="CENTER" ellipsis="TRUE">
+                            <Font family="SYNC_TO_DEVICE" size="24" weight="MEDIUM" color="#FF6CCBD8">
+                                <Template>%s %s %s<Parameter expression="[DAY_OF_WEEK_S]" /><Parameter expression="[DAY]" /><Parameter expression="[MONTH_S]" /></Template>
+                            </Font>
+                        </Text>
+                    </PartText>
+                </Default>
+            </Condition>
+        </Group>
 
         <DigitalClock x="0" y="64" width="450" height="84">
             <TimeText format="hh:mm" hourFormat="SYNC_TO_DEVICE" align="CENTER" x="0" y="0" width="450" height="84">
-                <Font family="SYNC_TO_DEVICE" size="76" weight="MEDIUM" color="#FFF3F4F6" />
+                <Font family="SYNC_TO_DEVICE" size="76" weight="MEDIUM" color="#FFE6EDF0" />
             </TimeText>
         </DigitalClock>
 
@@ -54,7 +92,7 @@
                 </PartText>
                 <PartText x="0" y="66" width="170" height="30">
                     <Text align="CENTER" ellipsis="TRUE">
-                        <Font family="SYNC_TO_DEVICE" size="24" color="#FF9CA3AF">
+                        <Font family="SYNC_TO_DEVICE" size="24" color="#FF8FA0AA">
                             <Template>%s<Parameter expression="[COMPLICATION.TITLE]" /></Template>
                         </Font>
                     </Text>
@@ -70,7 +108,7 @@
                 </PartText>
                 <PartText x="0" y="66" width="170" height="30">
                     <Text align="CENTER" ellipsis="TRUE">
-                        <Font family="SYNC_TO_DEVICE" size="24" color="#FF9CA3AF">
+                        <Font family="SYNC_TO_DEVICE" size="24" color="#FF8FA0AA">
                             <Template>%s<Parameter expression="[COMPLICATION.TITLE]" /></Template>
                         </Font>
                     </Text>
@@ -112,7 +150,7 @@
             <Complication type="SHORT_TEXT">
                 <PartText x="0" y="0" width="200" height="30">
                     <Text align="CENTER" ellipsis="TRUE">
-                        <Font family="SYNC_TO_DEVICE" size="22" weight="MEDIUM" color="#FFC4B5FD">
+                        <Font family="SYNC_TO_DEVICE" size="22" weight="MEDIUM" color="#FFA78BDB">
                             <Template>%s in %s<Parameter expression="[COMPLICATION.TEXT]" /><Parameter expression="[COMPLICATION.TITLE]" /></Template>
                         </Font>
                     </Text>
@@ -131,14 +169,14 @@
             <Complication type="SHORT_TEXT">
                 <PartText x="0" y="4" width="74" height="36">
                     <Text align="CENTER" ellipsis="TRUE">
-                        <Font family="SYNC_TO_DEVICE" size="28" weight="MEDIUM" color="#FF60A5FA">
+                        <Font family="SYNC_TO_DEVICE" size="28" weight="MEDIUM" color="#FFF0923A">
                             <Template>%s<Parameter expression="[COMPLICATION.TEXT]" /></Template>
                         </Font>
                     </Text>
                 </PartText>
                 <PartText x="0" y="40" width="74" height="28">
                     <Text align="CENTER" ellipsis="TRUE">
-                        <Font family="SYNC_TO_DEVICE" size="22" weight="MEDIUM" color="#FFFB923C">
+                        <Font family="SYNC_TO_DEVICE" size="22" weight="MEDIUM" color="#FF4FBF85">
                             <Template>%s<Parameter expression="[COMPLICATION.TITLE]" /></Template>
                         </Font>
                     </Text>
@@ -157,14 +195,14 @@
             <Complication type="SHORT_TEXT">
                 <PartText x="0" y="4" width="74" height="36">
                     <Text align="CENTER" ellipsis="TRUE">
-                        <Font family="SYNC_TO_DEVICE" size="28" weight="MEDIUM" color="#FFE5E7EB">
+                        <Font family="SYNC_TO_DEVICE" size="28" weight="MEDIUM" color="#FFE6EDF0">
                             <Template>%s<Parameter expression="[COMPLICATION.TEXT]" /></Template>
                         </Font>
                     </Text>
                 </PartText>
                 <PartText x="0" y="40" width="74" height="28">
                     <Text align="CENTER" ellipsis="TRUE">
-                        <Font family="SYNC_TO_DEVICE" size="20" weight="MEDIUM" color="#FF9CA3AF">
+                        <Font family="SYNC_TO_DEVICE" size="20" weight="MEDIUM" color="#FF8FA0AA">
                             <Template>%s<Parameter expression="[COMPLICATION.TITLE]" /></Template>
                         </Font>
                     </Text>

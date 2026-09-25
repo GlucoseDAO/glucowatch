@@ -8,4 +8,8 @@
     <string name="complication_treatments">Last bolus and carbs</string>
     <string name="tile_label">Glucose</string>
     <string name="tile_description">Glucose, trend and the last hours as a chart</string>
+    <string name="tile_all_label">Glucose, time and heart</string>
+    <string name="tile_all_description">Time, glucose, a short chart, heart rate and battery</string>
+    <string name="tile_light_label">Glucose (light)</string>
+    <string name="tile_light_description">The glucose tile on a light background</string>
 </resources>

@@ -4,10 +4,10 @@
 Run `python3 scripts/screenshots.py demo` first. This then writes, from demo data only (never a
 real account's readings):
 
-    fastlane/metadata/android/en-US/images/phoneScreenshots/01-face.png, 02-tile.png, 03-app.png
+    fastlane/metadata/android/en-US/images/phoneScreenshots/01-face.png ... 05-app.png
         1080 x 1920, a round watch capture with a title, in GlucoseDAO colours
-    watchface/src/main/res/drawable/preview.png    the face in the watch face picker
-    app/src/main/res/drawable/tile_preview.png     the tile in the "Add tiles" list
+    watchface/src/main/res/drawable/preview.png        the face in the watch face picker
+    app/src/main/res/drawable/tile_preview*.png        each tile in the "Add tiles" list
 
     python3 scripts/store_images.py
 """
@@ -28,9 +28,17 @@ FONT_REGULAR = '/usr/share/fonts/opentype/inter/Inter-Regular.otf'
 
 SCREENS = [
     ('01-face.png', 'demo-face.png', 'GlucoWatch', 'Glucose, trend and 3 hours on your watch face'),
-    ('02-tile.png', 'demo-tile.png', 'Tile', 'Swipe from the face for the same at a glance'),
-    ('03-app.png', 'demo-app-0.png', 'App', 'Dexcom Share or Nightscout, no phone app'),
+    ('02-tile-glucose-only.png', 'demo-tile-glucose-only.png', 'Glucose tile', 'Swipe from the face for glucose at a glance'),
+    ('03-tile-glucose-all.png', 'demo-tile-glucose-all.png', 'Glucose, time and heart', 'Clock, glucose, heart rate and battery together'),
+    ('04-tile-glucose-light.png', 'demo-tile-glucose-light.png', 'Light tile', 'The glucose tile in GlucoseDAO\'s light colours'),
+    ('05-app.png', 'demo-app-0.png', 'App', 'Dexcom Share or Nightscout, no phone app'),
 ]
+# Preview in the "Add tiles" list -> the capture it comes from.
+TILE_PREVIEWS = {
+    'tile_preview.png': 'demo-tile-glucose-only.png',
+    'tile_preview_all.png': 'demo-tile-glucose-all.png',
+    'tile_preview_light.png': 'demo-tile-glucose-light.png',
+}
 
 
 def circle(frame, size):
@@ -50,7 +58,10 @@ def store_image(capture, title, subtitle):
     for y in range(h):
         t = y / (h - 1)
         d.line((0, y, w, y), fill=tuple(round(a + (b - a) * t) for a, b in zip(BACKGROUND_TOP, BACKGROUND_BOTTOM)))
-    d.text((w / 2, 250), title, font=ImageFont.truetype(FONT_BOLD, 96), fill=WHITE, anchor='mm')
+    size = 96
+    while ImageFont.truetype(FONT_BOLD, size).getlength(title) > w - 120:
+        size -= 4
+    d.text((w / 2, 250), title, font=ImageFont.truetype(FONT_BOLD, size), fill=WHITE, anchor='mm')
     d.text((w / 2, 360), subtitle, font=ImageFont.truetype(FONT_REGULAR, 44), fill=TEAL_LIGHT, anchor='mm')
     watch, bezel = 860, 34
     top = 560
@@ -64,14 +75,18 @@ def store_image(capture, title, subtitle):
 
 def main():
     missing = [raw for _, raw, _, _ in SCREENS if not (RAW / raw).is_file()]
+    missing += [raw for raw in TILE_PREVIEWS.values() if not (RAW / raw).is_file() and raw not in missing]
     if missing:
         sys.exit(f'missing {", ".join(missing)} in {RAW}: run python3 scripts/screenshots.py demo first')
     SHOTS.mkdir(parents=True, exist_ok=True)
+    for old in SHOTS.glob('*.png'):
+        old.unlink()
     for name, raw, title, subtitle in SCREENS:
         store_image(Image.open(RAW / raw), title, subtitle).save(SHOTS / name, optimize=True)
     circle(Image.open(RAW / 'demo-face.png'), 450).save(ROOT / 'watchface/src/main/res/drawable/preview.png', optimize=True)
-    circle(Image.open(RAW / 'demo-tile.png'), 320).save(ROOT / 'app/src/main/res/drawable/tile_preview.png', optimize=True)
-    print(f'wrote {len(SCREENS)} store screenshots, the face preview and the tile preview')
+    for preview, raw in TILE_PREVIEWS.items():
+        circle(Image.open(RAW / raw), 320).save(ROOT / 'app/src/main/res/drawable' / preview, optimize=True)
+    print(f'wrote {len(SCREENS)} store screenshots, the face preview and {len(TILE_PREVIEWS)} tile previews')
 
 
 if __name__ == '__main__':

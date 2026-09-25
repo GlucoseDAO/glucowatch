@@ -3,6 +3,14 @@
 
     <uses-feature android:name="android.hardware.type.watch" />
 
+    <!-- Heart rate for [HEART_RATE] beside the date. The watch asks the user when the face is
+         chosen; without it the face shows the date only. Wear OS 6 replaced BODY_SENSORS with
+         the per-type health permission. -->
+    <uses-permission
+        android:name="android.permission.BODY_SENSORS"
+        android:maxSdkVersion="35" />
+    <uses-permission android:name="android.permission.health.READ_HEART_RATE" />
+
     <!-- Watch Face Format: declarative only, no code. -->
     <application
         android:hasCode="false"

@@ -3,8 +3,8 @@
 Checked on 2026-09-25 with the Wear OS 6 emulator image (API 36) and the code after tag `v0.1.4`.
 
 `scripts/screenshots.py` builds both debug APKs, installs them on an emulator that matches a
-Galaxy Watch, and saves round screenshots of the watch face, the tile and the app for each data
-source.
+Galaxy Watch, and saves round screenshots of the watch face, the three tiles and the app for each
+data source. Every file is named after what it shows.
 
 ```bash
 python3 scripts/screenshots.py                     # every scenario that is configured
@@ -52,20 +52,22 @@ testing: `python3 scripts/nightscout_replay.py <url> 8537 [token]`.
 
 Each scenario sets the source with the debug-only adb extras of `SettingsActivity` (see README,
 "From the PC over adb"). It then waits until the app's `fetchedAt` changes, captures the app
-screen scrolled to the end, shows the tile (added once after install), and captures the face in
-interactive and ambient mode.
+screen scrolled to the end, shows each tile, and captures the face in interactive and ambient mode.
 
 ## Output
 
-`data/output/screenshots/` (the whole `data/output/` directory is gitignored):
+`data/output/screenshots/` (the whole `data/output/` directory is gitignored). Each run deletes
+the PNGs and `raw/` there first, so the folder only holds the scenarios of the last run:
 
 | File | Content |
 |---|---|
 | `<scenario>-face.png` | the watch face |
 | `<scenario>-face-ambient.png` | the face in ambient (always-on) mode |
-| `<scenario>-tile.png` | the GlucoWatch tile |
+| `<scenario>-tile-glucose-only.png` | the Glucose tile |
+| `<scenario>-tile-glucose-all.png` | the Glucose, time and heart tile |
+| `<scenario>-tile-glucose-light.png` | the Glucose (light) tile |
 | `<scenario>-app.png` | the app's main screen, one round frame per scroll step |
-| `overview.png` | all faces of the run side by side |
+| `overview.png` | one row per scenario: the face and the three tiles |
 | `raw/` | the unclipped 432 × 432 captures |
 
 Screenshots from `dexcom` and `nightscout` show real glucose data. Do not publish them without
@@ -105,3 +107,11 @@ asking the person the data belongs to.
 - The chart's glow used to be clipped by band, so a line above the target range painted the whole
   band in the in-range colour. It is now coloured by the line above each column; check a
   scenario that stays high (a real `dexcom` capture) after changing `ChartRenderer`.
+- `add-tile` always inserts the new tile first and answers `Index=[0]`, so indices from several
+  `add-tile` calls do not say where each tile ended up. The script captures one tile at a time:
+  it removes all GlucoWatch tiles, adds the one it wants, and shows index 0.
+- The emulator's heart rate comes from Health Services' synthetic data (`adb shell am broadcast
+  -a whs.USE_SYNTHETIC_PROVIDERS com.google.android.wearable.healthservices`, then
+  `whs.synthetic.user.START_WALKING`). The glucose-all tile shows it. The face's `[HEART_RATE]`
+  stayed 0 on the emulator even with that data and the permission granted, so the face shows
+  the date only there; check heart rate on the face on a real watch.

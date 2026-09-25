@@ -59,7 +59,7 @@ class MainActivity : Activity() {
             textSize = 38f; gravity = Gravity.CENTER; typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
             includeFontPadding = false
         }
-        status = text(13f, 0xFFB0B8C4.toInt())
+        status = text(13f, Brand.MUTED)
         iob = chip(ChartRenderer.COLOR_INSULIN)
         cob = chip(ChartRenderer.COLOR_CARBS)
         chips = LinearLayout(this).apply {
@@ -68,8 +68,8 @@ class MainActivity : Activity() {
         }
         chart = ImageView(this).apply { adjustViewBounds = true }
         forecast = text(13f, ChartRenderer.COLOR_FORECAST)
-        therapy = text(13f, 0xFFE5E7EB.toInt()).apply { setLineSpacing(dp(3).toFloat(), 1f) }
-        source = text(11f, 0xFF8B95A3.toInt())
+        therapy = text(13f, Brand.TEXT).apply { setLineSpacing(dp(3).toFloat(), 1f) }
+        source = text(11f, Brand.MUTED)
         val refresh = Button(this).apply {
             text = "Refresh"; setOnClickListener { refresh() }
             Brand.style(this, primary = true)
@@ -117,7 +117,7 @@ class MainActivity : Activity() {
             value.setTextColor(Color.WHITE)
         } else {
             value.text = "${unit.format(latest.mgdl.toDouble())} ${latest.trend.arrow}"
-            value.setTextColor(if (state.isStale()) Color.GRAY else ChartRenderer.colorFor(latest.mgdl.toDouble(), state))
+            value.setTextColor(if (state.isStale()) Brand.MUTED else ChartRenderer.colorFor(latest.mgdl.toDouble(), state))
         }
         status.text = listOfNotNull(
             state.readings.lastDelta()?.let { "${unit.formatDelta(it)} ${unit.label}" },
@@ -164,7 +164,7 @@ class MainActivity : Activity() {
             },
             state.lastError?.let { "⚠ $it" },
         ).joinToString("\n")
-        source.setTextColor(if (state.lastError != null) ChartRenderer.COLOR_HIGH else 0xFF8B95A3.toInt())
+        source.setTextColor(if (state.lastError != null) ChartRenderer.COLOR_HIGH else Brand.MUTED)
     }
 
     private fun text(size: Float, color: Int) = TextView(this).apply {
@@ -175,7 +175,7 @@ class MainActivity : Activity() {
     private fun chip(color: Int) = TextView(this).apply {
         textSize = 13f; setTextColor(color); typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
         setPadding(dp(10), dp(4), dp(10), dp(4))
-        background = GradientDrawable().apply { cornerRadius = dp(14).toFloat(); setColor(0xFF1C2230.toInt()) }
+        background = GradientDrawable().apply { cornerRadius = dp(14).toFloat(); setColor(Brand.SURFACE) }
     }
 
     private fun dp(v: Int) = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, v.toFloat(), resources.displayMetrics).toInt()

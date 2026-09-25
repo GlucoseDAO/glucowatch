@@ -1,4 +1,4 @@
-Shows your glucose on a Wear OS watch: the current value with a trend arrow, a chart across the whole round screen, and an optional forecast. It comes as a watch face, a tile, and an app.
+Shows your glucose on a Wear OS watch: the current value with a trend arrow, a chart across the whole round screen, and an optional forecast. It comes as a watch face, three tiles (glucose only; clock, glucose, heart rate and battery; and a light one), and an app, in GlucoseDAO colours. The face and one tile also show your heart rate from the watch's own sensor.
 
 The watch reads Dexcom Share or your own Nightscout directly. There is no phone app and no extra server. Dexcom readings need Share turned on in the official Dexcom app, with at least one follower.
 
@@ -19,7 +19,7 @@ adb connect <watch-ip>:<connect-port>
 adb install -r <the app apk>
 adb install -r <the watch face apk>
 
-Open GlucoWatch, tap Settings, and choose Dexcom Share (username, password and region) or Nightscout (the site's address and, for a private site, an access token with the readable role). Tap Save & test. Long-press the current watch face, swipe to the end, tap Add watch face and choose GlucoWatch face. If a slot is empty, long-press the face, tap Customize, tap the slot, and choose Glucose or Glucose chart. For the tile, swipe left from the face to the end of the tiles, tap Add tiles and choose Glucose.
+Open GlucoWatch, tap Settings, and choose Dexcom Share (username, password and region) or Nightscout (the site's address and, for a private site, an access token with the readable role). Tap Save & test. Long-press the current watch face, swipe to the end, tap Add watch face and choose GlucoWatch face. If a slot is empty, long-press the face, tap Customize, tap the slot, and choose Glucose or Glucose chart. For a tile, swipe left from the face to the end of the tiles, tap Add tiles and choose Glucose, Glucose, time and heart, or Glucose (light). For heart rate on the tile, tap Allow heart rate in GlucoWatch Settings.
 
 Turn Wireless debugging off afterwards. It uses extra battery. A newer version is installed the same way: adb install -r replaces the copy already on the watch.
 

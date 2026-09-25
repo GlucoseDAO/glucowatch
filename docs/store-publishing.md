@@ -124,6 +124,12 @@ when `canScheduleExactAlarms()` returns false. There are two ways to ship on Pla
   both fine for F-Droid.
 - Fill in the Data safety form and the Health apps declaration. Every app on Play must file the
   declaration.
+- Both packages declare heart-rate access (`health.READ_HEART_RATE`, and `BODY_SENSORS` up to
+  API 35) for the heart rate on the face and the glucose-all tile. Play treats that as health
+  data: the Data safety form must list heart rate, read on the watch and not shared. Watch faces
+  with body-sensor permissions and no health feature get rejected; here heart rate is shown to
+  the user, which is the feature. F-Droid has no rule against it; the permission shows on the
+  app's page.
 - The description must:
   - say the app is "not a medical device and does not diagnose, treat, cure, or prevent any
     medical condition" (the current text has a shorter disclaimer);

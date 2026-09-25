@@ -4,17 +4,22 @@
 The emulator is a round 432x432 px Wear OS screen at density 340, the size of the Galaxy Watch6
 40 mm and Watch6 Classic 43 mm (SM-R950), the watch GlucoWatch is tried on. The script creates
 that AVD if it is missing, boots it without a window, builds and installs both debug APKs, sets
-the GlucoWatch face, adds the GlucoWatch tile, and captures every scenario:
+the GlucoWatch face, adds the three GlucoWatch tiles, and captures every scenario:
 
     demo               demo data, no account
     dexcom             Dexcom Share with DEXCOM_USERNAME / DEXCOM_PASSWORD from .env
     nightscout         the Nightscout at NIGHTSCOUT_URL (plus NIGHTSCOUT_TOKEN, NIGHTSCOUT_API)
     nightscout-replay  the same Nightscout replayed so its loop looks fresh (scripts/nightscout_replay.py)
 
-Output (data/output/ is gitignored): data/output/screenshots/<scenario>-face.png,
-<scenario>-face-ambient.png, <scenario>-tile.png, <scenario>-app.png (the app screen, scrolled,
-frames side by side),
-the raw square captures under raw/, and overview.png with all faces.
+Output (data/output/ is gitignored), in data/output/screenshots/, named after what they show:
+
+    <scenario>-face.png, <scenario>-face-ambient.png    the watch face
+    <scenario>-tile-glucose-only.png                    the three tiles
+    <scenario>-tile-glucose-all.png
+    <scenario>-tile-glucose-light.png
+    <scenario>-app.png                                  the app screen, scrolled, frames side by side
+    overview.png                                        one row per scenario: face and tiles
+    raw/                                                the unclipped square captures behind these
 
     python3 scripts/screenshots.py                      # all scenarios that are configured
     python3 scripts/screenshots.py nightscout dexcom    # some of them
@@ -46,7 +51,13 @@ SERIAL = f'emulator-{PORT}'
 REPLAY_PORT = 8537
 PKG = 'io.github.antonkulaga.glucowatch'
 FACE = PKG + '.watchface'
-TILE = f'{PKG}/{PKG}.tile.GlucoseTileService'
+# Tile name in the file names -> its service. Also the order in the tile carousel.
+TILES = {
+    'glucose-only': f'{PKG}/{PKG}.tile.GlucoseTileService',
+    'glucose-all': f'{PKG}/{PKG}.tile.GlucoseAllTileService',
+    'glucose-light': f'{PKG}/{PKG}.tile.GlucoseLightTileService',
+}
+
 SCENARIOS = ['demo', 'dexcom', 'nightscout', 'nightscout-replay']
 
 
@@ -165,14 +176,16 @@ def build_and_install(build):
     adb('uninstall', FACE, check=False)
     for apk in ('app/build/outputs/apk/debug/app-debug.apk', 'watchface/build/outputs/apk/debug/watchface-debug.apk'):
         adb('install', '-r', str(ROOT / apk))
+    # Heart rate on the face and the glucose-all tile: grant what the watch would ask for.
+    for package in (FACE, PKG):
+        adb('shell', 'pm', 'grant', package, 'android.permission.health.READ_HEART_RATE', check=False)
     debug_surface('set-watchface', '--es', 'watchFaceId', FACE)
-    debug_surface('add-tile', '--ecn', 'component', TILE)
 
 
 def debug_surface(operation, *extras):
     """The emulator's debug hooks for faces and tiles (Wear OS 4 and later)."""
     return adb('shell', 'am', 'broadcast', '-a', 'com.google.android.wearable.app.DEBUG_SURFACE',
-               '--es', 'operation', operation, *extras)
+               '--es', 'operation', operation, *extras, check=False)
 
 
 def fetched_at():
@@ -205,7 +218,7 @@ def screencap(path):
 
 
 def capture(name, raw_dir):
-    """App screen (scrolled to the end) and the watch face, interactive and ambient."""
+    """App screen (scrolled to the end), each tile, and the watch face, interactive and ambient."""
     adb('shell', 'am', 'start', '-S', '-W', '-n', f'{PKG}/.ui.MainActivity')
     nap(6)
     frames = []
@@ -218,13 +231,18 @@ def capture(name, raw_dir):
         frames.append(frame)
         adb('shell', 'input', 'swipe', str(MIDDLE), str(MIDDLE * 16 // 10), str(MIDDLE), str(MIDDLE * 6 // 10), '400')
         nap(1.5)
-    # The tile was added once after install; show it, give it time to fetch its chart, capture.
-    adb('shell', 'input', 'keyevent', 'KEYCODE_HOME')
-    nap(2)
-    adb('shell', 'am', 'broadcast', '-a', 'com.google.android.wearable.app.DEBUG_SYSUI',
-        '--es', 'operation', 'show-tile', '--ei', 'index', '0')
-    nap(6)
-    screencap(raw_dir / f'{name}-tile.png')
+    # One tile at a time: add-tile always puts the new tile first and answers Index=[0], so the
+    # only reliable way to show a given tile is to have it be the only GlucoWatch tile.
+    for tile, component in TILES.items():
+        for other in TILES.values():
+            debug_surface('remove-tile', '--ecn', 'component', other)
+        debug_surface('add-tile', '--ecn', 'component', component)
+        adb('shell', 'input', 'keyevent', 'KEYCODE_HOME')
+        nap(2)
+        adb('shell', 'am', 'broadcast', '-a', 'com.google.android.wearable.app.DEBUG_SYSUI',
+            '--es', 'operation', 'show-tile', '--ei', 'index', '0')
+        nap(6)
+        screencap(raw_dir / f'{name}-tile-{tile}.png')
     adb('shell', 'input', 'keyevent', 'KEYCODE_HOME')
     nap(6)
     screencap(raw_dir / f'{name}-face.png')
@@ -260,6 +278,16 @@ def side_by_side(images, gap=16, background=(0, 0, 0, 0)):
     for image in images:
         out.paste(image, (x, 0), image)
         x += image.width + gap
+    return out
+
+
+def stacked(rows, gap=16, background=(255, 255, 255, 255)):
+    from PIL import Image
+    out = Image.new('RGBA', (max(r.width for r in rows), sum(r.height for r in rows) + gap * (len(rows) - 1)), background)
+    y = 0
+    for row in rows:
+        out.paste(row, (0, y), row)
+        y += row.height + gap
     return out
 
 
@@ -306,9 +334,13 @@ def main():
         sys.exit('nothing to capture')
 
     out = Path(args.out)
+    # Each run replaces its output: no captures from older runs or older designs stay behind.
+    # Only what this script writes goes (PNGs and raw/), in case --out points somewhere shared.
     raw_dir = out / 'raw'
     if raw_dir.exists():
         shutil.rmtree(raw_dir)
+    for old in out.glob('*.png'):
+        old.unlink()
     raw_dir.mkdir(parents=True)
 
     replay = None
@@ -321,20 +353,22 @@ def main():
     try:
         prepare_device()
         build_and_install(not args.no_build)
-        faces = []
+        rows = []
         for scenario, extras in plans.items():
             log(f'{scenario}: configuring')
             configure(extras)
             frames = capture(scenario, raw_dir)
             app = side_by_side([round_frame(Image.open(f)) for f in frames])
             app.save(out / f'{scenario}-app.png')
-            face = round_frame(Image.open(raw_dir / f'{scenario}-face.png'))
-            face.save(out / f'{scenario}-face.png')
-            round_frame(Image.open(raw_dir / f'{scenario}-face-ambient.png')).save(out / f'{scenario}-face-ambient.png')
-            round_frame(Image.open(raw_dir / f'{scenario}-tile.png')).save(out / f'{scenario}-tile.png')
-            faces.append(face)
-            log(f'{scenario}: saved {scenario}-face.png, -face-ambient.png, -tile.png, -app.png ({len(frames)} frames)')
-        side_by_side(faces, background=(255, 255, 255, 255)).save(out / 'overview.png')
+            row = []
+            for shot in ['face', 'face-ambient'] + [f'tile-{tile}' for tile in TILES]:
+                image = round_frame(Image.open(raw_dir / f'{scenario}-{shot}.png'))
+                image.save(out / f'{scenario}-{shot}.png')
+                if shot != 'face-ambient':
+                    row.append(image)
+            rows.append(side_by_side(row))
+            log(f'{scenario}: saved -face, -face-ambient, {", ".join(f"-tile-{t}" for t in TILES)}, -app ({len(frames)} app frames)')
+        stacked(rows).save(out / 'overview.png')
         log(f'done: {out}')
     finally:
         if replay:

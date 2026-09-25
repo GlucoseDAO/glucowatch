@@ -1,9 +1,11 @@
 package io.github.antonkulaga.glucowatch.ui
 
+import android.Manifest
 import android.app.Activity
 import android.content.pm.ApplicationInfo
-import android.graphics.Color
+import android.content.pm.PackageManager
 import android.graphics.Typeface
+import android.os.Build
 import android.os.Bundle
 import android.text.InputType
 import android.util.TypedValue
@@ -56,6 +58,8 @@ class SettingsActivity : Activity() {
     private lateinit var shareFields: List<View>
     private lateinit var nightscoutFields: List<View>
     private lateinit var loopPredictor: View
+    private lateinit var heartButton: Button
+    private lateinit var heartStatus: TextView
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -90,7 +94,7 @@ class SettingsActivity : Activity() {
         prediction = CheckBox(this).apply { text = "Show forecast"; isChecked = s.predictionEnabled }
         predictor = radios(Predictors.all.map { it.id to it.displayName } + (LoopStatus.MODEL_ID to "Loop (Nightscout)"), s.predictorId)
         loopPredictor = predictor.findViewWithTag(LoopStatus.MODEL_ID)
-        result = TextView(this).apply { textSize = 12f; gravity = Gravity.CENTER; setTextColor(Color.LTGRAY) }
+        result = TextView(this).apply { textSize = 12f; gravity = Gravity.CENTER; setTextColor(Brand.TEXT) }
         val save = Button(this).apply { text = "Save & test"; setOnClickListener { saveAndTest() }; Brand.style(this, primary = true) }
 
         shareFields = listOf(label("Account"), username, revealable(password), label("Region"), region)
@@ -102,7 +106,16 @@ class SettingsActivity : Activity() {
         listOf(label("Data source"), source).forEach(column::addView)
         shareFields.forEach(column::addView)
         nightscoutFields.forEach(column::addView)
-        listOf(label("Units"), unit, label("Forecast"), prediction, predictor, save, result).forEach(column::addView)
+        heartButton = Button(this).apply {
+            text = "Allow heart rate"; Brand.style(this, primary = false)
+            setOnClickListener { requestPermissions(arrayOf(heartPermission), REQUEST_HEART_RATE) }
+        }
+        heartStatus = hint("On the \u201cGlucose, time and heart\u201d tile. Allowed; change it in the watch's app permissions.")
+        listOf(
+            label("Units"), unit, label("Forecast"), prediction, predictor,
+            label("Heart rate"), heartButton, heartStatus, save, result,
+        ).forEach(column::addView)
+        updateHeartRate()
         setContentView(ScrollView(this).apply { addView(column) })
 
         source.setOnCheckedChangeListener { _, _ -> updateVisibility() }
@@ -110,6 +123,24 @@ class SettingsActivity : Activity() {
         updateVisibility()
 
         if (isDebuggable && intent.getBooleanExtra("save", false)) saveAndTest()
+    }
+
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == REQUEST_HEART_RATE) {
+            updateHeartRate()
+            RefreshReceiver.updateComplications(this)
+        }
+    }
+
+    /** Wear OS 6 asks per health data type; older watches have the one body-sensors permission. */
+    private val heartPermission
+        get() = if (Build.VERSION.SDK_INT >= 36) "android.permission.health.READ_HEART_RATE" else Manifest.permission.BODY_SENSORS
+
+    private fun updateHeartRate() {
+        val granted = checkSelfPermission(heartPermission) == PackageManager.PERMISSION_GRANTED
+        heartButton.visibility = if (granted) View.GONE else View.VISIBLE
+        heartStatus.visibility = if (granted) View.VISIBLE else View.GONE
     }
 
     override fun onDestroy() {
@@ -180,6 +211,10 @@ class SettingsActivity : Activity() {
         )
     }
 
+    private companion object {
+        const val REQUEST_HEART_RATE = 1
+    }
+
     private val isDebuggable get() = applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0
 
     private fun radios(options: List<Pair<String, String>>, checked: String) = RadioGroup(this).apply {
@@ -227,7 +262,7 @@ class SettingsActivity : Activity() {
     }
 
     private fun hint(text: String) = TextView(this).apply {
-        this.text = text; textSize = 11f; setTextColor(Color.LTGRAY)
+        this.text = text; textSize = 11f; setTextColor(Brand.MUTED)
     }
 
     private fun dp(v: Int) = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, v.toFloat(), resources.displayMetrics).toInt()

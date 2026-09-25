@@ -6,6 +6,12 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <!-- Heart rate on the glucose-all tile, asked for in Settings. Wear OS 6 replaced BODY_SENSORS
+         with the per-type health permission. -->
+    <uses-permission
+        android:name="android.permission.BODY_SENSORS"
+        android:maxSdkVersion="35" />
+    <uses-permission android:name="android.permission.health.READ_HEART_RATE" />
     <!-- Exact 5-minute refresh. USE_EXACT_ALARM is auto-granted on API 33+; older watches ask the user. -->
     <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
     <uses-permission
@@ -16,7 +22,7 @@
         android:allowBackup="false"
         android:icon="@drawable/ic_launcher"
         android:label="@string/app_name"
-        android:theme="@android:style/Theme.DeviceDefault">
+        android:theme="@style/Theme.GlucoWatch">
 
         <meta-data
             android:name="com.google.android.wearable.standalone"
@@ -141,6 +147,34 @@
             <meta-data
                 android:name="androidx.wear.tiles.PREVIEW"
                 android:resource="@drawable/tile_preview" />
+        </service>
+        <service
+            android:name=".tile.GlucoseAllTileService"
+            android:description="@string/tile_all_description"
+            android:exported="true"
+            android:icon="@drawable/ic_launcher"
+            android:label="@string/tile_all_label"
+            android:permission="com.google.android.wearable.permission.BIND_TILE_PROVIDER">
+            <intent-filter>
+                <action android:name="androidx.wear.tiles.action.BIND_TILE_PROVIDER" />
+            </intent-filter>
+            <meta-data
+                android:name="androidx.wear.tiles.PREVIEW"
+                android:resource="@drawable/tile_preview_all" />
+        </service>
+        <service
+            android:name=".tile.GlucoseLightTileService"
+            android:description="@string/tile_light_description"
+            android:exported="true"
+            android:icon="@drawable/ic_launcher"
+            android:label="@string/tile_light_label"
+            android:permission="com.google.android.wearable.permission.BIND_TILE_PROVIDER">
+            <intent-filter>
+                <action android:name="androidx.wear.tiles.action.BIND_TILE_PROVIDER" />
+            </intent-filter>
+            <meta-data
+                android:name="androidx.wear.tiles.PREVIEW"
+                android:resource="@drawable/tile_preview_light" />
         </service>
     </application>
 </manifest>
