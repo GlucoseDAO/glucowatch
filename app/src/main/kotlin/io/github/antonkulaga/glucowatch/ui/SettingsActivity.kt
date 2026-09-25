@@ -3,6 +3,7 @@ package io.github.antonkulaga.glucowatch.ui
 import android.app.Activity
 import android.content.pm.ApplicationInfo
 import android.graphics.Color
+import android.graphics.Typeface
 import android.os.Bundle
 import android.text.InputType
 import android.util.TypedValue
@@ -11,6 +12,7 @@ import android.view.View
 import android.widget.Button
 import android.widget.CheckBox
 import android.widget.EditText
+import android.widget.ImageButton
 import android.widget.LinearLayout
 import android.widget.RadioButton
 import android.widget.RadioGroup
@@ -22,6 +24,7 @@ import glucowatch.core.LoopStatus
 import glucowatch.core.NightscoutApi
 import glucowatch.core.Predictors
 import glucowatch.core.Region
+import io.github.antonkulaga.glucowatch.R
 import io.github.antonkulaga.glucowatch.data.DataSource
 import io.github.antonkulaga.glucowatch.data.GlucoseRepository
 import io.github.antonkulaga.glucowatch.data.RefreshReceiver
@@ -88,12 +91,12 @@ class SettingsActivity : Activity() {
         predictor = radios(Predictors.all.map { it.id to it.displayName } + (LoopStatus.MODEL_ID to "Loop (Nightscout)"), s.predictorId)
         loopPredictor = predictor.findViewWithTag(LoopStatus.MODEL_ID)
         result = TextView(this).apply { textSize = 12f; gravity = Gravity.CENTER; setTextColor(Color.LTGRAY) }
-        val save = Button(this).apply { text = "Save & test"; setOnClickListener { saveAndTest() } }
+        val save = Button(this).apply { text = "Save & test"; setOnClickListener { saveAndTest() }; Brand.style(this, primary = true) }
 
-        shareFields = listOf(label("Account"), username, password, label("Region"), region)
+        shareFields = listOf(label("Account"), username, revealable(password), label("Region"), region)
         nightscoutFields = listOf(
             label("Nightscout address"), nightscoutUrl,
-            label("Token or API secret"), nightscoutToken, hint("A token with the readable role is safer. v3 needs a token."),
+            label("Token or API secret"), revealable(nightscoutToken), hint("A token with the readable role is safer. v3 needs a token."),
             label("API"), nightscoutApi,
         )
         listOf(label("Data source"), source).forEach(column::addView)
@@ -192,7 +195,35 @@ class SettingsActivity : Activity() {
             ?: (group.getChildAt(0).tag as String)
 
     private fun label(text: String) = TextView(this).apply {
-        this.text = text; textSize = 12f; setTextColor(0xFF90CAF9.toInt()); setPadding(0, dp(10), 0, 0)
+        this.text = text; textSize = 12f; setTextColor(Brand.TEAL_LIGHT); setPadding(0, dp(10), 0, 0)
+    }
+
+    /** [field] with an eye button after it that shows or hides what was typed. Starts hidden. */
+    private fun revealable(field: EditText): View {
+        val hidden = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
+        val shown = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD
+        val eye = ImageButton(this).apply {
+            setImageResource(R.drawable.ic_visibility)
+            background = null
+            contentDescription = "Show"
+            setPadding(dp(6), dp(6), dp(6), dp(6))
+            setOnClickListener {
+                val reveal = field.inputType != shown
+                val cursor = field.selectionEnd
+                field.inputType = if (reveal) shown else hidden
+                // Changing the input type resets the font to monospace for hidden text; keep one font.
+                field.typeface = Typeface.DEFAULT
+                field.setSelection(cursor.coerceIn(0, field.length()))
+                setImageResource(if (reveal) R.drawable.ic_visibility_off else R.drawable.ic_visibility)
+                contentDescription = if (reveal) "Hide" else "Show"
+            }
+        }
+        field.typeface = Typeface.DEFAULT
+        return LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
+            addView(field, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+            addView(eye, LinearLayout.LayoutParams(dp(40), dp(40)))
+        }
     }
 
     private fun hint(text: String) = TextView(this).apply {

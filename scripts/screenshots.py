@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Screenshots of the GlucoWatch face and app on a simulated Galaxy Watch5 (44 mm).
+"""Screenshots of the GlucoWatch face, tile and app on a simulated Galaxy Watch6 Classic (43 mm).
 
-The emulator is a round 450x450 px Wear OS screen at density 340, the size and density of the
-Galaxy Watch4/5 44 mm and Watch4 Classic 46 mm. The script creates that AVD if it is missing,
-boots it without a window, builds and installs both debug APKs, sets the GlucoWatch face, and
-captures every scenario:
+The emulator is a round 432x432 px Wear OS screen at density 340, the size of the Galaxy Watch6
+40 mm and Watch6 Classic 43 mm (SM-R950), the watch GlucoWatch is tried on. The script creates
+that AVD if it is missing, boots it without a window, builds and installs both debug APKs, sets
+the GlucoWatch face, adds the GlucoWatch tile, and captures every scenario:
 
     demo               demo data, no account
     dexcom             Dexcom Share with DEXCOM_USERNAME / DEXCOM_PASSWORD from .env
@@ -12,7 +12,8 @@ captures every scenario:
     nightscout-replay  the same Nightscout replayed so its loop looks fresh (scripts/nightscout_replay.py)
 
 Output (data/output/ is gitignored): data/output/screenshots/<scenario>-face.png,
-<scenario>-face-ambient.png, <scenario>-app.png (the app screen, scrolled, frames side by side),
+<scenario>-face-ambient.png, <scenario>-tile.png, <scenario>-app.png (the app screen, scrolled,
+frames side by side),
 the raw square captures under raw/, and overview.png with all faces.
 
     python3 scripts/screenshots.py                      # all scenarios that are configured
@@ -36,14 +37,16 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-AVD = 'glucowatch_gw5'
+AVD = 'glucowatch_gw6c'
 IMAGE = 'system-images;android-36;android-wear-signed;x86_64'
-WATCH = {'hw.lcd.width': '450', 'hw.lcd.height': '450', 'hw.lcd.density': '340', 'hw.lcd.circular': 'true'}
+WATCH = {'hw.lcd.width': '432', 'hw.lcd.height': '432', 'hw.lcd.density': '340', 'hw.lcd.circular': 'true'}
+MIDDLE = int(WATCH['hw.lcd.width']) // 2
 PORT = 5584                      # emulator console port; adb serial emulator-5584
 SERIAL = f'emulator-{PORT}'
 REPLAY_PORT = 8537
 PKG = 'io.github.antonkulaga.glucowatch'
 FACE = PKG + '.watchface'
+TILE = f'{PKG}/{PKG}.tile.GlucoseTileService'
 SCENARIOS = ['demo', 'dexcom', 'nightscout', 'nightscout-replay']
 
 
@@ -104,7 +107,7 @@ def ensure_avd():
     if not avd_dir.is_dir():
         if not (SDK / Path(*IMAGE.split(';'))).is_dir():
             sys.exit(f'Missing system image. Install it with:\n  {SDK}/cmdline-tools/latest/bin/sdkmanager "{IMAGE}"')
-        log(f'creating AVD {AVD} (round 450x450, density 340)')
+        log(f'creating AVD {AVD} (round {WATCH["hw.lcd.width"]}x{WATCH["hw.lcd.height"]}, density {WATCH["hw.lcd.density"]})')
         subprocess.run([AVDMANAGER, 'create', 'avd', '-n', AVD, '-k', IMAGE, '-d', 'wearos_large_round', '--force'],
                        input=b'no\n', check=True, capture_output=True)
     config = avd_dir / 'config.ini'
@@ -162,8 +165,14 @@ def build_and_install(build):
     adb('uninstall', FACE, check=False)
     for apk in ('app/build/outputs/apk/debug/app-debug.apk', 'watchface/build/outputs/apk/debug/watchface-debug.apk'):
         adb('install', '-r', str(ROOT / apk))
-    adb('shell', 'am', 'broadcast', '-a', 'com.google.android.wearable.app.DEBUG_SURFACE',
-        '--es', 'operation', 'set-watchface', '--es', 'watchFaceId', FACE)
+    debug_surface('set-watchface', '--es', 'watchFaceId', FACE)
+    debug_surface('add-tile', '--ecn', 'component', TILE)
+
+
+def debug_surface(operation, *extras):
+    """The emulator's debug hooks for faces and tiles (Wear OS 4 and later)."""
+    return adb('shell', 'am', 'broadcast', '-a', 'com.google.android.wearable.app.DEBUG_SURFACE',
+               '--es', 'operation', operation, *extras)
 
 
 def fetched_at():
@@ -207,8 +216,15 @@ def capture(name, raw_dir):
             frame.unlink()
             break
         frames.append(frame)
-        adb('shell', 'input', 'swipe', '225', '360', '225', '130', '400')
+        adb('shell', 'input', 'swipe', str(MIDDLE), str(MIDDLE * 16 // 10), str(MIDDLE), str(MIDDLE * 6 // 10), '400')
         nap(1.5)
+    # The tile was added once after install; show it, give it time to fetch its chart, capture.
+    adb('shell', 'input', 'keyevent', 'KEYCODE_HOME')
+    nap(2)
+    adb('shell', 'am', 'broadcast', '-a', 'com.google.android.wearable.app.DEBUG_SYSUI',
+        '--es', 'operation', 'show-tile', '--ei', 'index', '0')
+    nap(6)
+    screencap(raw_dir / f'{name}-tile.png')
     adb('shell', 'input', 'keyevent', 'KEYCODE_HOME')
     nap(6)
     screencap(raw_dir / f'{name}-face.png')
@@ -315,8 +331,9 @@ def main():
             face = round_frame(Image.open(raw_dir / f'{scenario}-face.png'))
             face.save(out / f'{scenario}-face.png')
             round_frame(Image.open(raw_dir / f'{scenario}-face-ambient.png')).save(out / f'{scenario}-face-ambient.png')
+            round_frame(Image.open(raw_dir / f'{scenario}-tile.png')).save(out / f'{scenario}-tile.png')
             faces.append(face)
-            log(f'{scenario}: saved {scenario}-face.png, {scenario}-face-ambient.png, {scenario}-app.png ({len(frames)} frames)')
+            log(f'{scenario}: saved {scenario}-face.png, -face-ambient.png, -tile.png, -app.png ({len(frames)} frames)')
         side_by_side(faces, background=(255, 255, 255, 255)).save(out / 'overview.png')
         log(f'done: {out}')
     finally:

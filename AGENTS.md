@@ -9,7 +9,7 @@ device.
 | Module | Id | Role |
 |---|---|---|
 | `core/` | JVM library | Dexcom Share and Nightscout clients, glucose and treatment models, `GlucosePredictor`, demo data, desktop CLI (`:core:run`) |
-| `app/` | `io.github.antonkulaga.glucowatch` | Wear app, minSdk 30. Fetches on a schedule, caches readings, settings, five complications |
+| `app/` | `io.github.antonkulaga.glucowatch` | Wear app, minSdk 30. Fetches on a schedule, caches readings, settings, five complications, one tile |
 | `watchface/` | `io.github.antonkulaga.glucowatch.watchface` | Watch Face Format XML, minSdk 33. No Kotlin sources. Shows the app's complications |
 
 `versionCode` and `versionName` live in both `app/build.gradle.kts` and `watchface/build.gradle.kts`.
@@ -69,13 +69,18 @@ order and add new slots at the end, or an update swaps providers on every instal
 
 ## Screenshots
 
-`python3 scripts/screenshots.py` produces round screenshots of the face and the app on an
-emulator shaped like a Galaxy Watch5 44 mm (450 × 450 px, density 340), for the scenarios `demo`,
-`dexcom`, `nightscout` and `nightscout-replay`. Output goes to `data/output/screenshots/`
-(gitignored). When the user asks for screenshots, run it and show `overview.png` and the
-`*-app.png` files. `docs/screenshots.md` has the requirements, the scenarios and the pitfalls.
-The Dexcom login and `NIGHTSCOUT_URL` come from `.env`. Screenshots with real data are the user's
-health data: do not publish them.
+`python3 scripts/screenshots.py` produces round screenshots of the face, the tile and the app on
+an emulator shaped like the user's Galaxy Watch6 Classic 43 mm (SM-R950, 432 × 432 px, density
+340), for the scenarios `demo`, `dexcom`, `nightscout` and `nightscout-replay`. Output goes to
+`data/output/screenshots/` (gitignored). When the user asks for screenshots, run it and show
+`overview.png`, the `*-tile.png` and the `*-app.png` files. `docs/screenshots.md` has the
+requirements, the scenarios and the pitfalls. The Dexcom login and `NIGHTSCOUT_URL` come from
+`.env`. Screenshots with real data are the user's health data: do not publish them.
+
+The face, the tile and the first app screen use the whole round screen: the chart runs from rim
+to rim through the wide middle (`ChartRenderer.render(..., edge = true)`), and text sits above
+and below it inside the circle. Store images and the face and tile previews come only from
+`demo` captures, through `scripts/store_images.py`. The icon comes from `scripts/make_icon.py`.
 
 ## What F-Droid builds
 

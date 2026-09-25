@@ -3,7 +3,8 @@
 Checked on 2026-09-25 with the Wear OS 6 emulator image (API 36) and the code after tag `v0.1.4`.
 
 `scripts/screenshots.py` builds both debug APKs, installs them on an emulator that matches a
-Galaxy Watch, and saves round screenshots of the watch face and the app for each data source.
+Galaxy Watch, and saves round screenshots of the watch face, the tile and the app for each data
+source.
 
 ```bash
 python3 scripts/screenshots.py                     # every scenario that is configured
@@ -18,16 +19,16 @@ A full run takes about 3 minutes: 1 to boot the emulator, 1 to build, and about 
 
 | Property | Value | Real device |
 |---|---|---|
-| AVD | `glucowatch_gw5`, created by the script from `wearos_large_round` | |
-| Screen | round, 450 × 450 px | Galaxy Watch4/5 44 mm, Watch4 Classic 46 mm, Watch5 Pro |
-| Density | 340 dpi (Samsung's default on those models), so about 212 dp across | |
+| AVD | `glucowatch_gw6c`, created by the script from `wearos_large_round` | |
+| Screen | round, 432 × 432 px | Galaxy Watch6 40 mm, Watch6 Classic 43 mm (SM-R950, the watch GlucoWatch is tried on) |
+| Density | 340 dpi, so about 203 dp across | |
 | System | Wear OS 6, `system-images;android-36;android-wear-signed;x86_64` | Galaxy watches run Wear OS 4 to 6 |
 | adb serial | `emulator-5584`, so it never collides with an emulator on the default port | |
 
 The emulator returns a square framebuffer even for a round AVD. The script clips each capture to
 the circle and adds a bezel, so what you see is what the watch shows. The unclipped captures are
-kept in `raw/`. The Galaxy Watch6 Classic (480 px, 43 mm 432 px) is not simulated. The face is
-drawn on a 450 px canvas and scales, and the app lays out in dp.
+kept in `raw/`. Larger Galaxy watches (450 and 480 px) are not simulated. The face is drawn on a
+450 px canvas and scales, and the app and the tile lay out in dp.
 
 ## Scenarios
 
@@ -51,7 +52,8 @@ testing: `python3 scripts/nightscout_replay.py <url> 8537 [token]`.
 
 Each scenario sets the source with the debug-only adb extras of `SettingsActivity` (see README,
 "From the PC over adb"). It then waits until the app's `fetchedAt` changes, captures the app
-screen scrolled to the end, and captures the face in interactive and ambient mode.
+screen scrolled to the end, shows the tile (added once after install), and captures the face in
+interactive and ambient mode.
 
 ## Output
 
@@ -61,9 +63,10 @@ screen scrolled to the end, and captures the face in interactive and ambient mod
 |---|---|
 | `<scenario>-face.png` | the watch face |
 | `<scenario>-face-ambient.png` | the face in ambient (always-on) mode |
+| `<scenario>-tile.png` | the GlucoWatch tile |
 | `<scenario>-app.png` | the app's main screen, one round frame per scroll step |
 | `overview.png` | all faces of the run side by side |
-| `raw/` | the unclipped 450 × 450 captures |
+| `raw/` | the unclipped 432 × 432 captures |
 
 Screenshots from `dexcom` and `nightscout` show real glucose data. Do not publish them without
 asking the person the data belongs to.
@@ -93,3 +96,12 @@ asking the person the data belongs to.
 - A build started by the IDE while the script was building once left an empty `core.jar`, which
   Gradle then treated as up to date, and the app failed to compile against it. If the app suddenly
   cannot resolve any `glucowatch.core` class, run `./gradlew :core:jar --rerun`.
+- Tiles use two different debug actions. `add-tile` goes to
+  `com.google.android.wearable.app.DEBUG_SURFACE` (like `set-watchface`), but `show-tile` goes to
+  `com.google.android.wearable.app.DEBUG_SYSUI`. Sent to `DEBUG_SURFACE`, `show-tile` answers
+  "Unrecognized operation" and the capture shows the face instead.
+- A child that reaches into its parent's padding with negative margins (the app's chart) is still
+  cut at the padding unless the parent sets `clipToPadding = false`.
+- The chart's glow used to be clipped by band, so a line above the target range painted the whole
+  band in the in-range colour. It is now coloured by the line above each column; check a
+  scenario that stays high (a real `dexcom` capture) after changing `ChartRenderer`.

@@ -2,11 +2,13 @@ package io.github.antonkulaga.glucowatch.chart
 
 import android.graphics.Bitmap
 import android.graphics.Canvas
+import android.graphics.ComposeShader
 import android.graphics.DashPathEffect
 import android.graphics.LinearGradient
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.PointF
+import android.graphics.PorterDuff
 import android.graphics.RectF
 import android.graphics.Shader
 import android.graphics.Typeface
@@ -42,11 +44,20 @@ object ChartRenderer {
         else -> COLOR_IN_RANGE
     }
 
-    fun render(state: GlucoseState, width: Int, height: Int, labels: Boolean = true, now: Long = System.currentTimeMillis()): Bitmap {
+    /**
+     * [edge]: the chart spans a round screen from rim to rim, as on the face. The plot then fills
+     * the whole width, labels sit inside it, and nothing that matters (labels, the latest reading,
+     * the forecast) comes closer than 7% to the sides, where the circle cuts the corners off.
+     */
+    fun render(
+        state: GlucoseState, width: Int, height: Int, labels: Boolean = true, edge: Boolean = false,
+        now: Long = System.currentTimeMillis(),
+    ): Bitmap {
         val bmp = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
         val c = Canvas(bmp)
         val s = state.settings
         val forecast = state.prediction?.points.orEmpty()
+        val inset = if (edge) width * 0.07f else 0f
 
         val start = now - s.chartHours * 3_600_000L
         val end = now + if (forecast.isNotEmpty()) s.horizonMinutes * 60_000L else 10 * 60_000L
@@ -69,8 +80,13 @@ object ChartRenderer {
         val carbRow = if (carbs.isEmpty()) 0f else textSize * 1.25f
         val bolusRow = if (boluses.isEmpty()) 0f else textSize * 1.25f
         val axisRow = if (labels) textSize * 1.35f else 0f
-        val left = if (labels) label.measureText(s.unit.format(s.highMgdl.toDouble())) + textSize * 0.5f else 2f
-        val plot = RectF(left, carbRow + stroke * 2, width - stroke * 2.5f, height - axisRow - bolusRow - stroke)
+        val left = when {
+            edge -> 0f
+            labels -> label.measureText(s.unit.format(s.highMgdl.toDouble())) + textSize * 0.5f
+            else -> 2f
+        }
+        val right = if (edge) width - inset else width - stroke * 2.5f
+        val plot = RectF(left, carbRow + stroke * 2, right, height - axisRow - bolusRow - stroke)
 
         fun x(t: Long) = plot.left + (t - start).toFloat() / (end - start) * plot.width()
         fun y(v: Double) = plot.bottom - ((v - yMin) / (yMax - yMin)).toFloat() * plot.height()
@@ -84,7 +100,8 @@ object ChartRenderer {
         for (h in s.chartHours downTo 1) {
             val gx = x(now - h * 3_600_000L)
             c.drawLine(gx, plot.top, gx, plot.bottom, grid)
-            if (labels) c.drawText("-${h}h", gx, height - textSize * 0.3f, label)
+            val half = label.measureText("-${h}h") / 2
+            if (labels && gx - half >= inset && gx + half <= width - inset) c.drawText("-${h}h", gx, height - textSize * 0.3f, label)
         }
 
         // Target range: a faint band with thin dashed edges, labelled on the left.
@@ -96,7 +113,13 @@ object ChartRenderer {
         }
         c.drawLine(plot.left, yHigh, plot.right, yHigh, guide)
         c.drawLine(plot.left, yLow, plot.right, yLow, guide)
-        if (labels) {
+        if (labels && edge) {
+            // Inside the plot, just above each guide, on a black outline so the line can pass behind.
+            label.textAlign = Paint.Align.LEFT
+            listOf(s.lowMgdl, s.highMgdl).forEach { v ->
+                outlined(c, s.unit.format(v.toDouble()), inset, y(v.toDouble()) - textSize * 0.3f, label, COLOR_LABEL)
+            }
+        } else if (labels) {
             label.textAlign = Paint.Align.RIGHT
             listOf(s.lowMgdl, s.highMgdl).forEach { v ->
                 c.drawText(s.unit.format(v.toDouble()), plot.left - textSize * 0.35f, y(v.toDouble()) + textSize * 0.35f, label)
@@ -124,26 +147,34 @@ object ChartRenderer {
             })
         }
 
-        // Readings: one smooth line per run without gaps, coloured by the band it passes through,
-        // with a glow underneath that fades towards the bottom.
+        // Readings: one smooth line per run without gaps, coloured by the band it passes through.
+        // The glow under it takes the colour of the line above each column and fades downwards,
+        // so a high line over the target band does not paint the band green.
         val runs = mutableListOf(mutableListOf<PointF>())
         visible.forEachIndexed { i, r ->
             if (i > 0 && r.timeMillis - visible[i - 1].timeMillis > GAP_MS) runs += mutableListOf<PointF>()
             runs.last() += PointF(x(r.timeMillis), y(r.mgdl.toDouble()))
         }
         val bands = listOf(Triple(0f, yHigh, COLOR_HIGH), Triple(yHigh, yLow, COLOR_IN_RANGE), Triple(yLow, height.toFloat(), COLOR_LOW))
+        fun bandColor(py: Float) = bands.first { py < it.second || it === bands.last() }.third
         val lineStroke = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             style = Paint.Style.STROKE; strokeWidth = stroke; strokeCap = Paint.Cap.ROUND; strokeJoin = Paint.Join.ROUND
         }
         runs.filter { it.isNotEmpty() }.forEach { run ->
             val line = smooth(run)
-            val area = Path(line).apply { lineTo(run.last().x, plot.bottom); lineTo(run.first().x, plot.bottom); close() }
+            if (run.size > 1) {
+                val area = Path(line).apply { lineTo(run.last().x, plot.bottom); lineTo(run.first().x, plot.bottom); close() }
+                paint.shader = ComposeShader(
+                    glowColors(run, yHigh, yLow, ::bandColor),
+                    LinearGradient(0f, run.minOf { it.y }, 0f, plot.bottom, 0xFF000000.toInt(), 0, Shader.TileMode.CLAMP),
+                    PorterDuff.Mode.DST_IN,
+                )
+                c.drawPath(area, paint)
+                paint.shader = null
+            }
             for ((top, bottom, color) in bands) {
                 c.save()
                 c.clipRect(0f, top, width.toFloat(), bottom)
-                paint.shader = LinearGradient(0f, plot.top, 0f, plot.bottom, color and 0x00FFFFFF or 0x40000000, color and 0x00FFFFFF, Shader.TileMode.CLAMP)
-                c.drawPath(area, paint)
-                paint.shader = null
                 lineStroke.color = color
                 if (run.size == 1) c.drawCircle(run[0].x, run[0].y, stroke * 0.8f, lineStroke) else c.drawPath(line, lineStroke)
                 c.restore()
@@ -179,12 +210,8 @@ object ChartRenderer {
                 paint.color = color
                 c.drawCircle(cx, rowY, dot, paint)
                 val tx = cx + dot * 1.6f
-                if (labels && tx >= free && tx + markLabel.measureText(t) <= width) {
-                    // A black outline first, so ticks and grid lines never run into the text.
-                    markLabel.style = Paint.Style.STROKE; markLabel.strokeWidth = textSize * 0.3f; markLabel.color = 0xFF000000.toInt()
-                    c.drawText(t, tx, rowY + textSize * 0.34f, markLabel)
-                    markLabel.style = Paint.Style.FILL; markLabel.color = color
-                    c.drawText(t, tx, rowY + textSize * 0.34f, markLabel)
+                if (labels && tx >= free && tx + markLabel.measureText(t) <= width - inset) {
+                    outlined(c, t, tx, rowY + textSize * 0.34f, markLabel, color)
                     free = tx + markLabel.measureText(t) + dot * 2
                 }
             }
@@ -197,6 +224,46 @@ object ChartRenderer {
             c.drawText("No readings", plot.centerX(), plot.centerY() + textSize * 0.35f, label)
         }
         return bmp
+    }
+
+    /**
+     * A horizontal gradient with hard stops where the polyline through [run] crosses [yHigh] or
+     * [yLow], so every column gets the colour of the line above it. Alpha 25%.
+     */
+    private fun glowColors(run: List<PointF>, yHigh: Float, yLow: Float, bandColor: (Float) -> Int): Shader {
+        val x0 = run.first().x
+        val span = max(run.last().x - x0, 1f)
+        val colors = mutableListOf<Int>()
+        val stops = mutableListOf<Float>()
+        fun stop(x: Float, color: Int) { colors += color and 0x00FFFFFF or 0x40000000; stops += ((x - x0) / span).coerceIn(0f, 1f) }
+        stop(x0, bandColor(run.first().y))
+        for (i in 0 until run.size - 1) {
+            val a = run[i]
+            val b = run[i + 1]
+            // A segment can cross both guides (low to high in one step): handle them in x order.
+            val towardsB = if (b.y > a.y) 0.5f else -0.5f
+            listOf(yHigh, yLow)
+                .filter { (a.y - it) * (b.y - it) < 0 }
+                .map { it to a.x + (b.x - a.x) * (it - a.y) / (b.y - a.y) }
+                .sortedBy { it.second }
+                .forEach { (guide, xc) ->
+                    stop(xc, colors.last())
+                    stop(xc, bandColor(guide + towardsB))
+                }
+        }
+        stop(run.last().x, bandColor(run.last().y))
+        return LinearGradient(x0, 0f, x0 + span, 0f, colors.toIntArray(), stops.toFloatArray(), Shader.TileMode.CLAMP)
+    }
+
+    /** [text] with a black outline first, so lines and ticks never run into it. */
+    private fun outlined(c: Canvas, text: String, x: Float, y: Float, paint: Paint, color: Int) {
+        val style = paint.style
+        val strokeWidth = paint.strokeWidth
+        paint.style = Paint.Style.STROKE; paint.strokeWidth = paint.textSize * 0.3f; paint.color = 0xFF000000.toInt()
+        c.drawText(text, x, y, paint)
+        paint.style = Paint.Style.FILL; paint.color = color
+        c.drawText(text, x, y, paint)
+        paint.style = style; paint.strokeWidth = strokeWidth
     }
 
     /** Catmull-Rom spline through [points], as cubic Béziers. */

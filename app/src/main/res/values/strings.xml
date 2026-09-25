@@ -6,4 +6,6 @@
     <string name="complication_prediction">Glucose forecast</string>
     <string name="complication_loop">Insulin and carbs on board</string>
     <string name="complication_treatments">Last bolus and carbs</string>
+    <string name="tile_label">Glucose</string>
+    <string name="tile_description">Glucose, trend and the last hours as a chart</string>
 </resources>

@@ -46,15 +46,17 @@ class MainActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val screen = resources.displayMetrics.widthPixels
-        // Round screens clip the corners: keep text inside the circle while it scrolls past.
+        // Round screens clip the corners: keep text inside the circle while it scrolls past. The
+        // first screen matches the tile: value and change on top, the chart through the middle.
         val side = (screen * 0.09).toInt()
         val column = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_HORIZONTAL
-            setPadding(side, (screen * 0.17).toInt(), side, (screen * 0.3).toInt())
+            setPadding(side, (screen * 0.08).toInt(), side, (screen * 0.3).toInt())
+            clipToPadding = false  // the chart reaches into the side padding
         }
         value = TextView(this).apply {
-            textSize = 46f; gravity = Gravity.CENTER; typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+            textSize = 38f; gravity = Gravity.CENTER; typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
             includeFontPadding = false
         }
         status = text(13f, 0xFFB0B8C4.toInt())
@@ -68,16 +70,21 @@ class MainActivity : Activity() {
         forecast = text(13f, ChartRenderer.COLOR_FORECAST)
         therapy = text(13f, 0xFFE5E7EB.toInt()).apply { setLineSpacing(dp(3).toFloat(), 1f) }
         source = text(11f, 0xFF8B95A3.toInt())
-        val refresh = Button(this).apply { text = "Refresh"; setOnClickListener { refresh() } }
+        val refresh = Button(this).apply {
+            text = "Refresh"; setOnClickListener { refresh() }
+            Brand.style(this, primary = true)
+        }
         val settings = Button(this).apply {
             text = "Settings"
             setOnClickListener { startActivity(Intent(this@MainActivity, SettingsActivity::class.java)) }
+            Brand.style(this, primary = false)
         }
         column.addView(value, wrap(0))
-        column.addView(status, wrap(4))
-        column.addView(chips, wrap(10))
-        column.addView(chart, wrap(10))
-        column.addView(forecast, wrap(6))
+        column.addView(status, wrap(2))
+        // Rim to rim, like the face: the chart ignores the column's side padding.
+        column.addView(chart, wrap(6).apply { marginStart = -side; marginEnd = -side })
+        column.addView(forecast, wrap(4))
+        column.addView(chips, wrap(8))
         column.addView(therapy, wrap(8))
         column.addView(source, wrap(8))
         column.addView(refresh, wrap(14))
@@ -125,8 +132,8 @@ class MainActivity : Activity() {
         cob.visibility = if (cob.text.isEmpty()) View.GONE else View.VISIBLE
         chips.visibility = if (fresh == null) View.GONE else View.VISIBLE
 
-        val width = resources.displayMetrics.widthPixels * 82 / 100
-        chart.setImageBitmap(ChartRenderer.render(state, width, (width * 0.52).toInt()))
+        val width = resources.displayMetrics.widthPixels
+        chart.setImageBitmap(ChartRenderer.render(state, width, (width * 0.38).toInt(), edge = true))
 
         val p = state.prediction?.points?.lastOrNull()
         val fromLoop = state.settings.predictorId == LoopStatus.MODEL_ID && state.settings.source == DataSource.NIGHTSCOUT

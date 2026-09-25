@@ -9,12 +9,14 @@ import android.content.Intent
 import android.os.Build
 import android.os.SystemClock
 import android.util.Log
+import androidx.wear.tiles.TileService
 import androidx.wear.watchface.complications.datasource.ComplicationDataSourceUpdateRequester
 import io.github.antonkulaga.glucowatch.complications.GlucoseChartComplicationService
 import io.github.antonkulaga.glucowatch.complications.GlucoseValueComplicationService
 import io.github.antonkulaga.glucowatch.complications.LoopComplicationService
 import io.github.antonkulaga.glucowatch.complications.PredictionComplicationService
 import io.github.antonkulaga.glucowatch.complications.TreatmentComplicationService
+import io.github.antonkulaga.glucowatch.tile.GlucoseTileService
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -62,6 +64,7 @@ class RefreshReceiver : BroadcastReceiver() {
             ).forEach {
                 ComplicationDataSourceUpdateRequester.create(context, ComponentName(context, it)).requestUpdateAll()
             }
+            TileService.getUpdater(context).requestUpdate(GlucoseTileService::class.java)
         }
 
         /** CGMs upload every 5 min: aim ~20 s after the next expected reading, retry sooner if it is late. */

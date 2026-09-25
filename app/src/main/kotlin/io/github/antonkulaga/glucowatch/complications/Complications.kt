@@ -111,11 +111,11 @@ class GlucoseChartComplicationService : GlucoseComplicationService() {
         val description = plain("Glucose chart, last ${state.settings.chartHours} hours")
         return when (type) {
             ComplicationType.PHOTO_IMAGE -> PhotoImageComplicationData.Builder(
-                pngIcon(ChartRenderer.render(state, CHART_WIDTH, CHART_HEIGHT)), description,
+                pngIcon(ChartRenderer.render(state, CHART_WIDTH, CHART_HEIGHT, edge = true)), description,
             ).setTapAction(tapAction()).build()
             // Wide chart here too: this is the type the GlucoWatch face uses by default.
             ComplicationType.SMALL_IMAGE -> SmallImageComplicationData.Builder(
-                SmallImage.Builder(pngIcon(ChartRenderer.render(state, CHART_WIDTH, CHART_HEIGHT)), SmallImageType.PHOTO).build(),
+                SmallImage.Builder(pngIcon(ChartRenderer.render(state, CHART_WIDTH, CHART_HEIGHT, edge = true)), SmallImageType.PHOTO).build(),
                 description,
             ).setTapAction(tapAction()).build()
             else -> null
@@ -129,8 +129,9 @@ class GlucoseChartComplicationService : GlucoseComplicationService() {
     }
 
     companion object {
-        const val CHART_WIDTH = 480
-        const val CHART_HEIGHT = 200
+        // The GlucoWatch face shows this rim to rim in a 450 x 170 slot; 1.2x for a sharp scale-down.
+        const val CHART_WIDTH = 540
+        const val CHART_HEIGHT = 204
     }
 }
 
