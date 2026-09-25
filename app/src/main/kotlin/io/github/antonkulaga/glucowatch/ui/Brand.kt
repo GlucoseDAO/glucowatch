@@ -17,9 +17,8 @@ import android.widget.Button
  *   #60717C -> MUTED
  *   logo red #E0141E -> LOW
  *
- * High glucose is amber, so it does not read as insulin. The light tile uses the poster colours
- * unchanged (LIGHT_*), since the posters are printed on white. The watch face XML repeats these values
- * (watchface/src/main/res/raw/watchface.xml); change both together.
+ * The light tile uses darker green, amber and red on an off-white background so the same
+ * glucose-state meanings stay readable. The other LIGHT_* colors are from the poster palette.
  */
 object Brand {
     const val TEAL = 0xFF0B7285.toInt()
@@ -34,8 +33,7 @@ object Brand {
     const val MUTED = 0xFF8FA0AA.toInt()
     const val TEXT = 0xFFE6EDF0.toInt()
 
-    // Light tile: the poster colours as printed, made for a light background. High is a dark amber
-    // and low a deep version of the logo red, so both keep their contrast on white.
+    // Light surfaces: darker green, amber and red keep their contrast on white.
     const val NAVY = 0xFF17324D.toInt()
     const val LIGHT_MUTED = 0xFF60717C.toInt()
     const val LIGHT_INSULIN = 0xFFDE7C22.toInt()

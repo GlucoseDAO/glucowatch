@@ -1,12 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
   GlucoWatch face (Watch Face Format v1, 450x450 design canvas, laid out for a round screen).
-  From the top: date and heart rate, time, the glucose chart from rim to rim through the middle of the circle,
-  then the value with IOB/COB on its left and the last bolus on its right, the change since the
-  previous reading, and the optional forecast. The chart runs across the widest part of the
-  circle; everything else stays inside the circle at its height.
+  The default layout follows the Glucose-all tile: time, a state-coloured glucose value and
+  trend, a rim-to-rim range chart, then heart rate and battery.
   All glucose data comes from the GlucoWatch app through complications:
-    slot 0  value + trend      (GlucoseValueComplicationService, SHORT_TEXT)
+    slot 0  value + trend      (GlucoseValueComplicationService, SMALL_IMAGE)
     slot 1  glucose chart      (GlucoseChartComplicationService, SMALL_IMAGE or PHOTO_IMAGE)
     slot 2  optional forecast  (PredictionComplicationService, empty unless enabled in the app)
     slot 3  IOB / COB          (LoopComplicationService, Nightscout with a loop only)
@@ -15,8 +13,7 @@
   Every slot can be re-assigned to any other data source from the watch face editor.
   Keep the ComplicationSlot elements in slotId order: the Wear runtime keeps a user's providers
   by the position of the slot in this file, so reordering them swaps providers on update.
-  GlucoseDAO colours as in the app (app/.../ui/Brand.kt): date #6CCBD8, insulin #F0923A,
-  carbs #4FBF85, forecast #A78BDB, secondary text #8FA0AA. Change both together.
+  The glucose image and chart share the tile's green/yellow/red state palette.
 -->
 <WatchFace width="450" height="450">
     <Metadata key="CLOCK_TYPE" value="DIGITAL" />
@@ -24,91 +21,52 @@
 
     <Scene backgroundColor="#FF000000">
 
-        <!-- Date, and the heart rate from the watch's own sensor beside it once there is a reading.
-             Muted on purpose: glucose stays the thing that stands out. The watch asks for the
-             heart-rate permission when the face is chosen (AndroidManifest.xml). -->
-        <Group name="date_and_heart_rate" x="60" y="34" width="330" height="32">
-            <Condition>
-                <Expressions>
-                    <Expression name="hasHeartRate"><![CDATA[[HEART_RATE] > 0]]></Expression>
-                </Expressions>
-                <Compare expression="hasHeartRate">
-                    <Group name="with_heart_rate" x="0" y="0" width="330" height="32">
-                    <PartText x="0" y="0" width="196" height="32">
-                        <Text align="END" ellipsis="TRUE">
-                            <Font family="SYNC_TO_DEVICE" size="24" weight="MEDIUM" color="#FF6CCBD8">
-                                <Template>%s %s %s<Parameter expression="[DAY_OF_WEEK_S]" /><Parameter expression="[DAY]" /><Parameter expression="[MONTH_S]" /></Template>
-                            </Font>
-                        </Text>
-                    </PartText>
-                    <PartText x="206" y="0" width="28" height="32">
-                        <Text align="START">
-                            <Font family="SYNC_TO_DEVICE" size="22" color="#FFF0525A">
-                                <Template>♥</Template>
-                            </Font>
-                        </Text>
-                    </PartText>
-                    <PartText x="234" y="0" width="96" height="32">
-                        <Text align="START" ellipsis="TRUE">
-                            <Font family="SYNC_TO_DEVICE" size="24" weight="MEDIUM" color="#FF8FA0AA">
-                                <Template>%s<Parameter expression="round([HEART_RATE])" /></Template>
-                            </Font>
-                        </Text>
-                    </PartText>
-                    </Group>
-                </Compare>
-                <Default>
-                    <PartText x="0" y="0" width="330" height="32">
-                        <Text align="CENTER" ellipsis="TRUE">
-                            <Font family="SYNC_TO_DEVICE" size="24" weight="MEDIUM" color="#FF6CCBD8">
-                                <Template>%s %s %s<Parameter expression="[DAY_OF_WEEK_S]" /><Parameter expression="[DAY]" /><Parameter expression="[MONTH_S]" /></Template>
-                            </Font>
-                        </Text>
-                    </PartText>
-                </Default>
-            </Condition>
-        </Group>
-
-        <DigitalClock x="0" y="64" width="450" height="84">
-            <TimeText format="hh:mm" hourFormat="SYNC_TO_DEVICE" align="CENTER" x="0" y="0" width="450" height="84">
-                <Font family="SYNC_TO_DEVICE" size="76" weight="MEDIUM" color="#FFE6EDF0" />
+        <DigitalClock x="0" y="51" width="450" height="65">
+            <TimeText format="hh:mm" hourFormat="SYNC_TO_DEVICE" align="CENTER" x="0" y="0" width="450" height="65">
+                <Font family="SYNC_TO_DEVICE" size="52" weight="BOLD" color="#FFFFFFFF" />
             </TimeText>
         </DigitalClock>
 
-        <ComplicationSlot slotId="0" displayName="Glucose" x="140" y="318" width="170" height="96"
-            supportedTypes="SHORT_TEXT RANGED_VALUE" isCustomizable="TRUE">
+        <ComplicationSlot slotId="0" displayName="Glucose" x="45" y="112" width="360" height="132"
+            supportedTypes="SMALL_IMAGE SHORT_TEXT RANGED_VALUE" isCustomizable="TRUE">
             <DefaultProviderPolicy
-                defaultSystemProvider="EMPTY" defaultSystemProviderType="SHORT_TEXT"
+                defaultSystemProvider="EMPTY" defaultSystemProviderType="SMALL_IMAGE"
                 primaryProvider="io.github.antonkulaga.glucowatch/io.github.antonkulaga.glucowatch.complications.GlucoseValueComplicationService"
-                primaryProviderType="SHORT_TEXT" />
-            <BoundingBox x="0" y="0" width="170" height="96" />
+                primaryProviderType="SMALL_IMAGE" />
+            <BoundingBox x="0" y="0" width="360" height="132" />
+            <Complication type="SMALL_IMAGE">
+                <PartImage x="0" y="0" width="360" height="132">
+                    <Variant mode="AMBIENT" target="alpha" value="190" />
+                    <Image resource="[COMPLICATION.SMALL_IMAGE]" />
+                </PartImage>
+            </Complication>
             <Complication type="SHORT_TEXT">
-                <PartText x="0" y="0" width="170" height="68">
+                <PartText x="0" y="0" width="360" height="98">
                     <Text align="CENTER" ellipsis="TRUE">
-                        <Font family="SYNC_TO_DEVICE" size="60" weight="BOLD" color="#FFFFFFFF">
+                        <Font family="SYNC_TO_DEVICE" size="88" weight="BOLD" color="#FFFFFFFF">
                             <Template>%s<Parameter expression="[COMPLICATION.TEXT]" /></Template>
                         </Font>
                     </Text>
                 </PartText>
-                <PartText x="0" y="66" width="170" height="30">
+                <PartText x="0" y="100" width="360" height="32">
                     <Text align="CENTER" ellipsis="TRUE">
-                        <Font family="SYNC_TO_DEVICE" size="24" color="#FF8FA0AA">
+                        <Font family="SYNC_TO_DEVICE" size="23" color="#FF9AA3A8">
                             <Template>%s<Parameter expression="[COMPLICATION.TITLE]" /></Template>
                         </Font>
                     </Text>
                 </PartText>
             </Complication>
             <Complication type="RANGED_VALUE">
-                <PartText x="0" y="0" width="170" height="68">
+                <PartText x="0" y="0" width="360" height="98">
                     <Text align="CENTER" ellipsis="TRUE">
-                        <Font family="SYNC_TO_DEVICE" size="60" weight="BOLD" color="#FFFFFFFF">
+                        <Font family="SYNC_TO_DEVICE" size="88" weight="BOLD" color="#FFFFFFFF">
                             <Template>%s<Parameter expression="[COMPLICATION.TEXT]" /></Template>
                         </Font>
                     </Text>
                 </PartText>
-                <PartText x="0" y="66" width="170" height="30">
+                <PartText x="0" y="100" width="360" height="32">
                     <Text align="CENTER" ellipsis="TRUE">
-                        <Font family="SYNC_TO_DEVICE" size="24" color="#FF8FA0AA">
+                        <Font family="SYNC_TO_DEVICE" size="23" color="#FF9AA3A8">
                             <Template>%s<Parameter expression="[COMPLICATION.TITLE]" /></Template>
                         </Font>
                     </Text>
@@ -117,22 +75,22 @@
             <Complication type="EMPTY" />
         </ComplicationSlot>
 
-        <ComplicationSlot slotId="1" displayName="Chart" x="0" y="150" width="450" height="170"
+        <ComplicationSlot slotId="1" displayName="Chart" x="0" y="245" width="450" height="132"
             supportedTypes="SMALL_IMAGE PHOTO_IMAGE" isCustomizable="TRUE">
             <!-- Wear OS does not accept PHOTO_IMAGE as a default type, so the default is a photo-style SMALL_IMAGE. -->
             <DefaultProviderPolicy
                 defaultSystemProvider="EMPTY" defaultSystemProviderType="SMALL_IMAGE"
                 primaryProvider="io.github.antonkulaga.glucowatch/io.github.antonkulaga.glucowatch.complications.GlucoseChartComplicationService"
                 primaryProviderType="SMALL_IMAGE" />
-            <BoundingBox x="0" y="0" width="450" height="170" />
+            <BoundingBox x="0" y="0" width="450" height="132" />
             <Complication type="SMALL_IMAGE">
-                <PartImage x="0" y="0" width="450" height="170">
+                <PartImage x="0" y="0" width="450" height="132">
                     <Variant mode="AMBIENT" target="alpha" value="140" />
                     <Image resource="[COMPLICATION.SMALL_IMAGE]" />
                 </PartImage>
             </Complication>
             <Complication type="PHOTO_IMAGE">
-                <PartImage x="0" y="0" width="450" height="170">
+                <PartImage x="0" y="0" width="450" height="132">
                     <Variant mode="AMBIENT" target="alpha" value="140" />
                     <Image resource="[COMPLICATION.PHOTO_IMAGE]" />
                 </PartImage>
@@ -140,18 +98,60 @@
             <Complication type="EMPTY" />
         </ComplicationSlot>
 
-        <ComplicationSlot slotId="2" displayName="Forecast" x="125" y="410" width="200" height="30"
+        <!-- The bottom row follows the tile. Heart rate comes from the watch; a missing sensor
+             reading is shown as a dash instead of a misleading zero. -->
+        <Group name="heart_and_battery" x="105" y="386" width="240" height="38">
+            <PartText x="0" y="0" width="35" height="38">
+                <Text align="CENTER"><Font family="SYNC_TO_DEVICE" size="27" color="#FFF0525A"><Template>♥</Template></Font></Text>
+            </PartText>
+            <Condition>
+                <Expressions>
+                    <Expression name="hasHeartRate"><![CDATA[[HEART_RATE] > 0]]></Expression>
+                </Expressions>
+                <Compare expression="hasHeartRate">
+                    <PartText x="36" y="0" width="59" height="38">
+                        <Text align="START" ellipsis="TRUE">
+                            <Font family="SYNC_TO_DEVICE" size="27" weight="MEDIUM" color="#FFF0525A">
+                                <Template>%d<Parameter expression="round([HEART_RATE])" /></Template>
+                            </Font>
+                        </Text>
+                    </PartText>
+                </Compare>
+                <Default>
+                    <PartText x="36" y="0" width="59" height="38">
+                        <Text align="START"><Font family="SYNC_TO_DEVICE" size="27" color="#FFF0525A"><Template>--</Template></Font></Text>
+                    </PartText>
+                </Default>
+            </Condition>
+            <PartDraw x="117" y="8" width="32" height="24">
+                <RoundRectangle x="0" y="3" width="25" height="17" cornerRadiusX="2" cornerRadiusY="2">
+                    <Stroke color="#FFFFFFFF" thickness="2" />
+                </RoundRectangle>
+                <Rectangle x="26" y="8" width="3" height="7">
+                    <Fill color="#FFFFFFFF" />
+                </Rectangle>
+            </PartDraw>
+            <PartText x="151" y="0" width="89" height="38">
+                <Text align="START" ellipsis="TRUE">
+                    <Font family="SYNC_TO_DEVICE" size="27" weight="MEDIUM" color="#FFFFFFFF">
+                        <Template>%d%%<Parameter expression="[BATTERY_PERCENT]" /></Template>
+                    </Font>
+                </Text>
+            </PartText>
+        </Group>
+
+        <!-- Optional slots stay in their original XML order and remain editable. Their defaults
+             are empty to keep the new face as quiet as the Glucose-all tile. -->
+        <ComplicationSlot slotId="2" displayName="Forecast" x="165" y="15" width="120" height="30"
             supportedTypes="SHORT_TEXT" isCustomizable="TRUE">
             <DefaultProviderPolicy
-                defaultSystemProvider="EMPTY" defaultSystemProviderType="SHORT_TEXT"
-                primaryProvider="io.github.antonkulaga.glucowatch/io.github.antonkulaga.glucowatch.complications.PredictionComplicationService"
-                primaryProviderType="SHORT_TEXT" />
-            <BoundingBox x="0" y="0" width="200" height="30" />
+                defaultSystemProvider="EMPTY" defaultSystemProviderType="SHORT_TEXT" />
+            <BoundingBox x="0" y="0" width="120" height="30" />
             <Complication type="SHORT_TEXT">
-                <PartText x="0" y="0" width="200" height="30">
+                <PartText x="0" y="0" width="120" height="30">
                     <Text align="CENTER" ellipsis="TRUE">
-                        <Font family="SYNC_TO_DEVICE" size="22" weight="MEDIUM" color="#FFA78BDB">
-                            <Template>%s in %s<Parameter expression="[COMPLICATION.TEXT]" /><Parameter expression="[COMPLICATION.TITLE]" /></Template>
+                        <Font family="SYNC_TO_DEVICE" size="18" weight="MEDIUM" color="#FF9AA3A8">
+                            <Template>%s<Parameter expression="[COMPLICATION.TEXT]" /></Template>
                         </Font>
                     </Text>
                 </PartText>
@@ -159,25 +159,16 @@
             <Complication type="EMPTY" />
         </ComplicationSlot>
 
-        <ComplicationSlot slotId="3" displayName="Insulin and carbs" x="66" y="318" width="74" height="70"
+        <ComplicationSlot slotId="3" displayName="Insulin and carbs" x="59" y="19" width="96" height="30"
             supportedTypes="SHORT_TEXT" isCustomizable="TRUE">
             <DefaultProviderPolicy
-                defaultSystemProvider="EMPTY" defaultSystemProviderType="SHORT_TEXT"
-                primaryProvider="io.github.antonkulaga.glucowatch/io.github.antonkulaga.glucowatch.complications.LoopComplicationService"
-                primaryProviderType="SHORT_TEXT" />
-            <BoundingBox x="0" y="0" width="74" height="70" />
+                defaultSystemProvider="EMPTY" defaultSystemProviderType="SHORT_TEXT" />
+            <BoundingBox x="0" y="0" width="96" height="30" />
             <Complication type="SHORT_TEXT">
-                <PartText x="0" y="4" width="74" height="36">
+                <PartText x="0" y="0" width="96" height="30">
                     <Text align="CENTER" ellipsis="TRUE">
-                        <Font family="SYNC_TO_DEVICE" size="28" weight="MEDIUM" color="#FFF0923A">
+                        <Font family="SYNC_TO_DEVICE" size="18" weight="MEDIUM" color="#FF9AA3A8">
                             <Template>%s<Parameter expression="[COMPLICATION.TEXT]" /></Template>
-                        </Font>
-                    </Text>
-                </PartText>
-                <PartText x="0" y="40" width="74" height="28">
-                    <Text align="CENTER" ellipsis="TRUE">
-                        <Font family="SYNC_TO_DEVICE" size="22" weight="MEDIUM" color="#FF4FBF85">
-                            <Template>%s<Parameter expression="[COMPLICATION.TITLE]" /></Template>
                         </Font>
                     </Text>
                 </PartText>
@@ -185,25 +176,16 @@
             <Complication type="EMPTY" />
         </ComplicationSlot>
 
-        <ComplicationSlot slotId="4" displayName="Last bolus" x="310" y="318" width="74" height="70"
+        <ComplicationSlot slotId="4" displayName="Last bolus" x="295" y="19" width="96" height="30"
             supportedTypes="SHORT_TEXT" isCustomizable="TRUE">
             <DefaultProviderPolicy
-                defaultSystemProvider="EMPTY" defaultSystemProviderType="SHORT_TEXT"
-                primaryProvider="io.github.antonkulaga.glucowatch/io.github.antonkulaga.glucowatch.complications.TreatmentComplicationService"
-                primaryProviderType="SHORT_TEXT" />
-            <BoundingBox x="0" y="0" width="74" height="70" />
+                defaultSystemProvider="EMPTY" defaultSystemProviderType="SHORT_TEXT" />
+            <BoundingBox x="0" y="0" width="96" height="30" />
             <Complication type="SHORT_TEXT">
-                <PartText x="0" y="4" width="74" height="36">
+                <PartText x="0" y="0" width="96" height="30">
                     <Text align="CENTER" ellipsis="TRUE">
-                        <Font family="SYNC_TO_DEVICE" size="28" weight="MEDIUM" color="#FFE6EDF0">
+                        <Font family="SYNC_TO_DEVICE" size="18" weight="MEDIUM" color="#FF9AA3A8">
                             <Template>%s<Parameter expression="[COMPLICATION.TEXT]" /></Template>
-                        </Font>
-                    </Text>
-                </PartText>
-                <PartText x="0" y="40" width="74" height="28">
-                    <Text align="CENTER" ellipsis="TRUE">
-                        <Font family="SYNC_TO_DEVICE" size="20" weight="MEDIUM" color="#FF8FA0AA">
-                            <Template>%s<Parameter expression="[COMPLICATION.TITLE]" /></Template>
                         </Font>
                     </Text>
                 </PartText>

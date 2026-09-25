@@ -13,6 +13,7 @@ import android.graphics.RectF
 import android.graphics.Shader
 import android.graphics.Typeface
 import glucowatch.core.Treatment
+import glucowatch.core.Trend
 import glucowatch.core.formatAmount
 import io.github.antonkulaga.glucowatch.data.GlucoseState
 import io.github.antonkulaga.glucowatch.ui.Brand
@@ -33,7 +34,7 @@ object ChartRenderer {
     const val COLOR_CARBS = Brand.CARBS
     const val COLOR_FORECAST = Brand.FORECAST
 
-    /** What the chart draws with: [DARK] on the black face, tile and app, [LIGHT] on the light tile. */
+    /** Chart colors for the app, the glucose-only tile, and both glucose-first tiles. */
     class Palette(
         val low: Int, val high: Int, val inRange: Int, val insulin: Int, val carbs: Int, val forecast: Int,
         val band: Int, val guide: Int, val grid: Int, val label: Int, val background: Int,
@@ -56,6 +57,22 @@ object ChartRenderer {
                 grid = Brand.NAVY and 0x00FFFFFF or 0x1A000000, label = Brand.NAVY and 0x00FFFFFF or 0xB3000000.toInt(),
                 background = Brand.LIGHT_BACKGROUND,
             )
+
+            /** Black and gray framing with glucose-state colors for the glucose-all tile. */
+            val GLUCOSE_ALL = Palette(
+                low = Brand.LOW, high = Brand.LOW, inRange = Brand.CARBS,
+                insulin = 0xFF898D8D.toInt(), carbs = 0xFF898D8D.toInt(), forecast = 0xFF898D8D.toInt(),
+                band = 0xFF1A1C1C.toInt(), guide = 0xFF5C6161.toInt(), grid = 0xFF292D2D.toInt(),
+                label = 0xFF858989.toInt(), background = 0xFF000000.toInt(),
+            )
+
+            /** The same clean range chart on an off-white surface, with darker state colors. */
+            val GLUCOSE_LIGHT = Palette(
+                low = Brand.LIGHT_LOW, high = Brand.LIGHT_LOW, inRange = Brand.LIGHT_CARBS,
+                insulin = 0xFF777E7B.toInt(), carbs = 0xFF777E7B.toInt(), forecast = 0xFF777E7B.toInt(),
+                band = 0xFFE8EBE8.toInt(), guide = 0xFFAEB6B0.toInt(), grid = 0xFFE0E4E0.toInt(),
+                label = 0xFF68716C.toInt(), background = Brand.LIGHT_BACKGROUND,
+            )
         }
     }
 
@@ -66,6 +83,17 @@ object ChartRenderer {
         mgdl < state.settings.lowMgdl -> palette.low
         mgdl > state.settings.highMgdl -> palette.high
         else -> palette.inRange
+    }
+
+    /** Glance color: green in range, yellow near a limit, red beyond it or on a fastest trend. */
+    fun glanceColorFor(mgdl: Double, state: GlucoseState, trend: Trend, palette: Palette = Palette.GLUCOSE_ALL): Int {
+        val low = state.settings.lowMgdl.toDouble()
+        val high = state.settings.highMgdl.toDouble()
+        if (mgdl < low || mgdl > high || trend == Trend.DoubleUp || trend == Trend.DoubleDown) return palette.low
+        val near = min(20.0, (high - low) / 6.0)
+        return if (mgdl <= low + near || mgdl >= high - near) {
+            if (palette === Palette.GLUCOSE_LIGHT) Brand.LIGHT_HIGH else Brand.HIGH
+        } else palette.inRange
     }
 
     /**
@@ -81,12 +109,14 @@ object ChartRenderer {
         val c = Canvas(bmp)
         val s = state.settings
         val forecast = state.prediction?.points.orEmpty()
+        val glanceStyle = palette === Palette.GLUCOSE_ALL || palette === Palette.GLUCOSE_LIGHT
         val inset = if (edge) width * 0.07f else 0f
 
         val start = now - s.chartHours * 3_600_000L
         val end = now + if (forecast.isNotEmpty()) s.horizonMinutes * 60_000L else 10 * 60_000L
         val visible = state.readings.filter { it.timeMillis in start..end }
-        val marks = state.treatments.filter { it.timeMillis in start..end }
+        // The glucose-first tiles reserve this short chart for the trajectory and target band.
+        val marks = if (glanceStyle) emptyList() else state.treatments.filter { it.timeMillis in start..end }
         val boluses = marks.filter { it.insulin > 0 }
         val carbs = marks.filter { it.carbs > 0 }
 
@@ -186,7 +216,7 @@ object ChartRenderer {
         }
         runs.filter { it.isNotEmpty() }.forEach { run ->
             val line = smooth(run)
-            if (run.size > 1) {
+            if (run.size > 1 && !glanceStyle) {
                 val area = Path(line).apply { lineTo(run.last().x, plot.bottom); lineTo(run.first().x, plot.bottom); close() }
                 paint.shader = ComposeShader(
                     glowColors(run, yHigh, yLow, ::bandColor),
@@ -196,12 +226,69 @@ object ChartRenderer {
                 c.drawPath(area, paint)
                 paint.shader = null
             }
-            for ((top, bottom, color) in bands) {
-                c.save()
-                c.clipRect(0f, top, width.toFloat(), bottom)
-                lineStroke.color = color
+            if (glanceStyle) {
+                val near = min(20.0, (s.highMgdl - s.lowMgdl) / 6.0)
+                val positions = floatArrayOf(
+                    0f,
+                    (yHigh - plot.top) / plot.height(),
+                    (y(s.highMgdl - near) - plot.top) / plot.height(),
+                    (y(s.highMgdl - near * 2) - plot.top) / plot.height(),
+                    (y(s.lowMgdl + near * 2) - plot.top) / plot.height(),
+                    (y(s.lowMgdl + near) - plot.top) / plot.height(),
+                    (yLow - plot.top) / plot.height(),
+                    1f,
+                )
+                lineStroke.shader = LinearGradient(
+                    0f, plot.top, 0f, plot.bottom,
+                    intArrayOf(
+                        palette.low, palette.low,
+                        if (palette === Palette.GLUCOSE_LIGHT) Brand.LIGHT_HIGH else Brand.HIGH,
+                        palette.inRange, palette.inRange,
+                        if (palette === Palette.GLUCOSE_LIGHT) Brand.LIGHT_HIGH else Brand.HIGH,
+                        palette.low, palette.low,
+                    ),
+                    positions, Shader.TileMode.CLAMP,
+                )
                 if (run.size == 1) c.drawCircle(run[0].x, run[0].y, stroke * 0.8f, lineStroke) else c.drawPath(line, lineStroke)
-                c.restore()
+                lineStroke.shader = null
+            } else {
+                for ((top, bottom, color) in bands) {
+                    c.save()
+                    c.clipRect(0f, top, width.toFloat(), bottom)
+                    lineStroke.color = color
+                    if (run.size == 1) c.drawCircle(run[0].x, run[0].y, stroke * 0.8f, lineStroke) else c.drawPath(line, lineStroke)
+                    c.restore()
+                }
+            }
+        }
+
+        if (glanceStyle && last != null && glanceColorFor(last.mgdl.toDouble(), state, last.trend, palette) == palette.low) {
+            val tail = runs.lastOrNull().orEmpty()
+            if (tail.size >= 2) {
+                lineStroke.color = palette.low
+                c.drawLine(tail[tail.size - 2].x, tail[tail.size - 2].y, tail.last().x, tail.last().y, lineStroke)
+            }
+        }
+
+        // The glucose-first tiles turn recent samples and the forecast into a small,
+        // functional connected-circle mark inspired by the app logo.
+        if (glanceStyle && last != null) {
+            val previous = runs.lastOrNull().orEmpty().dropLast(1).asReversed()
+            var rightmost = x(last.timeMillis)
+            var shown = 0
+            val node = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                style = Paint.Style.STROKE
+                color = if (palette === Palette.GLUCOSE_LIGHT) 0xFF757D78.toInt() else 0xFFB8BAB9.toInt()
+                strokeWidth = stroke * 0.8f
+            }
+            for (point in previous) {
+                if (rightmost - point.x < stroke * 7) continue
+                c.drawCircle(point.x, point.y, stroke * 2f, node)
+                rightmost = point.x
+                if (++shown == 2) break
+            }
+            forecast.lastOrNull()?.let {
+                c.drawCircle(x(it.timeMillis), y(it.mgdl), stroke * 2.1f, node)
             }
         }
 
@@ -209,13 +296,15 @@ object ChartRenderer {
         if (last != null) {
             val cx = x(last.timeMillis)
             val cy = y(last.mgdl.toDouble())
-            val color = colorFor(last.mgdl.toDouble(), state, palette)
-            paint.color = color and 0x00FFFFFF or 0x40000000
-            c.drawCircle(cx, cy, stroke * 3.2f, paint)
-            paint.color = palette.background
-            c.drawCircle(cx, cy, stroke * 2.1f, paint)
+            val color = if (glanceStyle) glanceColorFor(last.mgdl.toDouble(), state, last.trend, palette) else colorFor(last.mgdl.toDouble(), state, palette)
+            if (!glanceStyle) {
+                paint.color = color and 0x00FFFFFF or 0x40000000
+                c.drawCircle(cx, cy, stroke * 3.2f, paint)
+                paint.color = palette.background
+                c.drawCircle(cx, cy, stroke * 2.1f, paint)
+            }
             paint.color = color
-            c.drawCircle(cx, cy, stroke * 1.5f, paint)
+            c.drawCircle(cx, cy, stroke * if (glanceStyle) 2.5f else 1.5f, paint)
         }
 
         // Treatments. Labels that would overlap the previous one on the same row are skipped.

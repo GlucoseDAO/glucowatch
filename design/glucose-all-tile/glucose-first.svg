@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="432" height="432" viewBox="0 0 432 432">
+      <defs><clipPath id="dial"><circle cx="216" cy="216" r="215"/></clipPath></defs>
+      <circle cx="216" cy="216" r="215" fill="#000000" stroke="#252828" stroke-width="1"/>
+      <g clip-path="url(#dial)"><text x="216" y="58" text-anchor="middle" font-family="Inter, Roboto, sans-serif" font-size="43" font-weight="600" fill="#F5F5F3" >23:09</text><text x="216" y="93" text-anchor="middle" font-family="Inter, Roboto, sans-serif" font-size="14" font-weight="650" fill="#858989" letter-spacing="1.7">FRI 25 SEP</text><text x="199" y="190" text-anchor="middle" font-family="Inter, Roboto, sans-serif" font-size="112" font-weight="750" fill="#F5F5F3" >95</text><text x="305" y="179" text-anchor="middle" font-family="Inter, Roboto, sans-serif" font-size="45" font-weight="600" fill="#B8BAB9" >↗</text><text x="216" y="217" text-anchor="middle" font-family="Inter, Roboto, sans-serif" font-size="19" font-weight="500" fill="#B8BAB9" >+8  ·  4m ago</text><g transform="translate(0 221)">
+      <rect x="14" y="35" width="404" height="53" fill="#1A1C1C"/>
+      <path d="M14 35 H418 M14 88 H418" stroke="#5C6161" stroke-width="1" stroke-dasharray="3 5"/>
+      <path d="M128 20 V102 M244 20 V102" stroke="#292D2D" stroke-width="1"/>
+      <text x="25" y="32" text-anchor="start" font-family="Inter, Roboto, sans-serif" font-size="13" font-weight="500" fill="#858989" >180</text>
+      <text x="25" y="105" text-anchor="start" font-family="Inter, Roboto, sans-serif" font-size="13" font-weight="500" fill="#858989" >70</text>
+      <path d="M14 83 C35 87 50 89 61 80 S78 56 99 58 S119 64 139 53
+        S159 45 173 35 S189 16 201 20 S215 25 225 30 S241 38 254 39
+        S276 31 288 38 S299 53 311 66 S328 79 344 78"
+        fill="none" stroke="#F5F5F3" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+      <circle cx="288" cy="38" r="4" fill="#000" stroke="#9DA2A2" stroke-width="2"/>
+      <circle cx="311" cy="66" r="4" fill="#000" stroke="#9DA2A2" stroke-width="2"/>
+      <circle cx="344" cy="78" r="6" fill="#F5F5F3" stroke="#000" stroke-width="2"/>
+      <path d="M350 78 Q375 82 409 92" fill="none" stroke="#8B9191" stroke-width="2" stroke-dasharray="4 5"/>
+      <circle cx="409" cy="92" r="5" fill="#000" stroke="#8B9191" stroke-width="2"/>
+      <text x="128" y="119" text-anchor="middle" font-family="Inter, Roboto, sans-serif" font-size="13" font-weight="500" fill="#858989" >−2h</text><text x="244" y="119" text-anchor="middle" font-family="Inter, Roboto, sans-serif" font-size="13" font-weight="500" fill="#858989" >−1h</text>
+    </g><g>
+      <path d="M126 339 H306" stroke="#303535" stroke-width="1"/>
+      <path d="M150 356 C143 349 132 355 140 365 L150 374
+        L160 365 C168 355 157 349 150 356Z"
+        fill="none" stroke="#B8BAB9" stroke-width="2" stroke-linejoin="round"/>
+      <text x="174" y="371" text-anchor="start" font-family="Inter, Roboto, sans-serif" font-size="21" font-weight="600" fill="#F5F5F3" >110</text>
+      <rect x="244" y="355" width="25" height="17" rx="3" fill="none" stroke="#B8BAB9" stroke-width="2"/>
+      <rect x="270" y="360" width="3" height="7" rx="1" fill="#B8BAB9"/>
+      <rect x="248" y="359" width="17" height="9" rx="1" fill="#B8BAB9"/>
+      <text x="285" y="371" text-anchor="start" font-family="Inter, Roboto, sans-serif" font-size="21" font-weight="600" fill="#F5F5F3" >100%</text>
+    </g></g>
+    </svg>

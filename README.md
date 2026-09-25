@@ -42,7 +42,7 @@ adb install -r io.github.antonkulaga.glucowatch_<version>.apk
 adb install -r io.github.antonkulaga.glucowatch.watchface_<version>.apk
 ```
 
-On the watch, open **GlucoWatch** → **Settings** and pick a data source: **Dexcom Share** (username, password, region) or **Nightscout** (your site's address and an access token, see [Nightscout](#nightscout)). Tap **Save & test**. Then long-press the current watch face, swipe to the end, tap **+ Add watch face** and pick **GlucoWatch face**. If a slot is empty, long-press the face → **Customize** → tap the slot → **Glucose** or **Glucose chart**. For a tile, swipe left from the face to the end of the tiles, tap **+ Add tiles** and pick one of the three: **Glucose** (glucose-only), **Glucose, time and heart** (clock, glucose, heart rate and battery), or **Glucose (light)** (the glucose tile on a light background). The face asks for heart-rate access when you choose it; for heart rate on the tile, tap **Allow heart rate** in GlucoWatch → Settings.
+On the watch, open **GlucoWatch** → **Settings** and pick a data source: **Dexcom Share** (username, password, region) or **Nightscout** (your site's address and an access token, see [Nightscout](#nightscout)). Tap **Save & test**. Then long-press the current watch face, swipe to the end, tap **+ Add watch face** and pick **GlucoWatch face**. If a slot is empty, long-press the face → **Customize** → tap the slot → **Glucose** or **Glucose chart**. For a tile, swipe left from the face to the end of the tiles, tap **+ Add tiles** and pick one of the three: **Glucose** (glucose-only), **Glucose, time and heart** (clock, glucose, heart rate and battery), or **Glucose (light)** (the same glucose-first layout on a light background). The face asks for heart-rate access when you choose it; for heart rate on the tile, tap **Allow heart rate** in GlucoWatch → Settings.
 
 Turn **Wireless debugging** off when you are done. It uses extra battery.
 
@@ -61,7 +61,8 @@ From a phone, without a computer: download both APKs in the phone's browser, ins
 
 The icon is GlucoseDAO's glucose molecule, and the colours are GlucoseDAO's (`ui/Brand.kt`):
 teal for glucose, orange for insulin, green for carbs, purple for the forecast, as on its posters.
-The light tile uses the poster colours unchanged. `python3 scripts/make_icon.py` draws the launcher
+The light tile uses a restrained off-white version of the glucose-first layout, with darker
+green, amber and red state colours. `python3 scripts/make_icon.py` draws the launcher
 vector and the store icon from one geometry. `python3 scripts/store_images.py` makes the store
 screenshots and the face and tile previews from a `demo` run of the screenshot script.
 

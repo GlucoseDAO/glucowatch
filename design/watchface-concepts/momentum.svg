@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="450" height="450" viewBox="0 0 450 450">
+      <defs><clipPath id="round"><circle cx="225" cy="225" r="223"/></clipPath></defs>
+      <circle cx="225" cy="225" r="224" fill="#42474B"/>
+      <circle cx="225" cy="225" r="211" fill="#05090B"/>
+      <g clip-path="url(#round)"><g transform="translate(120 54) scale(0.67)" stroke="#DDE4E7" stroke-width="2.3" fill="none" stroke-linecap="round">
+      <path d="M0 0 L19 0 L31 -12 M19 0 L33 13"/>
+      <circle cx="0" cy="0" r="6" fill="#F04449" stroke="none"/>
+      <circle cx="19" cy="0" r="6" fill="#505A60" stroke="none"/>
+      <circle cx="31" cy="-12" r="5"/><circle cx="33" cy="13" r="5"/>
+    </g><text x="225" y="61" text-anchor="middle" font-family="Inter, Noto Sans, sans-serif" font-size="31" font-weight="600" fill="#F5F7F8" >23:09</text><text x="326" y="61" text-anchor="end" font-family="Inter, Noto Sans, sans-serif" font-size="15" font-weight="600" fill="#91A0A7" >FRI 25</text><text x="215" y="151" text-anchor="middle" font-family="Inter, Noto Sans, sans-serif" font-size="101" font-weight="750" fill="#F5F7F8" >146</text><text x="328" y="146" text-anchor="middle" font-family="Inter, Noto Sans, sans-serif" font-size="47" font-weight="650" fill="#FFC05A" >↑</text><text x="225" y="181" text-anchor="middle" font-family="Inter, Noto Sans, sans-serif" font-size="18" font-weight="550" fill="#91A0A7" >mg/dL   ·   +12 / 5m</text><defs><linearGradient id="motion" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#45C7D5"/><stop offset=".74" stop-color="#45C7D5"/>
+      <stop offset="1" stop-color="#FFC05A"/></linearGradient></defs><g transform="translate(0 194)">
+      <rect x="18" y="35" width="414" height="74" fill="#102428" opacity=".60"/>
+      <path d="M18 35 H432 M18 109 H432" stroke="#31565A" stroke-width="1" stroke-dasharray="3 5"/>
+      <path d="M225 20 V112 M337 20 V112" stroke="#263239" stroke-width="1"/>
+      <path d="M16 91 C65 92 76 86 112 87 S158 80 188 83 S232 79 264 76 S295 79 321 75 S349 70 367 65 S389 53 405 42 S421 25 432 14"
+        fill="none" stroke="url(#motion)" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+      <circle cx="432" cy="14" r="7" fill="#081013" stroke="#FFC05A" stroke-width="3"/>
+    </g><rect x="139" y="321" width="172" height="31" rx="15.5" fill="#382B1B" stroke="#8B6630"/><text x="225" y="342" text-anchor="middle" font-family="Inter, Noto Sans, sans-serif" font-size="14" font-weight="700" fill="#FFC05A" letter-spacing=".7">↗  RISING FASTER</text><text x="145" y="373" text-anchor="middle" font-family="Inter, Noto Sans, sans-serif" font-size="12" font-weight="650" fill="#91A0A7" >IOB / COB</text><text x="145" y="396" text-anchor="middle" font-family="Inter, Noto Sans, sans-serif" font-size="16" font-weight="600" fill="#F5F7F8" >1.4U / 0g</text><text x="305" y="373" text-anchor="middle" font-family="Inter, Noto Sans, sans-serif" font-size="12" font-weight="650" fill="#91A0A7" >LAST BOLUS</text><text x="305" y="396" text-anchor="middle" font-family="Inter, Noto Sans, sans-serif" font-size="16" font-weight="600" fill="#F5F7F8" >4.5U · 3h</text><text x="225" y="418" text-anchor="middle" font-family="Inter, Noto Sans, sans-serif" font-size="14" font-weight="650" fill="#B2A0E6" >FORECAST 166 IN 30M</text></g>
+    </svg>

@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="450" height="450" viewBox="0 0 450 450">
+      <defs><clipPath id="round"><circle cx="225" cy="225" r="223"/></clipPath></defs>
+      <circle cx="225" cy="225" r="224" fill="#42474B"/>
+      <circle cx="225" cy="225" r="211" fill="#05090B"/>
+      <g clip-path="url(#round)"><circle cx="118" cy="53" r="11" fill="none" stroke="#334148" stroke-width="3"/>
+      <circle cx="118" cy="53" r="11" fill="none" stroke="#45C7D5" stroke-width="3"
+        stroke-dasharray="46 70" transform="rotate(-90 118 53)"/>
+      <rect x="115" y="49" width="6" height="8" rx="1" fill="none" stroke="#B9C9CE" stroke-width="1"/>
+      <rect x="117" y="47" width="2" height="2" fill="#B9C9CE"/><text x="134" y="60" text-anchor="start" font-family="Inter, Noto Sans, sans-serif" font-size="15" font-weight="600" fill="#91A0A7" >67%</text><text x="225" y="61" text-anchor="middle" font-family="Inter, Noto Sans, sans-serif" font-size="31" font-weight="600" fill="#F5F7F8" >23:09</text><text x="323" y="60" text-anchor="end" font-family="Inter, Noto Sans, sans-serif" font-size="15" font-weight="600" fill="#91A0A7" >♥ 74</text><text x="225" y="156" text-anchor="middle" font-family="Inter, Noto Sans, sans-serif" font-size="111" font-weight="750" fill="#F5F7F8" >95</text><text x="324" y="145" text-anchor="middle" font-family="Inter, Noto Sans, sans-serif" font-size="49" font-weight="600" fill="#45C7D5" >↗</text><text x="225" y="184" text-anchor="middle" font-family="Inter, Noto Sans, sans-serif" font-size="19" font-weight="550" fill="#91A0A7" >mg/dL   ·   +8</text><g transform="translate(0 195)">
+      <rect x="18" y="36" width="414" height="65" fill="#102428" opacity=".60"/>
+      <path d="M18 36 H432 M18 101 H432" stroke="#31565A" stroke-width="1" stroke-dasharray="3 5"/>
+      <path d="M225 20 V107 M337 20 V107" stroke="#263239" stroke-width="1"/>
+      <path d="M15 78 C28 80 39 87 50 82 S74 92 88 79 S109 52 125 53 S141 62 157 53 S177 52 190 40 S205 38 218 22 S232 26 247 21 S262 35 277 33 S296 37 309 40 S326 30 342 32 S356 28 371 46 S390 73 405 76 S420 75 435 78" fill="none" stroke="#45C7D5" stroke-width="3.3" stroke-linecap="round" stroke-linejoin="round"/>
+      <path d="M433 78 C441 77 447 80 452 84" fill="none" stroke="#B2A0E6" stroke-width="2" stroke-dasharray="4 4"/>
+      <circle cx="432" cy="78" r="6" fill="#081013" stroke="#45C7D5" stroke-width="2.5"/>
+
+    </g><circle cx="342" cy="228" r="4.5" fill="#081013" stroke="#7F9CA3" stroke-width="2"/>
+      <circle cx="371" cy="242" r="4.5" fill="#081013" stroke="#7F9CA3" stroke-width="2"/>
+      <circle cx="405" cy="270" r="4.5" fill="#081013" stroke="#7F9CA3" stroke-width="2"/><text x="225" y="325" text-anchor="middle" font-family="Inter, Noto Sans, sans-serif" font-size="13" font-weight="650" fill="#91A0A7" letter-spacing="1.2">FRI 25 SEP</text><path d="M65 342 H385" stroke="#273137" stroke-width="1"/><text x="145" y="370" text-anchor="middle" font-family="Inter, Noto Sans, sans-serif" font-size="12" font-weight="650" fill="#91A0A7" >IOB / COB</text><text x="145" y="394" text-anchor="middle" font-family="Inter, Noto Sans, sans-serif" font-size="16" font-weight="600" fill="#F5F7F8" >1.4U / 0g</text><text x="305" y="370" text-anchor="middle" font-family="Inter, Noto Sans, sans-serif" font-size="12" font-weight="650" fill="#91A0A7" >LAST BOLUS</text><text x="305" y="394" text-anchor="middle" font-family="Inter, Noto Sans, sans-serif" font-size="16" font-weight="600" fill="#F5F7F8" >4.5U · 3h</text><text x="225" y="418" text-anchor="middle" font-family="Inter, Noto Sans, sans-serif" font-size="15" font-weight="650" fill="#B2A0E6" >57 IN 30M</text></g>
+    </svg>

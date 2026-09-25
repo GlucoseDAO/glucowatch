@@ -4,6 +4,9 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Paint
+import android.graphics.Typeface
 import android.graphics.drawable.Icon
 import androidx.wear.watchface.complications.data.ComplicationData
 import androidx.wear.watchface.complications.data.ComplicationType
@@ -87,6 +90,10 @@ class GlucoseValueComplicationService : GlucoseComplicationService() {
         ).setMinimumTimeUnit(TimeUnit.MINUTES).build()
 
         return when (type) {
+            ComplicationType.SMALL_IMAGE -> SmallImageComplicationData.Builder(
+                SmallImage.Builder(pngIcon(glucoseImage(state, text, delta)), SmallImageType.PHOTO).build(),
+                description,
+            ).setTapAction(tapAction()).build()
             ComplicationType.SHORT_TEXT -> ShortTextComplicationData.Builder(plain(text), description)
                 .setTitle(plain(subtitle))
                 .setTapAction(tapAction())
@@ -104,6 +111,34 @@ class GlucoseValueComplicationService : GlucoseComplicationService() {
             else -> null
         }
     }
+
+    /** The default face's value block, drawn as an image so glucose and trend can share a state color. */
+    private fun glucoseImage(state: GlucoseState, text: String, delta: String?): Bitmap {
+        val width = 432
+        val height = 132
+        val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bitmap)
+        val latest = state.latest ?: return bitmap
+        val color = if (state.isStale()) 0xFF858989.toInt()
+            else ChartRenderer.glanceColorFor(latest.mgdl.toDouble(), state, latest.trend)
+        val valuePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            this.color = color
+            textAlign = Paint.Align.CENTER
+            typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+            textSize = 94f
+        }
+        canvas.drawText(text, width / 2f, 93f, valuePaint)
+        val age = "${state.ageMinutes()}m ago"
+        val status = listOfNotNull(delta, age).joinToString("  ·  ")
+        val statusPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            this.color = 0xFF9AA3A8.toInt()
+            textAlign = Paint.Align.CENTER
+            typeface = Typeface.create(Typeface.DEFAULT, Typeface.NORMAL)
+            textSize = 23f
+        }
+        canvas.drawText(status, width / 2f, 126f, statusPaint)
+        return bitmap
+    }
 }
 
 class GlucoseChartComplicationService : GlucoseComplicationService() {
@@ -111,11 +146,11 @@ class GlucoseChartComplicationService : GlucoseComplicationService() {
         val description = plain("Glucose chart, last ${state.settings.chartHours} hours")
         return when (type) {
             ComplicationType.PHOTO_IMAGE -> PhotoImageComplicationData.Builder(
-                pngIcon(ChartRenderer.render(state, CHART_WIDTH, CHART_HEIGHT, edge = true)), description,
+                pngIcon(ChartRenderer.render(state, CHART_WIDTH, CHART_HEIGHT, edge = true, palette = ChartRenderer.Palette.GLUCOSE_ALL)), description,
             ).setTapAction(tapAction()).build()
             // Wide chart here too: this is the type the GlucoWatch face uses by default.
             ComplicationType.SMALL_IMAGE -> SmallImageComplicationData.Builder(
-                SmallImage.Builder(pngIcon(ChartRenderer.render(state, CHART_WIDTH, CHART_HEIGHT, edge = true)), SmallImageType.PHOTO).build(),
+                SmallImage.Builder(pngIcon(ChartRenderer.render(state, CHART_WIDTH, CHART_HEIGHT, edge = true, palette = ChartRenderer.Palette.GLUCOSE_ALL)), SmallImageType.PHOTO).build(),
                 description,
             ).setTapAction(tapAction()).build()
             else -> null
@@ -123,16 +158,17 @@ class GlucoseChartComplicationService : GlucoseComplicationService() {
     }
 
     /** PNG keeps the IPC payload small compared to a raw bitmap. */
-    private fun pngIcon(bitmap: Bitmap): Icon {
-        val bytes = ByteArrayOutputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it); it.toByteArray() }
-        return Icon.createWithData(bytes, 0, bytes.size)
-    }
-
     companion object {
-        // The GlucoWatch face shows this rim to rim in a 450 x 170 slot; 1.2x for a sharp scale-down.
+        // The face shows this rim to rim in a 450 x 132 slot; 1.2x for a sharp scale-down.
         const val CHART_WIDTH = 540
-        const val CHART_HEIGHT = 204
+        const val CHART_HEIGHT = 158
     }
+}
+
+/** PNG keeps the complication IPC payload small compared with a raw bitmap. */
+private fun pngIcon(bitmap: Bitmap): Icon {
+    val bytes = ByteArrayOutputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it); it.toByteArray() }
+    return Icon.createWithData(bytes, 0, bytes.size)
 }
 
 /** Optional: only shows data when prediction is enabled in settings. */

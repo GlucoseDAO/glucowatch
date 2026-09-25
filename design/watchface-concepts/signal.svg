@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="450" height="450" viewBox="0 0 450 450">
+      <defs><clipPath id="round"><circle cx="225" cy="225" r="223"/></clipPath></defs>
+      <circle cx="225" cy="225" r="224" fill="#42474B"/>
+      <circle cx="225" cy="225" r="211" fill="#05090B"/>
+      <g clip-path="url(#round)"><g transform="translate(120 54) scale(0.67)" stroke="#DDE4E7" stroke-width="2.3" fill="none" stroke-linecap="round">
+      <path d="M0 0 L19 0 L31 -12 M19 0 L33 13"/>
+      <circle cx="0" cy="0" r="6" fill="#F04449" stroke="none"/>
+      <circle cx="19" cy="0" r="6" fill="#505A60" stroke="none"/>
+      <circle cx="31" cy="-12" r="5"/><circle cx="33" cy="13" r="5"/>
+    </g><text x="225" y="61" text-anchor="middle" font-family="Inter, Noto Sans, sans-serif" font-size="19" font-weight="600" fill="#91A0A7" >FRI 25 SEP</text><text x="326" y="61" text-anchor="end" font-family="Inter, Noto Sans, sans-serif" font-size="15" font-weight="600" fill="#91A0A7" >♥ 72</text><text x="225" y="145" text-anchor="middle" font-family="Inter, Noto Sans, sans-serif" font-size="76" font-weight="600" fill="#F5F7F8" >23:09</text><g transform="translate(0 153)">
+      <rect x="18" y="36" width="414" height="65" fill="#102428" opacity=".60"/>
+      <path d="M18 36 H432 M18 101 H432" stroke="#31565A" stroke-width="1" stroke-dasharray="3 5"/>
+      <path d="M225 20 V107 M337 20 V107" stroke="#263239" stroke-width="1"/>
+      <path d="M15 78 C28 80 39 87 50 82 S74 92 88 79 S109 52 125 53 S141 62 157 53 S177 52 190 40 S205 38 218 22 S232 26 247 21 S262 35 277 33 S296 37 309 40 S326 30 342 32 S356 28 371 46 S390 73 405 76 S420 75 435 78" fill="none" stroke="#45C7D5" stroke-width="3.3" stroke-linecap="round" stroke-linejoin="round"/>
+      <path d="M433 78 C441 77 447 80 452 84" fill="none" stroke="#B2A0E6" stroke-width="2" stroke-dasharray="4 4"/>
+      <circle cx="432" cy="78" r="6" fill="#081013" stroke="#45C7D5" stroke-width="2.5"/>
+      <text x="43" y="34" text-anchor="start" font-family="Inter, Noto Sans, sans-serif" font-size="15" font-weight="500" fill="#91A0A7" >180</text><text x="43" y="98" text-anchor="start" font-family="Inter, Noto Sans, sans-serif" font-size="15" font-weight="500" fill="#91A0A7" >70</text><text x="225" y="123" text-anchor="middle" font-family="Inter, Noto Sans, sans-serif" font-size="15" font-weight="500" fill="#91A0A7" >−2h</text><text x="336" y="123" text-anchor="middle" font-family="Inter, Noto Sans, sans-serif" font-size="15" font-weight="500" fill="#91A0A7" >−1h</text>
+    </g><path d="M47 321 H403" stroke="#273137" stroke-width="1"/><text x="125" y="348" text-anchor="middle" font-family="Inter, Noto Sans, sans-serif" font-size="13" font-weight="650" fill="#91A0A7" >IOB</text><text x="125" y="375" text-anchor="middle" font-family="Inter, Noto Sans, sans-serif" font-size="23" font-weight="650" fill="#E8A044" >1.4U</text><text x="125" y="395" text-anchor="middle" font-family="Inter, Noto Sans, sans-serif" font-size="12" font-weight="550" fill="#55C897" >COB 0g</text><text x="225" y="378" text-anchor="middle" font-family="Inter, Noto Sans, sans-serif" font-size="59" font-weight="700" fill="#F5F7F8" >95↗</text><text x="225" y="397" text-anchor="middle" font-family="Inter, Noto Sans, sans-serif" font-size="14" font-weight="600" fill="#45C7D5" >+8 mg/dL</text><text x="325" y="348" text-anchor="middle" font-family="Inter, Noto Sans, sans-serif" font-size="13" font-weight="650" fill="#91A0A7" >BOLUS</text><text x="325" y="375" text-anchor="middle" font-family="Inter, Noto Sans, sans-serif" font-size="23" font-weight="600" fill="#F5F7F8" >4.5U</text><text x="325" y="395" text-anchor="middle" font-family="Inter, Noto Sans, sans-serif" font-size="12" font-weight="550" fill="#91A0A7" >3h 3m</text><text x="225" y="419" text-anchor="middle" font-family="Inter, Noto Sans, sans-serif" font-size="16" font-weight="600" fill="#B2A0E6" >57 in 30m</text></g>
+    </svg>

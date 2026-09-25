@@ -1,0 +1,1 @@
+Redesigned watch face and light tile with clearer glucose, range chart, heart rate and battery. Glucose now uses green, amber or red for its state and trend. Added an optional phone companion that can relay readings or copy the login over Bluetooth.

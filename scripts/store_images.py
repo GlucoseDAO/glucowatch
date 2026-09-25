@@ -31,8 +31,8 @@ SCREENS = [
     ('01-face.png', 'demo-face.png', 'GlucoWatch', 'Glucose, trend and 3 hours on your watch face'),
     ('02-tile-glucose-only.png', 'demo-tile-glucose-only.png', 'Glucose tile', 'Swipe from the face for glucose at a glance'),
     ('03-tile-glucose-all.png', 'demo-tile-glucose-all.png', 'Glucose, time and heart', 'Clock, glucose, heart rate and battery together'),
-    ('04-tile-glucose-light.png', 'demo-tile-glucose-light.png', 'Light tile', 'The glucose tile in GlucoseDAO\'s light colours'),
-    ('05-app.png', 'demo-app-0.png', 'App', 'Dexcom Share or Nightscout, no phone app'),
+    ('04-tile-glucose-light.png', 'demo-tile-glucose-light.png', 'Light tile', 'Clock, glucose and range on an off-white screen'),
+    ('05-app.png', 'demo-app-0.png', 'App', 'Dexcom, Nightscout or optional phone link'),
 ]
 # Preview in the "Add tiles" list -> the capture it comes from.
 TILE_PREVIEWS = {

@@ -42,7 +42,7 @@ import java.time.ZoneId
  */
 abstract class GlucoseTile : TileService() {
     protected open val light = false
-    protected val palette get() = if (light) ChartRenderer.Palette.LIGHT else ChartRenderer.Palette.DARK
+    protected open val palette get() = if (light) ChartRenderer.Palette.LIGHT else ChartRenderer.Palette.DARK
     protected val ink get() = if (light) Brand.NAVY else 0xFFFFFFFF.toInt()
     protected val muted get() = if (light) Brand.LIGHT_MUTED else Brand.MUTED
     protected val accent get() = if (light) Brand.TEAL else Brand.TEAL_LIGHT
@@ -209,37 +209,50 @@ open class GlucoseTileService : GlucoseTile() {
     }
 }
 
-/** glucose-light: the same tile on a light background, in the GlucoseDAO poster colours. */
-class GlucoseLightTileService : GlucoseTileService() {
+/** glucose-light: the glance-first layout on an off-white surface. */
+class GlucoseLightTileService : GlucoseAllTileService() {
     override val light = true
+    override val palette get() = ChartRenderer.Palette.GLUCOSE_LIGHT
 }
 
 /**
- * glucose-all: the clock on top, glucose under it, a shorter chart, then heart rate and the watch
- * battery in one quiet row. Clock and heart rate update on the watch by themselves; heart rate
+ * glucose-all and glucose-light: the clock on top, glucose under it, a short range chart, then
+ * heart rate and the watch battery in one quiet row. Clock and heart rate update on the watch; heart rate
  * needs the permission the app asks for in Settings, and shows "--" until then.
  */
-class GlucoseAllTileService : GlucoseTile() {
+open class GlucoseAllTileService : GlucoseTile() {
+    override val palette get() = ChartRenderer.Palette.GLUCOSE_ALL
+
     override fun content(request: RequestBuilders.TileRequest, state: GlucoseState): LayoutElementBuilders.LayoutElement {
+        val primary = if (light) 0xFF202624.toInt() else 0xFFF5F5F3.toInt()
+        val gray = if (light) 0xFF68716C.toInt() else 0xFFB8BAB9.toInt()
+        val red = if (light) Brand.LIGHT_LOW else Brand.LOW
         val footer = LayoutElementBuilders.Row.Builder()
             .setVerticalAlignment(LayoutElementBuilders.VERTICAL_ALIGN_CENTER)
-            .addContent(icon(request, R.drawable.ic_heart, "heart", 12f, palette.low))
-            .addContent(gap(3f))
-            .addContent(dynamicText(heartRate(), "--", "000", 13f, muted))
-            .addContent(gap(12f))
-            .addContent(icon(request, R.drawable.ic_battery, "battery", 14f, muted))
-            .addContent(gap(3f))
-            .addContent(text("${battery()}%", 13f, muted))
-        // Everything stays inside the circle: the footer is the narrowest row, so it goes last.
-        return column()
-            .addContent(dynamicText(clock(), "--:--", "00:00", 26f, ink))
-            .addContent(value(state, 30f))
-            .addContent(status(state, 12f))
-            .addContent(space(2f))
+            .addContent(icon(request, R.drawable.ic_heart, "heart", 14f, red))
+            .addContent(gap(4f))
+            .addContent(dynamicText(heartRate(), "--", "000", 14f, red))
+            .addContent(gap(10f))
+            .addContent(icon(request, R.drawable.ic_battery, "battery", 14f, gray))
+            .addContent(gap(4f))
+            .addContent(text("${battery()}%", 13f, primary))
+        val content = column()
+            .addContent(dynamicText(clock(), "--:--", "00:00", 20f, primary, bold = true))
+            .addContent(space(1f))
+            .addContent(glucoseValue(state, 43f))
+            .addContent(status(state, 11f))
             .addContent(chart(request, state, 0.28f))
             .addContent(space(2f))
             .addContent(footer.build())
             .build()
+        return content
+    }
+
+    private fun glucoseValue(state: GlucoseState, size: Float): LayoutElementBuilders.LayoutElement {
+        val latest = state.latest ?: return text("---", size, if (light) Brand.LIGHT_MUTED else 0xFF858989.toInt(), bold = true)
+        val color = if (state.isStale()) if (light) Brand.LIGHT_MUTED else 0xFF858989.toInt()
+            else ChartRenderer.glanceColorFor(latest.mgdl.toDouble(), state, latest.trend, palette)
+        return text("${state.settings.unit.format(latest.mgdl.toDouble())} ${latest.trend.arrow}", size, color, bold = true)
     }
 
     private fun heartRate(): DynamicString =
