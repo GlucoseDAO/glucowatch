@@ -245,7 +245,9 @@ instead of running a model on the watch.
 
 `python3 scripts/screenshots.py` builds the debug APKs, boots an emulator shaped like a Galaxy
 Watch6 Classic 43 mm (round, 432 px, density 340) and saves round screenshots of the face, the
-three tiles and the app for demo data, Dexcom Share and Nightscout into `data/output/screenshots/`. See
+three tiles and the app for demo data, Dexcom Share and Nightscout into `data/output/screenshots/`.
+`--watch all` adds the other round Galaxy sizes since the Watch6 (438 px Watch8 Classic, 480 px
+Watch6 Classic 47 mm and Ultra). GlucoWatch needs Wear OS 4 or later. See
 [docs/screenshots.md](docs/screenshots.md).
 
 ## How it works

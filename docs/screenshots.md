@@ -15,20 +15,39 @@ python3 scripts/screenshots.py --unit mmol         # override GLUCOWATCH_UNIT fo
 
 A full run takes about 3 minutes: 1 to boot the emulator, 1 to build, and about 20 seconds per scenario.
 
-## The simulated watch
+## The simulated watches
 
-| Property | Value | Real device |
-|---|---|---|
-| AVD | `glucowatch_gw6c`, created by the script from `wearos_large_round` | |
-| Screen | round, 432 × 432 px | Galaxy Watch6 40 mm, Watch6 Classic 43 mm (SM-R950, the watch GlucoWatch is tried on) |
-| Density | 340 dpi, so about 203 dp across | |
-| System | Wear OS 6, `system-images;android-36;android-wear-signed;x86_64` | Galaxy watches run Wear OS 4 to 6 |
-| adb serial | `emulator-5584`, so it never collides with an emulator on the default port | |
+GlucoWatch needs Wear OS 4 or later and has to fit every round Galaxy watch from the Watch6 on.
+Those come in three screen sizes, and the script has one simulated watch for each (`--watch`):
+
+| `--watch` | AVD | Screen | adb serial | Real devices |
+|---|---|---|---|---|
+| `watch6-classic-43` (default) | `glucowatch_gw6c` | round 432 × 432 px | `emulator-5584` | Watch6 40 mm, **Watch6 Classic 43 mm (SM-R950, the watch GlucoWatch is tried on)**, Watch7 40 mm |
+| `watch8-classic` | `glucowatch_gw8c` | round 438 × 438 px | `emulator-5586` | Watch8 Classic, Watch8 40 mm |
+| `watch6-classic-47` | `glucowatch_gw6c47` | round 480 × 480 px | `emulator-5588` | Watch6 44 mm, Watch6 Classic 47 mm, Watch7 44 mm, Watch8 44 mm, Watch Ultra (2024, 2025) |
+
+```bash
+python3 scripts/screenshots.py demo                                   # the default watch
+python3 scripts/screenshots.py demo --watch all                       # all three sizes
+python3 scripts/screenshots.py demo --watch watch8-classic watch6-classic-47
+```
+
+All three run Wear OS 6 (`system-images;android-36;android-wear-signed;x86_64`) at density 340.
+340 is Samsung's value on the 432 px watch; the 438 and 480 px watches are assumed to use the same,
+which a real one confirms with `adb shell wm density`. The script creates each AVD from
+`wearos_large_round` if it is missing. Each has its own adb serial, so none collides with an
+emulator on the default port or with the others, and `--keep` can leave all three up.
+
+Store images and the face and tile previews come only from the default watch
+(`scripts/store_images.py` reads `watch6-classic-43/raw/`). Checked on 2026-09-25 with demo data:
+the face, the three tiles and the app fit all three sizes; on 480 px everything has more room.
 
 The emulator returns a square framebuffer even for a round AVD. The script clips each capture to
 the circle and adds a bezel, so what you see is what the watch shows. The unclipped captures are
-kept in `raw/`. Larger Galaxy watches (450 and 480 px) are not simulated. The face is drawn on a
-450 px canvas and scales, and the app and the tile lay out in dp.
+kept in `raw/`. The face is drawn on a 450 px canvas that Wear OS scales to the screen. The app
+and the tiles lay out in dp, and the tiles draw the chart at the screen's own pixel width and a
+share of its height, so each watch gets a sharp chart of the same proportions. Older 396 and
+450 px Galaxy watches (Watch4, Watch5) can run Wear OS 4 but are not simulated.
 
 ## Scenarios
 
@@ -56,8 +75,9 @@ screen scrolled to the end, shows each tile, and captures the face in interactiv
 
 ## Output
 
-`data/output/screenshots/` (the whole `data/output/` directory is gitignored). Each run deletes
-the PNGs and `raw/` there first, so the folder only holds the scenarios of the last run:
+`data/output/screenshots/<watch>/`, one folder per simulated watch, and `overview.png` beside them
+with every watch of the run (the whole `data/output/` directory is gitignored). Each run deletes
+these folders and PNGs first, so only the last run's captures remain:
 
 | File | Content |
 |---|---|
@@ -115,3 +135,6 @@ asking the person the data belongs to.
   `whs.synthetic.user.START_WALKING`). The glucose-all tile shows it. The face's `[HEART_RATE]`
   stayed 0 on the emulator even with that data and the permission granted, so the face shows
   the date only there; check heart rate on the face on a real watch.
+- Two runs at once share an emulator and an output folder: each run's cleanup deletes the other's
+  captures, and both drive the same screen. Give a second run its own `--out` and a watch the
+  first is not using.

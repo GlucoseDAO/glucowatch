@@ -1,17 +1,25 @@
 #!/usr/bin/env python3
-"""Screenshots of the GlucoWatch face, tile and app on a simulated Galaxy Watch6 Classic (43 mm).
+"""Screenshots of the GlucoWatch face, tiles and app on simulated Galaxy watches.
 
-The emulator is a round 432x432 px Wear OS screen at density 340, the size of the Galaxy Watch6
-40 mm and Watch6 Classic 43 mm (SM-R950), the watch GlucoWatch is tried on. The script creates
-that AVD if it is missing, boots it without a window, builds and installs both debug APKs, sets
-the GlucoWatch face, adds the three GlucoWatch tiles, and captures every scenario:
+GlucoWatch has to fit every round Galaxy watch from the Watch6 on. Those come in three screen
+sizes, one simulated watch each (--watch):
+
+    watch6-classic-43  432 px  Watch6 40 mm, Watch6 Classic 43 mm (SM-R950), Watch7 40 mm   default
+    watch8-classic     438 px  Watch8 Classic, Watch8 40 mm
+    watch6-classic-47  480 px  Watch6 44 mm, Watch6 Classic 47 mm, Watch7 44 mm, Watch8 44 mm, Ultra
+
+The default is the Watch6 Classic 43 mm the app is tried on; store images come from it.
+`--watch all` runs all three. For each watch the script creates the AVD if it is missing,
+boots it without a window, installs both debug APKs (built once), sets the GlucoWatch face, and
+captures every scenario:
 
     demo               demo data, no account
     dexcom             Dexcom Share with DEXCOM_USERNAME / DEXCOM_PASSWORD from .env
     nightscout         the Nightscout at NIGHTSCOUT_URL (plus NIGHTSCOUT_TOKEN, NIGHTSCOUT_API)
     nightscout-replay  the same Nightscout replayed so its loop looks fresh (scripts/nightscout_replay.py)
 
-Output (data/output/ is gitignored), in data/output/screenshots/, named after what they show:
+Output (data/output/ is gitignored), in data/output/screenshots/<watch>/, named after what they
+show, and data/output/screenshots/overview.png with both watches:
 
     <scenario>-face.png, <scenario>-face-ambient.png    the watch face
     <scenario>-tile-glucose-only.png                    the three tiles
@@ -23,7 +31,9 @@ Output (data/output/ is gitignored), in data/output/screenshots/, named after wh
 
     python3 scripts/screenshots.py                      # all scenarios that are configured
     python3 scripts/screenshots.py nightscout dexcom    # some of them
-    python3 scripts/screenshots.py --no-build --keep    # reuse the APKs, leave the emulator running
+    python3 scripts/screenshots.py --watch all          # every screen size
+    python3 scripts/screenshots.py --watch watch8-classic watch6-classic-47
+    python3 scripts/screenshots.py --no-build --keep    # reuse the APKs, leave the emulators running
 
 Needs the Android SDK (local.properties or ANDROID_HOME) with the emulator and the
 system-images;android-36;android-wear-signed;x86_64 image, KVM, and Pillow (python3-pil).
@@ -42,12 +52,19 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-AVD = 'glucowatch_gw6c'
 IMAGE = 'system-images;android-36;android-wear-signed;x86_64'
-WATCH = {'hw.lcd.width': '432', 'hw.lcd.height': '432', 'hw.lcd.density': '340', 'hw.lcd.circular': 'true'}
-MIDDLE = int(WATCH['hw.lcd.width']) // 2
-PORT = 5584                      # emulator console port; adb serial emulator-5584
-SERIAL = f'emulator-{PORT}'
+# One simulated watch per round screen size since the Watch6. Density 340 is Samsung's value
+# on the 432 px watch the app is tried on; the others are assumed to use the same (check with
+# `adb shell wm density` on a real one). Each has its own console port, so all can stay up
+# with --keep. The first entry is the default.
+WATCHES = {
+    'watch6-classic-43': {'label': 'Galaxy Watch6 Classic 43 mm (432 px)', 'avd': 'glucowatch_gw6c', 'size': 432, 'density': 340, 'port': 5584},
+    'watch8-classic': {'label': 'Galaxy Watch8 Classic (438 px)', 'avd': 'glucowatch_gw8c', 'size': 438, 'density': 340, 'port': 5586},
+    'watch6-classic-47': {'label': 'Galaxy Watch6 Classic 47 mm (480 px)', 'avd': 'glucowatch_gw6c47', 'size': 480, 'density': 340, 'port': 5588},
+}
+DEFAULT_WATCH = next(iter(WATCHES))
+# The watch being captured; set by use_watch().
+AVD = WATCH = MIDDLE = PORT = SERIAL = None
 REPLAY_PORT = 8537
 PKG = 'io.github.antonkulaga.glucowatch'
 FACE = PKG + '.watchface'
@@ -111,6 +128,16 @@ def adb(*args, check=True, binary=False):
 
 def nap(seconds):
     time.sleep(seconds)
+
+
+def use_watch(key):
+    global AVD, WATCH, MIDDLE, PORT, SERIAL
+    watch = WATCHES[key]
+    AVD, PORT = watch['avd'], watch['port']
+    SERIAL = f'emulator-{PORT}'
+    WATCH = {'hw.lcd.width': str(watch['size']), 'hw.lcd.height': str(watch['size']),
+             'hw.lcd.density': str(watch['density']), 'hw.lcd.circular': 'true'}
+    MIDDLE = watch['size'] // 2
 
 
 def ensure_avd():
@@ -295,7 +322,9 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('scenarios', nargs='*', help=f'any of {", ".join(SCENARIOS)}; default: every configured one')
     parser.add_argument('--no-build', action='store_true', help='install the APKs that are already built')
-    parser.add_argument('--keep', action='store_true', help='leave the emulator running afterwards')
+    parser.add_argument('--keep', action='store_true', help='leave the emulators running afterwards')
+    parser.add_argument('--watch', nargs='+', choices=[*WATCHES, 'all'], default=[DEFAULT_WATCH],
+                        help=f'which watches to simulate (default: {DEFAULT_WATCH}, the one the app is tried on)')
     parser.add_argument('--unit', choices=['mmol', 'mgdl'], help='override GLUCOWATCH_UNIT')
     parser.add_argument('--out', default=str(ROOT / 'data' / 'output' / 'screenshots'))
     args = parser.parse_args()
@@ -334,14 +363,14 @@ def main():
         sys.exit('nothing to capture')
 
     out = Path(args.out)
-    # Each run replaces its output: no captures from older runs or older designs stay behind.
-    # Only what this script writes goes (PNGs and raw/), in case --out points somewhere shared.
-    raw_dir = out / 'raw'
-    if raw_dir.exists():
-        shutil.rmtree(raw_dir)
+    watches = list(WATCHES) if 'all' in args.watch else list(dict.fromkeys(args.watch))
+    # Each run replaces its output: no captures from older runs, older designs or older layouts
+    # of this folder stay behind. Only what this script writes goes, in case --out is shared.
+    for old in [out / 'raw', *(out / w for w in WATCHES)]:
+        if old.exists():
+            shutil.rmtree(old)
     for old in out.glob('*.png'):
         old.unlink()
-    raw_dir.mkdir(parents=True)
 
     replay = None
     if 'nightscout-replay' in plans:
@@ -349,13 +378,33 @@ def main():
         replay, shift = nightscout_replay.serve(env['NIGHTSCOUT_URL'], REPLAY_PORT, env.get('NIGHTSCOUT_TOKEN', ''))
         log(f'replaying {env["NIGHTSCOUT_URL"]} shifted by {shift / 60000:.0f} min on port {REPLAY_PORT}')
 
+    overviews = []
+    build = not args.no_build
+    try:
+        for watch in watches:
+            use_watch(watch)
+            log(f'{watch}: {WATCHES[watch]["label"]}')
+            overviews.append(capture_watch(watch, plans, out / watch, build, args.keep))
+            build = False
+        stacked(overviews).save(out / 'overview.png')
+        log(f'done: {out}')
+    finally:
+        if replay:
+            replay.shutdown()
+
+
+def capture_watch(watch, plans, out, build, keep):
+    """Every scenario on the booted watch into [out]; returns its overview (a row per scenario)."""
+    from PIL import Image
+    raw_dir = out / 'raw'
+    raw_dir.mkdir(parents=True)
     started = boot()
     try:
         prepare_device()
-        build_and_install(not args.no_build)
+        build_and_install(build)
         rows = []
         for scenario, extras in plans.items():
-            log(f'{scenario}: configuring')
+            log(f'{watch} {scenario}: configuring')
             configure(extras)
             frames = capture(scenario, raw_dir)
             app = side_by_side([round_frame(Image.open(f)) for f in frames])
@@ -367,15 +416,13 @@ def main():
                 if shot != 'face-ambient':
                     row.append(image)
             rows.append(side_by_side(row))
-            log(f'{scenario}: saved -face, -face-ambient, {", ".join(f"-tile-{t}" for t in TILES)}, -app ({len(frames)} app frames)')
-        stacked(rows).save(out / 'overview.png')
-        log(f'done: {out}')
+            log(f'{watch} {scenario}: saved -face, -face-ambient, {", ".join(f"-tile-{t}" for t in TILES)}, -app ({len(frames)} app frames)')
+        overview = stacked(rows)
+        overview.save(out / 'overview.png')
+        return overview
     finally:
-        if replay:
-            replay.shutdown()
-        if started and not args.keep:
+        if started and not keep:
             adb('emu', 'kill', check=False)
-
 
 if __name__ == '__main__':
     main()

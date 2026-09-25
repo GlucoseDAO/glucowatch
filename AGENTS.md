@@ -69,13 +69,15 @@ order and add new slots at the end, or an update swaps providers on every instal
 
 ## Screenshots
 
-`python3 scripts/screenshots.py` produces round screenshots of the face, the three tiles and the app on
-an emulator shaped like the user's Galaxy Watch6 Classic 43 mm (SM-R950, 432 × 432 px, density
-340), for the scenarios `demo`, `dexcom`, `nightscout` and `nightscout-replay`. Output goes to
-`data/output/screenshots/` (gitignored). When the user asks for screenshots, run it and show
-`overview.png`, the `*-tile-glucose-*.png` and the `*-app.png` files. `docs/screenshots.md` has the
-requirements, the scenarios and the pitfalls. The Dexcom login and `NIGHTSCOUT_URL` come from
-`.env`. Screenshots with real data are the user's health data: do not publish them.
+`python3 scripts/screenshots.py` produces round screenshots of the face, the three tiles and the
+app on an emulator shaped like the user's Galaxy Watch6 Classic 43 mm (SM-R950, 432 × 432 px,
+density 340), the default watch. `--watch all` adds the 438 px Watch8 Classic and the 480 px
+Watch6 Classic 47 mm / Ultra: every round Galaxy watch from the Watch6 on must fit. Scenarios are
+`demo`, `dexcom`, `nightscout` and `nightscout-replay`. Output goes to
+`data/output/screenshots/<watch>/` (gitignored). When the user asks for screenshots, run it and
+show `overview.png`, the `*-tile-glucose-*.png` and the `*-app.png` files. `docs/screenshots.md`
+has the requirements, the scenarios and the pitfalls. The Dexcom login and `NIGHTSCOUT_URL` come
+from `.env`. Screenshots with real data are the user's health data: do not publish them.
 
 The face, the tiles and the first app screen use the whole round screen: the chart runs from rim
 to rim through the wide middle (`ChartRenderer.render(..., edge = true)`), and text sits above

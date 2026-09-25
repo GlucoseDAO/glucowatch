@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Store screenshots and picker previews from the demo captures of scripts/screenshots.py.
 
-Run `python3 scripts/screenshots.py demo` first. This then writes, from demo data only (never a
+Run `python3 scripts/screenshots.py demo` first (the default watch, Watch6 Classic 43 mm). This then writes, from demo data only (never a
 real account's readings):
 
     fastlane/metadata/android/en-US/images/phoneScreenshots/01-face.png ... 05-app.png
@@ -17,7 +17,8 @@ from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont
 
 ROOT = Path(__file__).resolve().parent.parent
-RAW = ROOT / 'data' / 'output' / 'screenshots' / 'raw'
+# The watch the app is tried on (the default of scripts/screenshots.py).
+RAW = ROOT / 'data' / 'output' / 'screenshots' / 'watch6-classic-43' / 'raw'
 SHOTS = ROOT / 'fastlane' / 'metadata' / 'android' / 'en-US' / 'images' / 'phoneScreenshots'
 
 # GlucoseDAO: deep teal with an orange accent (see app/.../ui/Brand.kt).
