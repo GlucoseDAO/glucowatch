@@ -25,7 +25,11 @@ import glucowatch.core.LinearTrendPredictor
 import glucowatch.core.LoopStatus
 import glucowatch.core.NightscoutApi
 import glucowatch.core.Predictors
+import glucowatch.core.DohResolver
+import glucowatch.core.ProxyEndpoint
 import glucowatch.core.Region
+import glucowatch.core.HttpRequest
+import glucowatch.core.UrlConnectionTransport
 import glucowatch.core.link.LinkAccount
 import glucowatch.core.link.LinkSource
 import glucowatch.core.link.PhoneLink
@@ -39,6 +43,8 @@ import io.github.antonkulaga.glucowatch.data.PhonePairingStore
 import io.github.antonkulaga.glucowatch.data.RefreshReceiver
 import io.github.antonkulaga.glucowatch.data.Settings
 import io.github.antonkulaga.glucowatch.data.SettingsStore
+import io.github.antonkulaga.glucowatch.data.StaleAlert
+import io.github.antonkulaga.glucowatch.data.StaleAlertReceiver
 import io.github.antonkulaga.glucowatch.data.toHex
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.MainScope
@@ -60,12 +66,18 @@ class SettingsActivity : Activity() {
     private lateinit var username: EditText
     private lateinit var password: EditText
     private lateinit var region: RadioGroup
+    private lateinit var shareProxy: EditText
+    private lateinit var proxyResult: TextView
+    private lateinit var shareDoh: CheckBox
+    private lateinit var dohEndpoint: RadioGroup
     private lateinit var nightscoutUrl: EditText
     private lateinit var nightscoutToken: EditText
     private lateinit var nightscoutApi: RadioGroup
     private lateinit var unit: RadioGroup
     private lateinit var prediction: CheckBox
     private lateinit var predictor: RadioGroup
+    private lateinit var staleAlert: RadioGroup
+    private lateinit var alertPermission: Button
     private lateinit var result: TextView
     private lateinit var shareFields: List<View>
     private lateinit var nightscoutFields: List<View>
@@ -109,6 +121,13 @@ class SettingsActivity : Activity() {
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
         }
         region = radios(Region.entries.map { it.name to it.label }, s.region.name)
+        shareProxy = EditText(this).apply {
+            hint = "proxy.example:8080"; setText(s.shareProxy); isSingleLine = true
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI
+        }
+        proxyResult = hint("")
+        shareDoh = CheckBox(this).apply { text = "Resolve over HTTPS"; isChecked = s.shareDoh }
+        dohEndpoint = radios(DohResolver.PRESETS.map { (name, url) -> url to name }, endpointOf(s.dohEndpoint))
         nightscoutUrl = EditText(this).apply {
             hint = "https://your-site.example"; setText(s.nightscoutUrl); isSingleLine = true
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI
@@ -124,6 +143,11 @@ class SettingsActivity : Activity() {
             Predictors.all.map { it.id to it.displayName } + (LoopStatus.MODEL_ID to "Loop (Nightscout)") + (PhoneLink.MODEL_ID to "Phone app model"),
             s.predictorId,
         )
+        staleAlert = radios(StaleAlert.entries.map { it.name to it.label }, s.staleAlert.name)
+        alertPermission = Button(this).apply {
+            text = "Allow stale alerts"; Brand.style(this, primary = false)
+            setOnClickListener { requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), REQUEST_NOTIFICATIONS) }
+        }
         loopPredictor = predictor.findViewWithTag(LoopStatus.MODEL_ID)
         phonePredictor = predictor.findViewWithTag(PhoneLink.MODEL_ID)
         result = TextView(this).apply { textSize = 12f; gravity = Gravity.CENTER; setTextColor(Brand.TEXT) }
@@ -132,7 +156,22 @@ class SettingsActivity : Activity() {
             setOnClickListener { if (DataSource.valueOf(selected(source)) == DataSource.PHONE) withBluetooth(::saveAndTest) else saveAndTest() }
         }
 
-        shareFields = listOf(label("Account"), username, revealable(password), label("Region"), region)
+        shareFields = listOf(
+            label("Account"), username, revealable(password), label("Region"), region,
+            label("If DNS fails"), shareDoh,
+            hint(
+                "Some mobile networks will not resolve Dexcom. This asks a resolver over HTTPS instead, and " +
+                    "still checks Dexcom's certificate. It cannot help when the network blocks the address itself.",
+            ),
+            dohEndpoint,
+            label("Proxy fallback (optional)"), shareProxy,
+            hint("Leave empty for the watch network. Use only a proxy you trust."),
+            Button(this).apply {
+                text = "Test proxy"; Brand.style(this, primary = false)
+                setOnClickListener { testProxy() }
+            },
+            proxyResult,
+        )
         nightscoutFields = listOf(
             label("Nightscout address"), nightscoutUrl,
             label("Token or API secret"), revealable(nightscoutToken), hint("A token with the readable role is safer. v3 needs a token."),
@@ -142,7 +181,7 @@ class SettingsActivity : Activity() {
         phoneStatus = hint("")
         pairButton = Button(this).apply { Brand.style(this, primary = false); setOnClickListener { pair() } }
         codeView = TextView(this).apply {
-            textSize = 26f; gravity = Gravity.CENTER; setTextColor(Brand.TEAL_LIGHT); typeface = Typeface.DEFAULT_BOLD
+            textSize = 26f; gravity = Gravity.CENTER; setTextColor(Brand.TEXT); typeface = Typeface.DEFAULT_BOLD
         }
         codeBlock = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -165,9 +204,16 @@ class SettingsActivity : Activity() {
         heartStatus = hint("On the \u201cGlucose, time and heart\u201d tile. Allowed; change it in the watch's app permissions.")
         listOf(
             label("Units"), unit, label("Forecast"), prediction, predictor,
+            label("Old reading alert (after 10 min)"), staleAlert, alertPermission,
             label("Heart rate"), heartButton, heartStatus, save, result,
+            Button(this).apply {
+                text = "Connection check"; Brand.style(this, primary = false)
+                setOnClickListener { startActivity(android.content.Intent(this@SettingsActivity, DiagnosticsActivity::class.java)) }
+            },
+            hint("Where a fetch stops: name, route, handshake or the request itself."),
         ).forEach(column::addView)
         updateHeartRate()
+        updateAlertPermission()
         updatePhone()
         setContentView(ScrollView(this).apply { addView(column) })
 
@@ -189,6 +235,10 @@ class SettingsActivity : Activity() {
             afterBluetooth = null
             if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) action?.invoke()
             else phoneResult.text = "⚠ The phone app needs the Nearby devices permission"
+        }
+        if (requestCode == REQUEST_NOTIFICATIONS) {
+            updateAlertPermission()
+            StaleAlertReceiver.schedule(this, GlucoseRepository(this).state())
         }
     }
 
@@ -291,6 +341,10 @@ class SettingsActivity : Activity() {
         heartStatus.visibility = if (granted) View.VISIBLE else View.GONE
     }
 
+    private fun updateAlertPermission() {
+        alertPermission.visibility = if (checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) View.GONE else View.VISIBLE
+    }
+
     override fun onDestroy() {
         scope.cancel()
         super.onDestroy()
@@ -313,33 +367,72 @@ class SettingsActivity : Activity() {
 
     private fun saveAndTest() {
         val old = store.load()
+        val proxyText = shareProxy.text.toString().trim()
+        if (DataSource.valueOf(selected(source)) == DataSource.SHARE && proxyText.isNotEmpty()) {
+            val problem = runCatching { ProxyEndpoint.parse(proxyText) }.exceptionOrNull()?.message
+            if (problem != null) {
+                proxyResult.text = "⚠ $problem"
+                return
+            }
+        }
         val new = old.copy(
             source = DataSource.valueOf(selected(source)),
             username = username.text.toString().trim(),
             password = password.text.toString(),
             region = Region.valueOf(selected(region)),
+            shareProxy = proxyText,
+            shareDoh = shareDoh.isChecked,
+            dohEndpoint = selected(dohEndpoint),
             nightscoutUrl = nightscoutUrl.text.toString().trim(),
             nightscoutToken = nightscoutToken.text.toString().trim(),
             nightscoutApi = NightscoutApi.valueOf(selected(nightscoutApi)),
             unit = GlucoseUnit.valueOf(selected(unit)),
             predictionEnabled = prediction.isChecked,
             predictorId = selected(predictor),
+            staleAlert = StaleAlert.valueOf(selected(staleAlert)),
         )
         val repo = GlucoseRepository(this)
         if (new.accountKey != old.accountKey) repo.clearCache()
         store.save(new)
+        if (new.source != DataSource.DEMO && new.staleAlert != StaleAlert.OFF &&
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), REQUEST_NOTIFICATIONS)
         result.text = "Testing…"
         scope.launch {
             val state = RefreshReceiver.refreshNow(applicationContext)
             val latest = state.latest
+            val latestAge = state.ageMinutes()
             result.text = when {
                 state.lastError != null -> "⚠ ${state.lastError}"
                 latest == null && new.source == DataSource.NIGHTSCOUT -> "Connected, but no readings in the last 24 h"
                 latest == null && new.source == DataSource.PHONE -> "Connected, but the phone has no readings yet"
                 latest == null -> "Logged in, but no readings. Is Share on with at least one follower?"
+                new.source == DataSource.SHARE && latestAge != null && latestAge >= 7 ->
+                    "Share answered, but its newest reading is $latestAge min old"
                 else -> "OK: ${new.unit.format(latest.mgdl.toDouble())} ${new.unit.label}, ${state.ageMinutes()} min ago" +
                     state.loop?.let { "\nLoop reported ${it.ageMinutes()} min ago" }.orEmpty()
             }
+        }
+    }
+
+    /** Test only the HTTPS tunnel to Dexcom; never send a login during a proxy test. */
+    private fun testProxy() {
+        val endpoint = runCatching { ProxyEndpoint.parse(shareProxy.text.toString()) }
+            .getOrElse { proxyResult.text = "⚠ ${it.message}"; return }
+        val server = Region.valueOf(selected(region)).baseUrl
+        proxyResult.text = "Testing proxy…"
+        scope.launch {
+            val result = withContext(Dispatchers.IO) {
+                runCatching {
+                    UrlConnectionTransport(connectTimeoutMs = 5_000, readTimeoutMs = 5_000,
+                        openConnection = { it.openConnection(endpoint.javaProxy()) })
+                        .execute(HttpRequest.get(server))
+                }
+            }
+            proxyResult.text = result.fold(
+                onSuccess = { "Proxy tunnel reached Dexcom (HTTP ${it.status}; 404 here is expected)" },
+                onFailure = { "⚠ Proxy failed: ${it.message ?: it.javaClass.simpleName}" },
+            )
         }
     }
 
@@ -355,6 +448,7 @@ class SettingsActivity : Activity() {
             username = e.getString("username") ?: s.username,
             password = e.getString("password") ?: s.password,
             region = e.getString("region")?.let(Region::parse) ?: s.region,
+            shareProxy = e.getString("shareProxy") ?: s.shareProxy,
             nightscoutUrl = e.getString("nightscoutUrl") ?: s.nightscoutUrl,
             nightscoutToken = e.getString("nightscoutToken") ?: s.nightscoutToken,
             nightscoutApi = e.getString("nightscoutApi")?.let(NightscoutApi::parse) ?: s.nightscoutApi,
@@ -367,6 +461,7 @@ class SettingsActivity : Activity() {
     private companion object {
         const val REQUEST_HEART_RATE = 1
         const val REQUEST_BLUETOOTH = 2
+        const val REQUEST_NOTIFICATIONS = 3
     }
 
     private val isDebuggable get() = applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0
@@ -381,12 +476,16 @@ class SettingsActivity : Activity() {
 
     private fun check(group: RadioGroup, key: String) = group.check(group.findViewWithTag<View>(key).id)
 
+    /** Falls back to the default resolver when the stored one is not one of the presets. */
+    private fun endpointOf(stored: String) =
+        if (DohResolver.PRESETS.any { it.second == stored }) stored else DohResolver.CLOUDFLARE
+
     private fun selected(group: RadioGroup): String =
         group.findViewById<RadioButton>(group.checkedRadioButtonId)?.tag as? String
             ?: (group.getChildAt(0).tag as String)
 
     private fun label(text: String) = TextView(this).apply {
-        this.text = text; textSize = 12f; setTextColor(Brand.TEAL_LIGHT); setPadding(0, dp(10), 0, 0)
+        this.text = text; textSize = 12f; setTextColor(Brand.TEXT); setPadding(0, dp(10), 0, 0)
     }
 
     /** [field] with an eye button after it that shows or hides what was typed. Starts hidden. */

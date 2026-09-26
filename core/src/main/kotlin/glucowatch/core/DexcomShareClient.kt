@@ -93,16 +93,36 @@ class DexcomShareClient(
 
     private fun fetchReadings(session: String, minutes: Int, maxCount: Int): List<GlucoseReading> {
         val query = "sessionId=${URLEncoder.encode(session, "UTF-8")}&minutes=$minutes&maxCount=$maxCount"
-        val json = post("Publisher/ReadPublisherLatestGlucoseValues?$query", "{}")
+        val json = post("Publisher/ReadPublisherLatestGlucoseValues?$query", "{}", retryTransient = true)
         val array = json as? JsonArray ?: throw ShareException.Server(null, "Unexpected readings payload")
         return array.mapNotNull { parseReading(it.jsonObject) }.sortedBy { it.timeMillis }
     }
 
-    private fun post(endpoint: String, body: String): JsonElement {
-        val response = try {
-            transport.execute(HttpRequest.postJson(region.baseUrl + endpoint, body))
+    private fun post(endpoint: String, body: String, retryTransient: Boolean = false): JsonElement {
+        val request = HttpRequest.postJson(region.baseUrl + endpoint, body)
+        var response: HttpResponse
+        var retried = false
+        try {
+            response = transport.execute(request)
         } catch (e: IOException) {
-            throw ShareException.Network(e)
+            if (!retryTransient) throw ShareException.Network(e)
+            retried = true
+            try {
+                Thread.sleep(500)
+                response = transport.execute(request)
+            } catch (retry: IOException) {
+                throw ShareException.Network(retry)
+            }
+        }
+        // Retry only the readings request. Login failures and Dexcom's coded errors must not
+        // cause extra authentication attempts (which could lock the account).
+        if (retryTransient && !retried && response.status in 502..504) {
+            try {
+                Thread.sleep(500)
+                response = transport.execute(request)
+            } catch (e: IOException) {
+                throw ShareException.Network(e)
+            }
         }
         val json = try {
             Json.parseToJsonElement(response.body.ifBlank { "null" })

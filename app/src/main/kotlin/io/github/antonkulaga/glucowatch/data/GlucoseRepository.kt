@@ -5,18 +5,33 @@ import android.content.SharedPreferences
 import android.security.NetworkSecurityPolicy
 import android.util.Log
 import glucowatch.core.CacheFormat
+import glucowatch.core.ConnectionCheck
 import glucowatch.core.DemoData
+import glucowatch.core.DirectAddress
+import glucowatch.core.DohResolver
+import glucowatch.core.FailureKind
+import glucowatch.core.FailureRecord
 import glucowatch.core.GlucoseReading
 import glucowatch.core.LoopStatus
+import glucowatch.core.NetworkFailure
 import glucowatch.core.NightscoutAddress
 import glucowatch.core.Prediction
 import glucowatch.core.Predictors
+import glucowatch.core.ProxyEndpoint
+import glucowatch.core.SourceAccount
 import glucowatch.core.SourceSync
 import glucowatch.core.SyncCache
 import glucowatch.core.Treatment
+import glucowatch.core.ShareException
+import glucowatch.core.ShareFallbackPolicy
+import glucowatch.core.UrlConnectionTransport
+import glucowatch.core.Probe
 import glucowatch.core.link.PhoneLink
 import glucowatch.core.link.WatchLinkClient
 import java.io.IOException
+import java.net.URI
+import java.net.URL
+import java.net.URLConnection
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -35,18 +50,21 @@ data class GlucoseState(
     val treatments: List<Treatment> = emptyList(),
     val loop: LoopStatus? = null,
     val relayedSource: String? = null,
+    /** The last fetch failures, oldest first, for the connection check. */
+    val failures: List<FailureRecord> = emptyList(),
 ) {
     val latest get() = readings.lastOrNull()
 
     fun ageMinutes(now: Long = System.currentTimeMillis()): Long? = latest?.let { (now - it.timeMillis) / 60_000 }
 
-    fun isStale(now: Long = System.currentTimeMillis()) = (ageMinutes(now) ?: Long.MAX_VALUE) > STALE_MINUTES
+    fun isStale(now: Long = System.currentTimeMillis()) = latest?.let { now - it.timeMillis > STALE_AFTER_MS } ?: true
 
     /** The loop's IOB and COB, or null once it has not reported for [LoopStatus.STALE_MINUTES]. */
     fun freshLoop(now: Long = System.currentTimeMillis()) = loop?.takeUnless { it.isStale(now) }
 
     companion object {
-        const val STALE_MINUTES = 12
+        const val STALE_MINUTES = 10
+        const val STALE_AFTER_MS = STALE_MINUTES * 60_000L
     }
 }
 
@@ -73,6 +91,7 @@ class GlucoseRepository(context: Context) {
             treatments = treatments,
             loop = loop,
             relayedSource = cached(settings, RELAYED_SOURCE).ifEmpty { null }.takeIf { settings.source == DataSource.PHONE },
+            failures = NetworkFailure.decode(cache.getString(FAILURES, "").orEmpty()),
         )
     }
 
@@ -96,10 +115,7 @@ class GlucoseRepository(context: Context) {
                 missing != null -> saveError(missing)
                 else -> runCatching { fetch(settings, pairing) }
                     .onSuccess { saveError(null) }
-                    .onFailure {
-                        Log.w(TAG, "${settings.source} refresh failed", it)
-                        saveError(it.message ?: it.javaClass.simpleName)
-                    }
+                    .onFailure { recordFailure(settings, it) }
             }
             cache.edit().putLong("fetchedAt", System.currentTimeMillis()).apply()
             state()
@@ -127,7 +143,87 @@ class GlucoseRepository(context: Context) {
     /** Share and Nightscout through [SourceSync]; the phone app over Bluetooth. */
     private fun fetch(settings: Settings, pairing: PhonePairing?) {
         val account = settings.account
-        if (account != null) SourceSync(syncCache(settings)).fetch(account, settings.chartHours) else fetchPhone(settings, pairing!!)
+        when {
+            settings.source == DataSource.SHARE -> fetchShareWithWatchFallback(settings)
+            account != null -> SourceSync(syncCache(settings)).fetch(account, settings.chartHours)
+            else -> fetchPhone(settings, pairing!!)
+        }
+    }
+
+    /**
+     * At seven minutes, walk the other ways to Dexcom in turn: another connected route, a resolver
+     * the network does not control, then a proxy the user configured.
+     *
+     * The order follows what each step can actually fix. A second route helps when this one is
+     * filtered; DoH helps only when the name did not resolve, so it runs on a [FailureKind.DNS]
+     * failure and never speculatively; a proxy is last, since it moves the whole request through
+     * a third party.
+     */
+    private fun fetchShareWithWatchFallback(settings: Settings) {
+        val account = settings.account!!
+        val primary = runCatching { SourceSync(syncCache(settings)).fetch(account, settings.chartHours) }
+        val error = primary.exceptionOrNull()
+        // Another route cannot fix bad credentials or an account lockout; avoid extra logins.
+        if (error is ShareException.AuthFailed || error is ShareException.TooManyAttempts) primary.getOrThrow()
+
+        val now = System.currentTimeMillis()
+        val newest = CacheFormat.decodeReadings(cached(settings, SourceSync.READINGS)).lastOrNull()?.timeMillis ?: 0L
+        val lastAttempt = cache.getLong(FALLBACK_ATTEMPT, 0L)
+            .takeIf { cache.getString(ACCOUNT, null) == settings.accountKey && it > 0L }
+        if (!ShareFallbackPolicy.shouldAttempt(primary.isSuccess, newest.takeIf { it > 0L }, now, lastAttempt)) {
+            primary.getOrThrow()
+            return
+        }
+        store(settings) { putLong(FALLBACK_ATTEMPT, now) }
+
+        val alternate = WatchNetwork(appContext).alternate()
+        if (alternate != null && tryRoute(settings, account, "alternate route") { alternate.openConnection(it) }) return
+        if (resolveAndFetch(settings, account, error)) return
+
+        val proxy = settings.shareProxy.trim().takeIf { it.isNotEmpty() }?.let(ProxyEndpoint::parse)
+        val reached = when {
+            proxy != null -> tryRoute(settings, account, "configured proxy") { it.openConnection(proxy.javaProxy()) }
+            // Without a second route there is nothing else to vary but the attempt itself.
+            alternate == null -> tryRoute(settings, account, "default route") { it.openConnection() }
+            else -> false
+        }
+        if (reached) return
+        // Keep the original error when every route failed; a successful primary fetch remains valid.
+        primary.getOrThrow()
+    }
+
+    /**
+     * Resolves Dexcom over HTTPS and connects straight to the address, for a network whose own DNS
+     * will not answer. Only worth trying after a name lookup actually failed: an address the
+     * network blocks stays blocked however the app learned it.
+     */
+    private fun resolveAndFetch(settings: Settings, account: SourceAccount, error: Throwable?): Boolean {
+        if (!settings.shareDoh || NetworkFailure.classify(error) != FailureKind.DNS) return false
+        val host = URI(settings.region.baseUrl).host ?: return false
+        val addresses = runCatching { DohResolver(settings.dohEndpoint).resolve(host) }
+            .onFailure { Log.w(TAG, "DoH lookup failed", it) }
+            .getOrDefault(emptyList())
+        // A name behind a load balancer has several; the first that answers is enough.
+        return addresses.take(MAX_DOH_ADDRESSES).any { address ->
+            val direct = runCatching { DirectAddress(address) }.getOrNull()
+            direct != null && tryRoute(settings, account, "DoH address $address", direct::openConnection)
+        }
+    }
+
+    /**
+     * One more Share fetch over [open]; true when it brought data in. A rejected login is rethrown
+     * instead of retried on the next route: no route can fix it, and repeated attempts lock the
+     * Dexcom account.
+     */
+    private fun tryRoute(settings: Settings, account: SourceAccount, what: String, open: (URL) -> URLConnection): Boolean {
+        val result = runCatching {
+            SourceSync(syncCache(settings), UrlConnectionTransport(openConnection = open)).fetch(account, settings.chartHours)
+        }
+        val failure = result.exceptionOrNull()
+        if (failure is ShareException.AuthFailed || failure is ShareException.TooManyAttempts) throw failure
+        if (result.isSuccess) Log.i(TAG, "Share fallback succeeded via $what")
+        else Log.i(TAG, "Share fallback via $what failed: ${NetworkFailure.describe(failure)}")
+        return result.isSuccess
     }
 
     /** [cached] and [store] for [SourceSync], so its writes follow the same account rule. */
@@ -166,7 +262,7 @@ class GlucoseRepository(context: Context) {
     private fun nightscoutProblem(url: String): String? {
         if (url.isBlank()) return "Enter the Nightscout address in settings"
         val address = runCatching { NightscoutAddress.parse(url) }.getOrElse { return it.message }
-        val host = java.net.URI(address.baseUrl).host
+        val host = URI(address.baseUrl).host
         return if (address.baseUrl.startsWith("http://") && !NetworkSecurityPolicy.getInstance().isCleartextTrafficPermitted(host)) {
             "Use an https:// Nightscout address"
         } else {
@@ -197,12 +293,40 @@ class GlucoseRepository(context: Context) {
         cache.edit().putString("error", message).apply()
     }
 
+    /**
+     * Keeps the layer the fetch died at, not only its text. Which layer it is says whether another
+     * route could have helped: a name that does not resolve, a connection that never opens and a
+     * handshake that is refused each point at a different thing on the way to the server.
+     */
+    private fun recordFailure(settings: Settings, error: Throwable) {
+        val kind = NetworkFailure.classify(error)
+        Log.w(TAG, "${settings.source} refresh failed (${kind.name})", error)
+        saveError(NetworkFailure.describe(error))
+        val record = FailureRecord(System.currentTimeMillis(), kind, WatchNetwork(appContext).transport(), error.message.orEmpty())
+        cache.edit().putString(FAILURES, NetworkFailure.append(cache.getString(FAILURES, "").orEmpty(), record)).apply()
+    }
+
+    /** The layered check behind the settings screen's "Connection check". */
+    fun checkConnection(): Pair<List<Pair<String, String>>, List<Probe>> {
+        val settings = settingsStore.load()
+        val facts = WatchNetwork(appContext).facts()
+        val target = when (settings.source) {
+            DataSource.SHARE -> settings.region.baseUrl
+            DataSource.NIGHTSCOUT -> runCatching { NightscoutAddress.parse(settings.nightscoutUrl).baseUrl }.getOrNull()
+            else -> null
+        } ?: return facts to emptyList()
+        return facts to ConnectionCheck().run(target, DohResolver(settings.dohEndpoint))
+    }
+
     companion object {
         private const val TAG = "GlucoRepo"
         private const val ACCOUNT = "account"
         private const val FORECAST = "forecast"
         private const val UPSTREAM = "upstream"
         private const val RELAYED_SOURCE = "relayedSource"
+        private const val FALLBACK_ATTEMPT = "fallbackAttempt"
+        private const val FAILURES = "failures"
+        private const val MAX_DOH_ADDRESSES = 3
 
         /** Sources that can carry a loop's forecast: Nightscout, and the phone app when it reads Nightscout. */
         val LOOP_SOURCES = setOf(DataSource.NIGHTSCOUT, DataSource.PHONE)

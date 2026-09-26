@@ -44,6 +44,7 @@ class RefreshReceiver : BroadcastReceiver() {
         suspend fun refreshNow(context: Context): GlucoseState {
             val state = GlucoseRepository(context).refresh()
             updateComplications(context)
+            StaleAlertReceiver.schedule(context, state)
             scheduleNext(context, state)
             return state
         }

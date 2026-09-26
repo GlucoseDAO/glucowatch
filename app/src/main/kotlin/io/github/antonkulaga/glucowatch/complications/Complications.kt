@@ -35,6 +35,7 @@ import glucowatch.core.lastManualBolus
 import io.github.antonkulaga.glucowatch.chart.ChartRenderer
 import io.github.antonkulaga.glucowatch.data.GlucoseRepository
 import io.github.antonkulaga.glucowatch.data.GlucoseState
+import io.github.antonkulaga.glucowatch.data.DataSource
 import io.github.antonkulaga.glucowatch.data.RefreshReceiver
 import io.github.antonkulaga.glucowatch.data.Settings
 import io.github.antonkulaga.glucowatch.ui.MainActivity
@@ -77,13 +78,14 @@ abstract class GlucoseComplicationService : SuspendingComplicationDataSourceServ
 class GlucoseValueComplicationService : GlucoseComplicationService() {
     override fun build(type: ComplicationType, state: GlucoseState): ComplicationData? {
         val latest = state.latest ?: return NoDataComplicationData()
+        val stale = state.settings.source != DataSource.DEMO && state.isStale()
         val unit = state.settings.unit
         val value = unit.format(latest.mgdl.toDouble())
         val text = value + latest.trend.arrow
         val delta = state.readings.lastDelta()?.let(unit::formatDelta)
         // Fresh: show the change since the previous reading; stale: show how old the value is instead.
-        val subtitle = if (state.isStale()) "${state.ageMinutes()}m ago" else delta ?: ""
-        val description = plain("Glucose $value ${unit.label} ${latest.trend.description}")
+        val subtitle = if (stale) "OLD DATA" else delta ?: ""
+        val description = plain("Glucose $value ${unit.label} ${latest.trend.description}" + if (stale) ", reading more than 10 minutes old" else "")
         val age = TimeDifferenceComplicationText.Builder(
             TimeDifferenceStyle.SHORT_SINGLE_UNIT,
             CountUpTimeReference(Instant.ofEpochMilli(latest.timeMillis)),
@@ -91,7 +93,7 @@ class GlucoseValueComplicationService : GlucoseComplicationService() {
 
         return when (type) {
             ComplicationType.SMALL_IMAGE -> SmallImageComplicationData.Builder(
-                SmallImage.Builder(pngIcon(glucoseImage(state, text, delta)), SmallImageType.PHOTO).build(),
+                SmallImage.Builder(pngIcon(glucoseImage(state, text, delta, stale)), SmallImageType.PHOTO).build(),
                 description,
             ).setTapAction(tapAction()).build()
             ComplicationType.SHORT_TEXT -> ShortTextComplicationData.Builder(plain(text), description)
@@ -99,7 +101,7 @@ class GlucoseValueComplicationService : GlucoseComplicationService() {
                 .setTapAction(tapAction())
                 .build()
             ComplicationType.LONG_TEXT -> LongTextComplicationData.Builder(plain("$text ${delta.orEmpty()} ${unit.label}"), description)
-                .setTitle(age)
+                .setTitle(if (stale) plain("OLD DATA") else age)
                 .setTapAction(tapAction())
                 .build()
             ComplicationType.RANGED_VALUE -> RangedValueComplicationData.Builder(
@@ -113,30 +115,31 @@ class GlucoseValueComplicationService : GlucoseComplicationService() {
     }
 
     /** The default face's value block, drawn as an image so glucose and trend can share a state color. */
-    private fun glucoseImage(state: GlucoseState, text: String, delta: String?): Bitmap {
+    private fun glucoseImage(state: GlucoseState, text: String, delta: String?, stale: Boolean): Bitmap {
         val width = 432
         val height = 132
         val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(bitmap)
         val latest = state.latest ?: return bitmap
-        val color = if (state.isStale()) 0xFF858989.toInt()
+        val color = if (stale) 0xFF858989.toInt()
             else ChartRenderer.glanceColorFor(latest.mgdl.toDouble(), state, latest.trend)
         val valuePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             this.color = color
             textAlign = Paint.Align.CENTER
             typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
-            textSize = 94f
+            // The 432 px bitmap is shown in a 360 px slot: 62 px renders at the clock's 52 px.
+            textSize = 62f
         }
-        canvas.drawText(text, width / 2f, 93f, valuePaint)
+        canvas.drawText(text, width / 2f, 75f, valuePaint)
         val age = "${state.ageMinutes()}m ago"
-        val status = listOfNotNull(delta, age).joinToString("  ·  ")
+        val status = if (stale) "⚠ OLD DATA · 10+ min" else listOfNotNull(delta, age).joinToString("  ·  ")
         val statusPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            this.color = 0xFF9AA3A8.toInt()
+            this.color = if (stale) 0xFFF0B000.toInt() else 0xFF9AA3A8.toInt()
             textAlign = Paint.Align.CENTER
             typeface = Typeface.create(Typeface.DEFAULT, Typeface.NORMAL)
             textSize = 23f
         }
-        canvas.drawText(status, width / 2f, 126f, statusPaint)
+        canvas.drawText(status, width / 2f, 112f, statusPaint)
         return bitmap
     }
 }
@@ -159,9 +162,9 @@ class GlucoseChartComplicationService : GlucoseComplicationService() {
 
     /** PNG keeps the IPC payload small compared to a raw bitmap. */
     companion object {
-        // The face shows this rim to rim in a 450 x 132 slot; 1.2x for a sharp scale-down.
+        // The face shows this rim to rim in a 450 x 200 slot; 1.2x for a sharp scale-down.
         const val CHART_WIDTH = 540
-        const val CHART_HEIGHT = 158
+        const val CHART_HEIGHT = 240
     }
 }
 

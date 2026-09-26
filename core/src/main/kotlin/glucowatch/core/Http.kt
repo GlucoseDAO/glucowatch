@@ -2,6 +2,8 @@ package glucowatch.core
 
 import java.net.HttpURLConnection
 import java.net.URI
+import java.net.URL
+import java.net.URLConnection
 
 data class HttpRequest(
     val method: String,
@@ -27,9 +29,10 @@ fun interface HttpTransport {
 class UrlConnectionTransport(
     private val connectTimeoutMs: Int = 8_000,
     private val readTimeoutMs: Int = 10_000,
+    private val openConnection: (URL) -> URLConnection = { it.openConnection() },
 ) : HttpTransport {
     override fun execute(request: HttpRequest): HttpResponse {
-        val conn = URI(request.url).toURL().openConnection() as HttpURLConnection
+        val conn = openConnection(URI(request.url).toURL()) as HttpURLConnection
         try {
             conn.requestMethod = request.method
             conn.connectTimeout = connectTimeoutMs

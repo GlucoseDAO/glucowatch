@@ -30,4 +30,6 @@ tasks.named<JavaExec>("run") {
 
 tasks.test {
     useJUnitPlatform()
+    // DirectAddress sets the Host header, which Android allows and the desktop JVM restricts.
+    systemProperty("sun.net.http.allowRestrictedHeaders", "true")
 }

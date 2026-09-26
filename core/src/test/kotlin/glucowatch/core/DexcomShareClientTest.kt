@@ -1,5 +1,6 @@
 package glucowatch.core
 
+import java.io.IOException
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -64,6 +65,45 @@ class DexcomShareClientTest {
         val client = DexcomShareClient(Region.OUS, "u", "p", sessionId = "99999999-9999-9999-9999-999999999999", transport = transport)
         assertEquals(2, client.readings().size)
         assertEquals(4, transport.calls.size)
+    }
+
+    @Test
+    fun `retries one transient readings network failure without another login`() {
+        var reads = 0
+        val transport = FakeTransport { url, _ ->
+            when {
+                "Authenticate" in url -> HttpResponse(200, "\"$account\"")
+                "LoginPublisher" in url -> HttpResponse(200, "\"$session\"")
+                else -> {
+                    reads++
+                    if (reads == 1) throw IOException("temporary connection failure")
+                    HttpResponse(200, readingsJson)
+                }
+            }
+        }
+        assertEquals(2, DexcomShareClient(Region.US, "u", "p", transport = transport).readings().size)
+        assertEquals(2, reads)
+        assertEquals(4, transport.calls.size)
+    }
+
+    @Test
+    fun `does not retry rejected login`() {
+        val transport = FakeTransport { _, _ -> HttpResponse(500, """{"Code":"AccountPasswordInvalid","Message":"bad password"}""") }
+        assertFailsWith<ShareException.AuthFailed> { DexcomShareClient(Region.US, "u", "p", transport = transport).readings() }
+        assertEquals(1, transport.calls.size)
+    }
+
+    @Test
+    fun `retries one gateway error on readings`() {
+        var reads = 0
+        val transport = FakeTransport { url, _ ->
+            if ("Read" in url) {
+                reads++
+                if (reads == 1) HttpResponse(503, "unavailable") else HttpResponse(200, readingsJson)
+            } else HttpResponse(200, "\"$session\"")
+        }
+        assertEquals(2, DexcomShareClient(Region.US, "u", "p", sessionId = session, transport = transport).readings().size)
+        assertEquals(2, reads)
     }
 
     @Test

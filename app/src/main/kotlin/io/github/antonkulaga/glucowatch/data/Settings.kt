@@ -1,6 +1,7 @@
 package io.github.antonkulaga.glucowatch.data
 
 import android.content.Context
+import glucowatch.core.DohResolver
 import glucowatch.core.GlucoseUnit
 import glucowatch.core.LinearTrendPredictor
 import glucowatch.core.NightscoutApi
@@ -14,11 +15,23 @@ enum class DataSource(val label: String) {
     PHONE("Phone app"),
 }
 
+enum class StaleAlert(val label: String) {
+    OFF("Off"),
+    VIBRATE("Vibrate"),
+    SOUND("Sound and vibrate"),
+}
+
 data class Settings(
     val source: DataSource = DataSource.DEMO,
     val username: String = "",
     val password: String = "",
     val region: Region = Region.OUS,
+    /** Optional HTTP CONNECT proxy for the watch's Share fallback; empty means direct network only. */
+    val shareProxy: String = "",
+    /** Resolve Dexcom over HTTPS when the network's own DNS will not answer for it. */
+    val shareDoh: Boolean = false,
+    /** The DoH endpoint, an IP literal so it needs no working DNS of its own. */
+    val dohEndpoint: String = DohResolver.CLOUDFLARE,
     val nightscoutUrl: String = "",
     val nightscoutToken: String = "",
     val nightscoutApi: NightscoutApi = NightscoutApi.V1,
@@ -29,6 +42,7 @@ data class Settings(
     val predictionEnabled: Boolean = false,
     val predictorId: String = LinearTrendPredictor.ID,
     val horizonMinutes: Int = 30,
+    val staleAlert: StaleAlert = StaleAlert.VIBRATE,
     /** Hex id of the paired phone app (see PhonePairingStore); empty before pairing. */
     val phoneId: String = "",
 ) {
@@ -85,6 +99,9 @@ class SettingsStore(context: Context) {
             username = prefs.getString("username", d.username)!!,
             password = prefs.getString("password", d.password)!!,
             region = enumOr(prefs.getString("region", null), d.region),
+            shareProxy = prefs.getString("shareProxy", d.shareProxy)!!,
+            shareDoh = prefs.getBoolean("shareDoh", d.shareDoh),
+            dohEndpoint = prefs.getString("dohEndpoint", d.dohEndpoint)!!,
             nightscoutUrl = prefs.getString("nightscoutUrl", d.nightscoutUrl)!!,
             nightscoutToken = prefs.getString("nightscoutToken", d.nightscoutToken)!!,
             nightscoutApi = enumOr(prefs.getString("nightscoutApi", null), d.nightscoutApi),
@@ -95,6 +112,7 @@ class SettingsStore(context: Context) {
             predictionEnabled = prefs.getBoolean("prediction", d.predictionEnabled),
             predictorId = prefs.getString("predictor", d.predictorId)!!,
             horizonMinutes = prefs.getInt("horizon", d.horizonMinutes),
+            staleAlert = enumOr(prefs.getString("staleAlert", null), d.staleAlert),
             phoneId = prefs.getString("phoneId", d.phoneId)!!,
         )
     }
@@ -105,6 +123,9 @@ class SettingsStore(context: Context) {
             .putString("username", s.username)
             .putString("password", s.password)
             .putString("region", s.region.name)
+            .putString("shareProxy", s.shareProxy)
+            .putBoolean("shareDoh", s.shareDoh)
+            .putString("dohEndpoint", s.dohEndpoint)
             .putString("nightscoutUrl", s.nightscoutUrl)
             .putString("nightscoutToken", s.nightscoutToken)
             .putString("nightscoutApi", s.nightscoutApi.name)
@@ -115,6 +136,7 @@ class SettingsStore(context: Context) {
             .putBoolean("prediction", s.predictionEnabled)
             .putString("predictor", s.predictorId)
             .putInt("horizon", s.horizonMinutes)
+            .putString("staleAlert", s.staleAlert.name)
             .putString("phoneId", s.phoneId)
             .apply()
     }
