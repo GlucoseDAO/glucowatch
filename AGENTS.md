@@ -36,6 +36,13 @@ Nightscout support (API v1 and v3, tokens, what each loop uploads, freshness rul
 `docs/nightscout.md`. Nightscout is free software the user runs, so it is not a second proprietary
 service. Keep it read-only.
 
+When a network will not reach Dexcom, `docs/carrier-blocking.md` has what each failure means, the
+fallback order the watch walks (another route, then DoH on a DNS failure only, then a proxy), and
+the connection check behind Settings. `NetworkFailure.classify` is the one place that decides which
+layer a failure belongs to; add a kind there rather than matching exception text elsewhere. The DoH
+step must stay off by default and must never run speculatively: on an IPv6-only mobile link it
+hands the app IPv4 addresses the link cannot route.
+
 The cache on the watch is tagged with `Settings.accountKey`. Anything that caches per source must
 go through the repository's `cached()`/`store()` (for `SourceSync`, through its `SyncCache`), so a
 fetch that finishes after the user switched source cannot mix its data into the new one. The phone
@@ -81,7 +88,7 @@ order and add new slots at the end, or an update swaps providers on every instal
 
 ## Screenshots
 
-`python3 scripts/screenshots.py` produces round screenshots of the face, the three tiles and the
+`uv run scripts/screenshots.py` produces round screenshots of the face, the three tiles and the
 app on an emulator shaped like the user's Galaxy Watch6 Classic 43 mm (SM-R950, 432 × 432 px,
 density 340), the default watch. `--watch all` adds the 438 px Watch8 Classic and the 480 px
 Watch6 Classic 47 mm / Ultra: every round Galaxy watch from the Watch6 on must fit. Scenarios are
@@ -93,9 +100,14 @@ from `.env`. Screenshots with real data are the user's health data: do not publi
 
 The face, the tiles and the first app screen use the whole round screen: the chart runs from rim
 to rim through the wide middle (`ChartRenderer.render(..., edge = true)`), and text sits above
-and below it inside the circle. Colours are GlucoseDAO's, in one place (`ui/Brand.kt`, repeated in `watchface.xml`). Store
+and below it inside the circle. Colours live in one place, `core/.../GlucosePalette.kt`, and `watchface.xml`
+repeats its values: black, `#9AA3A8` grey and white for everything but glucose, and glucose as a
+colour code (green, yellow, orange, red). No teal, no navy. `app/.../ui/Brand.kt` and
+`phone/.../Brand.kt` only say which part takes which colour. When the user supplies a UI draft,
+the draft is the spec; follow it over this paragraph and say so. Store
 images and the face and tile previews come only from
-`demo` captures, through `scripts/store_images.py`. The icon comes from `scripts/make_icon.py`.
+`demo` captures (`uv run scripts/store_images.py`). The icon comes from `uv run scripts/make_icon.py`.
+Pillow for these tools is the one dependency in the repo `pyproject.toml`; run them with `uv run` from the repository root.
 
 ## What F-Droid builds
 

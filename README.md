@@ -55,15 +55,18 @@ From a phone, without a computer: download both APKs in the phone's browser, ins
 | Module | What it is |
 |---|---|
 | `core/` | Pure Kotlin: Dexcom Share and Nightscout clients, models, `GlucosePredictor` interface, demo data, desktop CLI. Unit-tested on the JVM. |
-| `app/` | Wear OS app: fetches every 5 min, caches 24 h, provides 5 complications (value, chart, forecast, IOB/COB, last bolus and carbs), 3 tiles, app screen + settings. |
+| `app/` | Wear OS app: aims to fetch about every 5 min, caches 24 h, provides 5 complications (value, chart, forecast, IOB/COB, last bolus and carbs), 3 tiles, app screen + settings. |
 | `watchface/` | Watch Face Format (XML, no code) face that shows the five complications. |
-| `phone/` | Optional phone app: fetches Dexcom Share, Nightscout or demo data and relays it to the watch over Bluetooth, or gives the watch its login. |
+| `phone/` | Optional phone app (GlucoPhone): a glucose-first dashboard with two weeks of draggable history, meal photos, insulin, heart rate and a forecast model you can import from Hugging Face or a file. It also relays glucose to the watch over Bluetooth, or gives the watch its login. |
 
-The icon is GlucoseDAO's glucose molecule, and the colours are GlucoseDAO's (`ui/Brand.kt`):
-teal for glucose, orange for insulin, green for carbs, purple for the forecast, as on its posters.
+The icon is GlucoseDAO's glucose molecule, and the charts draw in the same ball-and-stick style.
+Everything that is not glucose is black, grey and white; glucose is a colour code, green in range,
+then yellow, orange and red toward either extreme. The values live in one place,
+`core/…/GlucosePalette.kt`, shared by the watch face, tiles, watch app and phone app. On the watch,
+insulin stays orange, carbs green and the forecast purple, as on GlucoseDAO's posters.
 The light tile uses a restrained off-white version of the glucose-first layout, with darker
-green, amber and red state colours. `python3 scripts/make_icon.py` draws the launcher
-vector and the store icon from one geometry. `python3 scripts/store_images.py` makes the store
+green, amber and red state colours. `uv run scripts/make_icon.py` draws the launcher
+vector and the store icon from one geometry. `uv run scripts/store_images.py` makes the store
 screenshots and the face and tile previews from a `demo` run of the screenshot script.
 
 ## Build
@@ -240,6 +243,22 @@ With Nightscout the watch also shows:
 
 Details, including how each uploader writes its data: [docs/nightscout.md](docs/nightscout.md).
 
+## When the network will not reach Dexcom
+
+Some mobile networks stop answering for `shareous1.dexcom.com` while Wi-Fi keeps working. Settings →
+**Connection check** walks the connection one layer at a time — resolve, connect, handshake,
+request — and names the one that failed, next to what the network looks like (whether the link has
+IPv4 at all, which resolvers it uses, whether Private DNS is on, whether it uses NAT64) and the
+failures the last fetches ran into.
+
+If the name is what fails, Settings → *If DNS fails* → **Resolve over HTTPS** asks Cloudflare or
+Google over DoH instead and connects straight to the address, with Dexcom's certificate still
+checked in full. It is off by default, because turning it on tells that resolver this device looks
+up Dexcom, and it cannot help when a network blocks the address itself rather than the name.
+
+What each failure means, what to try from a shell, and what no app code can fix:
+[docs/carrier-blocking.md](docs/carrier-blocking.md).
+
 ## Forecast (optional, off by default)
 
 Enable in Settings → *Show forecast*. It adds a dashed line with an uncertainty band to the chart
@@ -266,7 +285,7 @@ instead of running a model on the watch.
 
 ## Screenshots
 
-`python3 scripts/screenshots.py` builds the debug APKs, boots an emulator shaped like a Galaxy
+`uv run scripts/screenshots.py` builds the debug APKs, boots an emulator shaped like a Galaxy
 Watch6 Classic 43 mm (round, 432 px, density 340) and saves round screenshots of the face, the
 three tiles and the app for demo data, Dexcom Share and Nightscout into `data/output/screenshots/`.
 `--watch all` adds the other round Galaxy sizes since the Watch6 (438 px Watch8 Classic, 480 px
@@ -280,8 +299,24 @@ Watch6 Classic 47 mm and Ultra). GlucoWatch needs Wear OS 4 or later. See
   Servers: `shareous1.dexcom.com` (outside US), `share2.dexcom.com` (US), `share.dexcom.jp`.
 - Nightscout: `entries`, `treatments` and `devicestatus`, read-only, through API v1 or v3. Only
   new readings are fetched after the first run. See [docs/nightscout.md](docs/nightscout.md).
-- Refresh: exact alarm ~20 s after the next expected reading, polling every minute if the reading
-  is late; after a fetch all complications and tiles are asked to update.
+- Refresh: alarm ~20 s after the next expected reading, polling sooner if the reading is late;
+  Android may delay alarms while the watch is idle. After a fetch all complications and tiles are
+  asked to update. The face marks the value **OLD DATA** when the newest reading is more than
+  10 minutes old, even when a fetch succeeded but returned no newer value. A separate alarm also
+  requests a face update at that threshold. Settings offers an old-reading notification: Off,
+  Vibrate (default), or Sound and vibrate. Android notification permission is needed for the
+  vibration or sound, and idle mode can delay the notification.
+- Share fallback: after a failed request or once the newest reading is 7 minutes old, the watch
+  makes a second request. It uses another connected Wi-Fi or cellular network if Wear OS exposes
+  one. You can enter an HTTP CONNECT proxy (`host:port`) in the watch's Share settings as another
+  route and test its tunnel without sending your login. There is no public proxy preset; the
+  field is empty by default. If no other route is available, it retries through the watch's
+  default connection. It tries at most once every 2 minutes.
+  This runs on the watch without the optional phone app. It cannot create a second network when
+  the watch has only one, or recover readings Dexcom has not uploaded. Use only a proxy you trust;
+  the Dexcom request stays inside HTTPS, while the proxy can see the destination and timing. An
+  HTTP CONNECT proxy can help with DNS or destination-IP trouble, but it does not hide the
+  Dexcom TLS server name from a carrier inspecting traffic to the proxy.
 - Heart rate is not fetched: the face reads it through Watch Face Format (`[HEART_RATE]`), and
   the glucose-all tile through the tile renderer (`PlatformHealthSources`). Both come from the
   watch's own sensor, with the heart-rate permission the watch asks for. No library is added.
