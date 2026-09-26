@@ -58,8 +58,13 @@ data class Settings(
 ) {
     val hasCredentials get() = username.isNotBlank() && password.isNotBlank()
 
-    /** The extra sources in use: in [THERAPY_SOURCES] and not the main [source] itself. */
-    val extras: List<DataSource> get() = THERAPY_SOURCES.filter { it in alsoFrom && it != source }
+    /**
+     * The extra sources in use: in [THERAPY_SOURCES] and not the main [source] itself. None for the
+     * phone app, which merges its own extras into what it relays; a CareLink extra here would also
+     * take the phone's only CareLink sign-in.
+     */
+    val extras: List<DataSource> get() =
+        if (source == DataSource.PHONE) emptyList() else THERAPY_SOURCES.filter { it in alsoFrom && it != source }
 
     /** The login the watch fetches [of] with itself; null for demo data and for the phone app. */
     fun account(of: DataSource, carelink: CareLinkLogin): SourceAccount? = when (of) {

@@ -1,6 +1,15 @@
 package glucowatch.core.link
 
+import glucowatch.core.CacheFormat
+import glucowatch.core.CombinedSourceSync
 import glucowatch.core.DemoData
+import glucowatch.core.GlucoseReading
+import glucowatch.core.InsulinKind
+import glucowatch.core.LoopStatus
+import glucowatch.core.SourceSync
+import glucowatch.core.SyncCache
+import glucowatch.core.Treatment
+import glucowatch.core.Trend
 import glucowatch.core.LinearTrendPredictor
 import glucowatch.core.NightscoutApi
 import glucowatch.core.Region
@@ -27,6 +36,7 @@ class PhoneLinkTest {
         val keys = mutableMapOf<String, ByteArray>()
         var offered: PairingKeys? = null
         var horizon = -1
+        var relay: LinkSnapshot? = null
 
         override fun pairingOpen() = open
 
@@ -39,6 +49,7 @@ class PhoneLinkTest {
 
         override fun snapshot(horizonMinutes: Int): LinkSnapshot {
             horizon = horizonMinutes
+            relay?.let { return it }
             val readings = DemoData.readings(1_745_000_000_000L)
             return LinkSnapshot(
                 upstream = "demo",
@@ -107,6 +118,43 @@ class PhoneLinkTest {
         assertEquals(6, snapshot.forecast?.points?.size)
         assertEquals("Demo data", snapshot.sourceLabel)
         assertNull(snapshot.error)
+    }
+
+    private class MemoryCache : SyncCache {
+        val values = mutableMapOf<String, String>()
+        override fun get(key: String) = values[key]
+        override fun put(values: Map<String, String?>) {
+            values.forEach { (k, v) -> if (v == null) this.values.remove(k) else this.values[k] = v }
+        }
+    }
+
+    @Test
+    fun `sync relays glucose from the primary source and pump therapy from the secondary`() {
+        val dexcom = MemoryCache()
+        val carelink = MemoryCache()
+        val readings = listOf(GlucoseReading(now - 300_000L, 118, Trend.Flat), GlucoseReading(now, 121, Trend.FortyFiveUp))
+        val bolus = Treatment(now - 3_600_000L, insulin = 3.5, carbs = 40.0)
+        val auto = Treatment(now - 1_800_000L, insulin = 0.2, automatic = true)
+        val basal = Treatment(now - 900_000L, insulinKind = InsulinKind.BASAL, basalRate = 0.65, durationMinutes = 30.0)
+        dexcom.put(mapOf(SourceSync.READINGS to CacheFormat.encodeReadings(readings)))
+        // The pump's own sensor values never reach the chart; its insulin and IOB do.
+        carelink.put(mapOf(
+            SourceSync.READINGS to CacheFormat.encodeReadings(listOf(GlucoseReading(now, 240, Trend.Flat))),
+            SourceSync.TREATMENTS to CacheFormat.encodeTreatments(listOf(bolus, auto, basal)),
+            SourceSync.LOOP to CacheFormat.encodeLoop(LoopStatus(now - 60_000L, iob = 2.4)),
+        ))
+        val combined = CombinedSourceSync.read(dexcom, listOf(carelink))
+        val phone = FakePhone()
+        phone.relay = LinkSnapshot("dexcom+carelink", "Dexcom Share + CareLink (MiniMed) insulin",
+            combined.readings, combined.treatments, combined.loop)
+        val key = paired(phone)
+
+        val snapshot = connect(phone) { i, o -> WatchLinkClient(watchId).sync(i, o, key, horizonMinutes = 0) }
+        assertEquals(readings, snapshot.readings)
+        assertEquals(listOf(bolus, auto, basal), snapshot.treatments)
+        assertEquals(0.65, snapshot.treatments.single { it.isBasal }.basalRate)
+        assertEquals(2.4, snapshot.loop?.iob)
+        assertEquals("Dexcom Share + CareLink (MiniMed) insulin", snapshot.sourceLabel)
     }
 
     @Test

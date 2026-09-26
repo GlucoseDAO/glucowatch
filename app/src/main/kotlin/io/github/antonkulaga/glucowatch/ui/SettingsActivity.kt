@@ -93,6 +93,7 @@ class SettingsActivity : Activity() {
 
     /** "Also import insulin and carbs from" boxes, one per [Settings.THERAPY_SOURCES]. */
     private lateinit var alsoFrom: Map<DataSource, CheckBox>
+    private lateinit var alsoFromNotes: List<View>
 
     /** The CareLink account signed in on this screen, saved with the other settings. */
     private var carelinkAccount = ""
@@ -190,7 +191,12 @@ class SettingsActivity : Activity() {
             label("Token or API secret"), revealable(nightscoutToken), hint("A token with the readable role is safer. v3 needs a token."),
             label("API"), nightscoutApi,
         )
-        phoneFields = listOf(hint("The phone app fetches and passes it on over Bluetooth. No login or internet on the watch."))
+        phoneFields = listOf(
+            hint(
+                "The phone app fetches and passes it on over Bluetooth, with insulin and carbs from the phone's " +
+                    "other sources. No login or internet on the watch.",
+            ),
+        )
         carelinkStatus = hint("")
         carelinkButton = Button(this).apply {
             text = "Get CareLink sign-in from phone"; Brand.style(this, primary = false)
@@ -224,9 +230,13 @@ class SettingsActivity : Activity() {
         copyButton = Button(this).apply { text = "Copy login from phone"; Brand.style(this, primary = false); setOnClickListener { copyLogin() } }
 
         listOf(label("Glucose from"), source).forEach(column::addView)
-        column.addView(label("Also import insulin and carbs from"))
+        alsoFromNotes = listOf(
+            label("Also import insulin and carbs from"),
+            hint("For a pump on CareLink next to a Dexcom sensor. Readings still come from one source."),
+        )
+        column.addView(alsoFromNotes[0])
         alsoFrom.values.forEach(column::addView)
-        column.addView(hint("For a pump on CareLink next to a Dexcom sensor. Readings still come from one source."))
+        column.addView(alsoFromNotes[1])
         shareFields.forEach(column::addView)
         nightscoutFields.forEach(column::addView)
         carelinkFields.forEach(column::addView)
@@ -430,8 +440,11 @@ class SettingsActivity : Activity() {
     private fun updateVisibility() {
         val source = DataSource.valueOf(selected(source))
         // An extra's box is hidden while it is the main source; its fields show for either role.
-        alsoFrom.forEach { (extra, box) -> box.visibility = if (extra == source || source == DataSource.DEMO) View.GONE else View.VISIBLE }
-        fun used(of: DataSource) = source == of || (source != DataSource.DEMO && alsoFrom[of]?.isChecked == true)
+        // The phone app relays its own extras (Settings.extras), so the watch offers none of its own.
+        val ownExtras = source != DataSource.DEMO && source != DataSource.PHONE
+        alsoFromNotes.forEach { it.visibility = if (ownExtras) View.VISIBLE else View.GONE }
+        alsoFrom.forEach { (extra, box) -> box.visibility = if (extra == source || !ownExtras) View.GONE else View.VISIBLE }
+        fun used(of: DataSource) = source == of || (ownExtras && alsoFrom[of]?.isChecked == true)
         shareFields.forEach { it.visibility = if (source == DataSource.SHARE) View.VISIBLE else View.GONE }
         nightscoutFields.forEach { it.visibility = if (used(DataSource.NIGHTSCOUT)) View.VISIBLE else View.GONE }
         carelinkFields.forEach { it.visibility = if (used(DataSource.CARELINK)) View.VISIBLE else View.GONE }

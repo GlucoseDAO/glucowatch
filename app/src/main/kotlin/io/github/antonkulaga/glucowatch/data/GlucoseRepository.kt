@@ -30,7 +30,6 @@ import glucowatch.core.mergeTreatments
 import glucowatch.core.Probe
 import glucowatch.core.link.PhoneLink
 import glucowatch.core.link.WatchLinkClient
-import java.io.IOException
 import java.net.URI
 import java.net.URL
 import java.net.URLConnection
@@ -125,7 +124,7 @@ class GlucoseRepository(context: Context) {
                 settings.source == DataSource.DEMO -> Unit
                 missing != null -> saveError(missing)
                 else -> runCatching { fetch(settings, pairing) }
-                    .onSuccess { saveError(null) }
+                    .onSuccess(::saveError)
                     .onFailure { recordFailure(settings, it) }
             }
             if (settings.source != DataSource.DEMO) refreshExtras(settings)
@@ -183,14 +182,18 @@ class GlucoseRepository(context: Context) {
         cache.edit().apply(write).putString(ACCOUNT, settings.accountKey).apply()
     }
 
-    /** Share, Nightscout and CareLink through [SourceSync]; the phone app over Bluetooth. */
-    private fun fetch(settings: Settings, pairing: PhonePairing?) {
+    /**
+     * Share, Nightscout and CareLink through [SourceSync]; the phone app over Bluetooth. Returns
+     * what the phone reported as failing on its side, which is shown but is no failure of the watch.
+     */
+    private fun fetch(settings: Settings, pairing: PhonePairing?): String? {
         val account = settings.account(settings.source, carelink)
         when {
             settings.source == DataSource.SHARE -> fetchShareWithWatchFallback(settings)
             account != null -> SourceSync(syncCache(settings)).fetch(account, settings.chartHours)
-            else -> fetchPhone(settings, pairing!!)
+            else -> return fetchPhone(settings, pairing!!)
         }
+        return null
     }
 
     /**
@@ -303,9 +306,11 @@ class GlucoseRepository(context: Context) {
     /**
      * The phone sends its whole day on every sync. Readings merge onto the cache while the phone
      * stays on one account ([glucowatch.core.link.LinkSnapshot.upstream]) and replace it when the
-     * phone switched. Treatments, loop and forecast are the phone's current ones.
+     * phone switched. Treatments, loop and forecast are the phone's current ones, already merged
+     * from the phone's glucose source and its extras (a Dexcom sensor and a CareLink pump).
+     * Returns the phone's own fetch error: one source failing there still relays the other.
      */
-    private fun fetchPhone(settings: Settings, pairing: PhonePairing) {
+    private fun fetchPhone(settings: Settings, pairing: PhonePairing): String? {
         val horizon = if (settings.predictionEnabled && settings.predictorId == PhoneLink.MODEL_ID) settings.horizonMinutes else 0
         val watchId = PhonePairingStore(appContext).watchId
         val snapshot = PhoneConnection(appContext).open(pairing.address) { _, input, output ->
@@ -321,7 +326,7 @@ class GlucoseRepository(context: Context) {
             putString(UPSTREAM, snapshot.upstream)
             putString(RELAYED_SOURCE, snapshot.sourceLabel)
         }
-        snapshot.error?.let { throw IOException("Phone: $it") }
+        return snapshot.error?.let { "Phone: $it" }
     }
 
     /** Android refuses plain http unless the network security config allows the host (debug builds: the emulator's host). */

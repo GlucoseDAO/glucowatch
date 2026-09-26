@@ -45,6 +45,13 @@ selection, `upstream` changes and the watch replaces its cache
 instead of merging. The watch's own cache rule still applies: `Settings.accountKey` is
 `phone:<phone id>`, so a new pairing with another phone starts empty.
 
+The phone merges its glucose source with its additional insulin sources before it answers, so
+one sync carries both: Dexcom readings next to CareLink boluses, basal and active insulin. With
+the source **Phone app**, the watch offers no additional sources of its own. A CareLink extra on
+the watch would have to take the phone's sign-in, which cannot live on both devices. When one of
+the phone's sources fails, the sync still relays what the others returned; the watch shows the
+phone's error but does not record it as a failure of its own network.
+
 A sync makes the phone fetch, unless its last fetch is under 30 s old. While the phone dashboard
 is visible, it also checks for updates every minute and when reopened. This polling stops when
 the dashboard is hidden. Glucose older than ten minutes is grey and labelled **STALE**; a
