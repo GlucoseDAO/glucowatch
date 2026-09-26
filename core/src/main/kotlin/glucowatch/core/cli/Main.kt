@@ -1,9 +1,15 @@
 package glucowatch.core.cli
 
+import glucowatch.core.CareLinkClient
+import glucowatch.core.CareLinkException
+import glucowatch.core.CareLinkLogin
+import glucowatch.core.CareLinkToken
 import glucowatch.core.DexcomShareClient
 import glucowatch.core.DotEnv
 import glucowatch.core.GlucoseReading
 import glucowatch.core.GlucoseUnit
+import glucowatch.core.HttpTransport
+import glucowatch.core.UrlConnectionTransport
 import glucowatch.core.LoopStatus
 import glucowatch.core.NightscoutApi
 import glucowatch.core.NightscoutClient
@@ -11,19 +17,29 @@ import glucowatch.core.NightscoutException
 import glucowatch.core.Predictors
 import glucowatch.core.Region
 import glucowatch.core.ShareException
+import glucowatch.core.Treatment
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
+import java.io.File
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import kotlin.system.exitProcess
 
 /**
- * Desktop check of the Share or Nightscout connection, without any watch:
+ * Desktop check of the Share, Nightscout or CareLink connection, without any watch:
  *   ./gradlew -q --console=plain :core:run --args="--hours 1 --predict"
  *   ./gradlew -q --console=plain :core:run --args="--source nightscout --url https://my.site --hours 3"
+ *   ./gradlew -q --console=plain :core:run --args="--source carelink --hours 3"
  * Account, region, Nightscout address and unit come from the project's `.env` (or environment
  * variables, or the flags below); a missing Dexcom username or password is asked for, the password
- * without echo. Flags: --source share|nightscout, --region eu|us|jp, --unit mmol|mgdl,
- * --url, --token, --api v1|v3, --hours N, --predict.
+ * without echo. CareLink reads and refreshes the tokens scripts/carelink_login.py saved
+ * (CARELINK_TOKEN_FILE, default ~/.config/glucowatch/carelink-token.json).
+ * Flags: --source share|nightscout|carelink, --region eu|us|jp, --unit mmol|mgdl,
+ * --url, --token, --api v1|v3, --hours N, --predict, --trace (CareLink: each request's URL,
+ * status and JSON keys, never the values).
  */
 fun main(args: Array<String>) {
     val opts = args.toList()
@@ -49,7 +65,7 @@ fun main(args: Array<String>) {
                 val treatments = client.treatments(sinceMillis = now - hours * 3_600_000L)
                 treatments.forEach {
                     val what = listOfNotNull(
-                        if (it.insulin > 0) "%.2f U".format(it.insulin) else null,
+                        if (it.isBasal) it.basalDescription() else if (it.isBolus) "Bolus %.2f U".format(it.insulin) else null,
                         if (it.carbs > 0) "%.0f g".format(it.carbs) else null,
                         if (it.automatic) "automatic" else null,
                     )
@@ -68,8 +84,9 @@ fun main(args: Array<String>) {
                 exitProcess(1)
             }
         }
+        "carelink", "cl" -> fetchCareLink(env, "--trace" in opts, hours, fmt)
         else -> {
-            System.err.println("Unknown --source '$source': use share or nightscout")
+            System.err.println("Unknown --source '$source': use share, nightscout or carelink")
             exitProcess(2)
         }
     }
@@ -119,6 +136,61 @@ private fun fetchShare(env: Map<String, String>, opt: (String) -> String?, hours
         println("No readings: check that Share is ON in the Dexcom app and that you have at least one follower.")
     }
     return readings
+}
+
+/** The token file scripts/carelink_login.py wrote; refreshed tokens are written back to it. */
+private class FileLogin(private val file: File) : CareLinkLogin {
+    override fun load() = CareLinkToken.decode(file.takeIf { it.isFile }?.readText())
+
+    override fun replace(old: CareLinkToken, new: CareLinkToken) {
+        if (load()?.refreshToken != old.refreshToken) return
+        val tmp = File(file.parentFile, file.name + ".tmp")
+        tmp.writeText(new.encode())
+        tmp.setReadable(false, false); tmp.setReadable(true, true); tmp.setWritable(false, false); tmp.setWritable(true, true)
+        tmp.renameTo(file)
+    }
+}
+
+private fun fetchCareLink(env: Map<String, String>, trace: Boolean, hours: Int, fmt: DateTimeFormatter): List<GlucoseReading> {
+    val file = File(env["CARELINK_TOKEN_FILE"] ?: (System.getProperty("user.home") + "/.config/glucowatch/carelink-token.json"))
+    val login = FileLogin(file)
+    val token = login.load() ?: run {
+        System.err.println("No CareLink sign-in at $file. Run: uv run --with playwright scripts/carelink_login.py")
+        exitProcess(2)
+    }
+    val base = UrlConnectionTransport()
+    val transport = if (!trace) base else HttpTransport { request ->
+        base.execute(request).also { response ->
+            val json = runCatching { Json.parseToJsonElement(response.body) }.getOrNull()
+            System.err.println("${request.method} ${request.url.substringBefore('?')} -> ${response.status} ${json?.let(::shape) ?: "(${response.body.length} bytes)"}")
+        }
+    }
+    val now = System.currentTimeMillis()
+    val data = try {
+        CareLinkClient(login, transport = transport).recent(now)
+    } catch (e: CareLinkException) {
+        System.err.println("FAILED: ${e.message}")
+        exitProcess(1)
+    }
+    val since = now - hours * 3_600_000L
+    println("CareLink OK (${token.country}), ${data.readings.size} readings in the last day, last upload " +
+        (data.lastUploadMillis?.let { "${(now - it) / 60_000} min ago" } ?: "unknown"))
+    data.treatments.filter { it.timeMillis >= since }.forEach { println("${fmt.format(Instant.ofEpochMilli(it.timeMillis))}  treatment ${describe(it)}") }
+    data.loop?.let { println("Active insulin ${it.iob} U, ${it.ageMinutes(now)} min ago") } ?: println("No active insulin reported")
+    return data.readings.filter { it.timeMillis >= since }
+}
+
+private fun describe(t: Treatment) = listOfNotNull(
+    if (t.isBasal) t.basalDescription() else if (t.isBolus) "Bolus %.2f U".format(t.insulin) else null,
+    if (t.carbs > 0) "%.0f g".format(t.carbs) else null,
+    if (t.automatic) "automatic" else null,
+).joinToString(", ")
+
+/** Keys and array sizes of a JSON answer, two levels deep, without any values. */
+private fun shape(json: JsonElement, depth: Int = 0): String = when (json) {
+    is JsonObject -> if (depth >= 2) "{…}" else json.entries.joinToString(", ", "{", "}") { (k, v) -> if (v is JsonObject || v is JsonArray) "$k: ${shape(v, depth + 1)}" else k }
+    is JsonArray -> "[${json.size}${json.firstOrNull()?.takeIf { depth < 2 }?.let { " × " + shape(it, depth + 1) }.orEmpty()}]"
+    else -> "value"
 }
 
 private fun readLineOrExit(prompt: String): String {

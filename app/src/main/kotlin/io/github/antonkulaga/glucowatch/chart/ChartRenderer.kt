@@ -17,13 +17,15 @@ import glucowatch.core.Trend
 import glucowatch.core.formatAmount
 import io.github.antonkulaga.glucowatch.data.GlucoseState
 import io.github.antonkulaga.glucowatch.ui.Brand
+import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.sqrt
 
 /**
  * The glucose chart for the face, the tile and the app: a smooth line coloured by range over a
- * faint target band, the forecast as a dashed continuation, boluses as dots under the plot and
- * carbs as dots above it, all in GlucoseDAO colours (see [Brand]). The background is
+ * faint target band, the forecast as a dashed continuation, boluses as dose-sized dots on the
+ * glucose curve and carbs as dots above it, all in GlucoseDAO colours (see [Brand]). The background is
  * transparent, so it sits on any face.
  */
 object ChartRenderer {
@@ -117,8 +119,12 @@ object ChartRenderer {
         val visible = state.readings.filter { it.timeMillis in start..end }
         // The glucose-first tiles reserve this short chart for the trajectory and target band.
         val marks = if (glanceStyle) emptyList() else state.treatments.filter { it.timeMillis in start..end }
-        val boluses = marks.filter { it.insulin > 0 }
+        val boluses = marks.filter { it.isBolus }
+        val basals = marks.filter { it.isBasal }
         val carbs = marks.filter { it.carbs > 0 }
+        fun readingAt(timeMillis: Long) = visible.minByOrNull { abs(it.timeMillis - timeMillis) }
+            ?.takeIf { abs(it.timeMillis - timeMillis) <= TREATMENT_READING_WINDOW_MS }
+        val bolusesWithoutReading = boluses.filter { readingAt(it.timeMillis) == null }
 
         val values = visible.map { it.mgdl.toDouble() } + forecast.map { it.upper ?: it.mgdl } + forecast.map { it.lower ?: it.mgdl }
         val yMin = min(s.lowMgdl - 15.0, (values.minOrNull() ?: 60.0) - 12).coerceAtLeast(39.0)
@@ -130,9 +136,10 @@ object ChartRenderer {
         val font = Typeface.create(Typeface.DEFAULT, Typeface.NORMAL)
         val label = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = palette.label; this.textSize = textSize; typeface = font }
 
-        // Rows: carbs above the plot, boluses and then the time axis below it. Empty rows take no space.
+        // Rows: carbs above; boluses, basal and the time axis below. Empty rows take no space.
         val carbRow = if (carbs.isEmpty()) 0f else textSize * 1.25f
-        val bolusRow = if (boluses.isEmpty()) 0f else textSize * 1.25f
+        val bolusRow = if (bolusesWithoutReading.isEmpty()) 0f else textSize * 1.25f
+        val basalRow = if (basals.isEmpty()) 0f else textSize * 1.25f
         val axisRow = if (labels) textSize * 1.35f else 0f
         val left = when {
             edge -> 0f
@@ -140,7 +147,7 @@ object ChartRenderer {
             else -> 2f
         }
         val right = if (edge) width - inset else width - stroke * 2.5f
-        val plot = RectF(left, carbRow + stroke * 2, right, height - axisRow - bolusRow - stroke)
+        val plot = RectF(left, carbRow + stroke * 2, right, height - axisRow - bolusRow - basalRow - stroke)
 
         fun x(t: Long) = plot.left + (t - start).toFloat() / (end - start) * plot.width()
         fun y(v: Double) = plot.bottom - ((v - yMin) / (yMax - yMin)).toFloat() * plot.height()
@@ -321,16 +328,45 @@ object ChartRenderer {
                     return@forEach
                 }
                 paint.color = color
-                c.drawCircle(cx, rowY, dot, paint)
+                if (it.isBasal) c.drawRect(cx - dot, rowY + dot * 1.4f, cx + dot, rowY + dot * 2.6f, paint)
+                else c.drawCircle(cx, rowY, dot, paint)
                 val tx = cx + dot * 1.6f
                 if (labels && tx >= free && tx >= inset && tx + markLabel.measureText(t) <= width - inset) {
-                    outlined(c, t, tx, rowY + textSize * 0.34f, markLabel, color, palette.background)
+                    outlined(c, t, tx, rowY + textSize * (if (it.isBasal) 0.05f else 0.34f), markLabel, color, palette.background)
                     free = tx + markLabel.measureText(t) + dot * 2
                 }
             }
         }
         if (carbs.isNotEmpty()) row(carbs, carbRow / 2 + stroke, palette.carbs) { "${formatAmount(it.carbs, 0)}g" }
-        if (boluses.isNotEmpty()) row(boluses, plot.bottom + stroke + bolusRow / 2, palette.insulin) { if (it.automatic) null else "${formatAmount(it.insulin, 1)}U" }
+
+        // Put each bolus on the glucose measured at about the same time. When glucose is missing,
+        // retain a compact row below the plot rather than inventing a glucose level. Circle area
+        // grows with the dose, which keeps small automatic boluses legible without letting a large
+        // manual dose cover too much of the curve.
+        val bolusLabelBounds = mutableListOf<RectF>()
+        boluses.forEach { bolus ->
+            val reading = readingAt(bolus.timeMillis)
+            val cx = x(bolus.timeMillis)
+            val cy = reading?.let { y(it.mgdl.toDouble()) } ?: (plot.bottom + stroke + bolusRow / 2)
+            val radius = (dot * (0.75f + 0.35f * sqrt(bolus.insulin.coerceAtLeast(0.0)).toFloat()))
+                .coerceIn(dot * 0.8f, dot * 2.1f)
+            paint.color = if (bolus.automatic) palette.insulin and 0x00FFFFFF or 0x99000000.toInt() else palette.insulin
+            c.drawCircle(cx, cy, radius, paint)
+            if (!labels || bolus.automatic) return@forEach
+
+            val text = "${formatAmount(bolus.insulin, 1)}U"
+            val textWidth = markLabel.measureText(text)
+            val tx = (cx + radius + stroke).takeIf { it + textWidth <= width - inset }
+                ?: (cx - radius - stroke - textWidth)
+            val baseline = if (reading == null) cy + textSize * 0.34f
+                else (cy - radius - stroke).coerceAtLeast(plot.top + markLabel.textSize)
+            val bounds = RectF(tx, baseline - markLabel.textSize, tx + textWidth, baseline + stroke)
+            if (tx >= inset && bounds.right <= width - inset && bolusLabelBounds.none { RectF.intersects(it, bounds) }) {
+                outlined(c, text, tx, baseline, markLabel, palette.insulin, palette.background)
+                bolusLabelBounds += bounds
+            }
+        }
+        if (basals.isNotEmpty()) row(basals, plot.bottom + stroke + bolusRow + basalRow / 2, palette.label) { "B ${it.basalValue().replace(" ", "")}" }
 
         if (visible.isEmpty()) {
             label.textAlign = Paint.Align.CENTER
@@ -378,6 +414,8 @@ object ChartRenderer {
         c.drawText(text, x, y, paint)
         paint.style = style; paint.strokeWidth = strokeWidth
     }
+
+    private const val TREATMENT_READING_WINDOW_MS = 10 * 60_000L
 
     /** Catmull-Rom spline through [points], as cubic Béziers. */
     private fun smooth(points: List<PointF>): Path = Path().apply {

@@ -152,10 +152,16 @@ class NightscoutClientTest {
     }
 
     @Test
-    fun `keeps insulin and carbs, drops basals, priming and deleted entries`() {
+    fun `keeps basal distinct from boluses and carbs, drops priming and deleted entries`() {
         val treatments = Json.parseToJsonElement(treatmentsJson).jsonArray.mapNotNull { NightscoutClient.parseTreatment(it.jsonObject) }
-        assertEquals(4, treatments.size)
-        val (bolus, carbs, smb, aapsSmb) = treatments
+        assertEquals(5, treatments.size)
+        val basal = treatments.first()
+        assertTrue(basal.isBasal)
+        assertFalse(basal.isBolus)
+        assertEquals(1.6, basal.basalRate)
+        assertEquals(30.0, basal.durationMinutes)
+        assertEquals(0.0, basal.insulin, "A rate is not a delivered dose")
+        val (bolus, carbs, smb, aapsSmb) = treatments.drop(1)
         assertEquals(Treatment(NightscoutClient.parseTime("2026-09-25T08:07:29.000Z")!!, insulin = 3.6), bolus)
         assertEquals(61.0, carbs.carbs)
         assertTrue(smb.automatic)

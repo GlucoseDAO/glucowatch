@@ -5,6 +5,8 @@ import android.content.SharedPreferences
 import android.security.NetworkSecurityPolicy
 import android.util.Log
 import glucowatch.core.CacheFormat
+import glucowatch.core.CombinedSourceSync
+import glucowatch.core.SyncSource
 import glucowatch.core.DemoData
 import glucowatch.core.GlucoseReading
 import glucowatch.core.LoopStatus
@@ -40,24 +42,26 @@ data class PhoneState(
 
 /**
  * Fetches the phone's own source through [SourceSync] and keeps a day of it, like the watch does.
- * A watch's sync triggers the fetch, so the phone schedules nothing of its own.
+ * The visible dashboard and a watch's sync trigger fetches; there is no background polling job.
  */
 class PhoneRepository(context: Context) {
     private val settingsStore = PhoneSettingsStore(context)
     private val modelStore = PhoneModelStore(context)
     private val cache = context.applicationContext.getSharedPreferences("cache", Context.MODE_PRIVATE)
+    private val carelink = PhoneCareLinkStore(context)
 
     fun state(): PhoneState {
         val settings = settingsStore.load()
         val now = System.currentTimeMillis()
         val demo = settings.source == LinkSource.DEMO
+        val combined = CombinedSourceSync.read(syncCache(settings), settings.extras.map { syncCache(settings, it) })
         return PhoneState(
             settings = settings,
-            readings = if (demo) DemoData.readings(now, HISTORY_HOURS) else CacheFormat.decodeReadings(cached(settings, SourceSync.READINGS)),
-            treatments = if (demo) DemoData.treatments(now, HISTORY_HOURS) else CacheFormat.decodeTreatments(cached(settings, SourceSync.TREATMENTS)),
-            loop = if (demo) DemoData.loopStatus(now) else CacheFormat.decodeLoop(cached(settings, SourceSync.LOOP)),
-            lastError = cache.getString("error", null),
-            lastFetchMillis = cache.getLong("fetchedAt", 0),
+            readings = if (demo) DemoData.readings(now, HISTORY_HOURS) else combined.readings,
+            treatments = if (demo) DemoData.treatments(now, HISTORY_HOURS) else combined.treatments,
+            loop = if (demo) DemoData.loopStatus(now) else combined.loop,
+            lastError = cached(settings, "error").takeIf { cache.getString(PLAN, null) == settings.configurationKey }?.ifEmpty { null },
+            lastFetchMillis = cached(settings, "fetchedAt").toLongOrNull() ?: 0L,
         )
     }
 
@@ -67,21 +71,26 @@ class PhoneRepository(context: Context) {
             val settings = settingsStore.load()
             val now = System.currentTimeMillis()
             if (cache.getString(ACCOUNT, null) != settings.accountKey) {
-                cache.edit().clear().putString(ACCOUNT, settings.accountKey).apply()
+                store(settings) { clear() }
             }
-            val account = settings.account
-            val recent = now - cache.getLong("fetchedAt", 0) < maxAgeMs
+            val recent = cache.getString(PLAN, null) == settings.configurationKey &&
+                now - (cached(settings, "fetchedAt").toLongOrNull() ?: 0L) < maxAgeMs
             when {
-                account == null || recent -> Unit
+                settings.source == LinkSource.DEMO || recent -> Unit
                 else -> {
-                    val missing = problem(settings)
-                    val result = if (missing != null) Result.failure(IllegalStateException(missing))
-                    else runCatching { SourceSync(syncCache(settings), retainMs = HISTORY_MS).fetch(account, CHART_HOURS) }
-                    result.exceptionOrNull()?.let { Log.w(TAG, "${settings.source} refresh failed", it) }
-                    cache.edit()
-                        .putString("error", result.exceptionOrNull()?.let { it.message ?: it.javaClass.simpleName })
-                        .putLong("fetchedAt", now)
-                        .apply()
+                    val prefixes = settings.extras.map { prefix(settings, it) }
+                    store(settings) {
+                        cache.all.keys.filter { it.startsWith(EXTRA) && prefixes.none(it::startsWith) }.forEach(::remove)
+                    }
+                    fun selected(of: LinkSource) = SyncSource(settings.label(of), settings.account(of, carelink)!!,
+                        syncCache(settings, of), problem(settings, of))
+                    val errors = CombinedSourceSync(retainMs = HISTORY_MS)
+                        .fetch(selected(settings.source), settings.extras.map(::selected), CHART_HOURS, now)
+                    store(settings) {
+                        putString("error", errors.joinToString("\n").ifEmpty { null })
+                        putLong("fetchedAt", now)
+                        putString(PLAN, settings.configurationKey)
+                    }
                 }
             }
             state()
@@ -111,7 +120,7 @@ class PhoneRepository(context: Context) {
         // That keeps the Bluetooth message the size it always was.
         val dayAgo = System.currentTimeMillis() - SourceSync.DAY_MS
         return LinkSnapshot(
-            upstream = LinkCrypto.sha256(settings.accountKey.toByteArray()).copyOf(12).let(Base64.getEncoder()::encodeToString),
+            upstream = LinkCrypto.sha256(settings.configurationKey.toByteArray()).copyOf(12).let(Base64.getEncoder()::encodeToString),
             sourceLabel = settings.sourceLabel,
             readings = state.readings.filter { it.timeMillis >= dayAgo },
             treatments = state.treatments.filter { it.timeMillis >= dayAgo },
@@ -121,9 +130,12 @@ class PhoneRepository(context: Context) {
         )
     }
 
-    private fun problem(settings: PhoneSettings): String? = when (settings.source) {
+    private fun problem(settings: PhoneSettings, of: LinkSource): String? = when (of) {
         LinkSource.DEMO -> null
         LinkSource.SHARE -> "Enter the Dexcom username and password".takeIf { settings.username.isBlank() || settings.password.isBlank() }
+        LinkSource.CARELINK -> "Sign in to CareLink in Connect".takeIf {
+            settings.carelinkAccount.isEmpty() || carelink.load()?.subject != settings.carelinkAccount
+        }
         LinkSource.NIGHTSCOUT -> {
             val url = settings.nightscoutUrl
             if (url.isBlank()) "Enter the Nightscout address"
@@ -141,23 +153,38 @@ class PhoneRepository(context: Context) {
 
     /** Same rule as the watch: data belongs to one [PhoneSettings.accountKey], a late write for another is dropped. */
     private fun cached(settings: PhoneSettings, key: String): String =
-        if (cache.getString(ACCOUNT, null) == settings.accountKey) cache.getString(key, "") ?: "" else ""
+        if (cache.getString(ACCOUNT, null) == settings.accountKey) cache.all[key]?.toString().orEmpty() else ""
 
     private fun store(settings: PhoneSettings, write: SharedPreferences.Editor.() -> Unit) {
-        if (settingsStore.load().accountKey != settings.accountKey) return
+        if (settingsStore.load().configurationKey != settings.configurationKey) return
         cache.edit().apply(write).putString(ACCOUNT, settings.accountKey).apply()
     }
 
-    private fun syncCache(settings: PhoneSettings) = object : SyncCache {
-        override fun get(key: String): String? =
-            if (cache.getString(ACCOUNT, null) == settings.accountKey) cache.getString(key, null) else null
+    private fun prefix(settings: PhoneSettings, of: LinkSource): String =
+        if (of == settings.source) "" else EXTRA + of.name + ":" +
+            LinkCrypto.sha256(settings.keyOf(of).toByteArray()).joinToString("") { "%02x".format(it) } + ":"
 
-        override fun put(values: Map<String, String?>) = store(settings) { values.forEach { (key, value) -> putString(key, value) } }
+    private fun syncCache(settings: PhoneSettings, of: LinkSource = settings.source) = object : SyncCache {
+        private val prefix = prefix(settings, of)
+        override fun get(key: String): String? =
+            if (cache.getString(ACCOUNT, null) == settings.accountKey) cache.getString(prefix + key, null) else null
+
+        override fun put(values: Map<String, String?>) = store(settings) { values.forEach { (key, value) -> putString(prefix + key, value) } }
     }
+
+    /** A move, under the same lock as refresh: only one device may refresh a CareLink session. */
+    fun handOverCareLink(): String? = runBlocking { lock.withLock {
+        val token = carelink.take() ?: return@withLock null
+        val old = settingsStore.load()
+        settingsStore.save(old.copy(carelinkAccount = ""))
+        token.encode()
+    } }
 
     companion object {
         private const val TAG = "GlucoPhoneRepo"
         private const val ACCOUNT = "account"
+        private const val PLAN = "plan"
+        private const val EXTRA = "also:"
 
         /** The watch shows up to this many hours; the phone keeps the same treatment window. */
         private const val CHART_HOURS = 6

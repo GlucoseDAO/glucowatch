@@ -20,6 +20,7 @@ import android.widget.RadioButton
 import android.widget.RadioGroup
 import android.widget.ScrollView
 import android.widget.TextView
+import glucowatch.core.CareLinkToken
 import glucowatch.core.GlucoseUnit
 import glucowatch.core.LinearTrendPredictor
 import glucowatch.core.LoopStatus
@@ -35,6 +36,7 @@ import glucowatch.core.link.LinkSource
 import glucowatch.core.link.PhoneLink
 import glucowatch.core.link.WatchLinkClient
 import io.github.antonkulaga.glucowatch.R
+import io.github.antonkulaga.glucowatch.data.CareLinkTokenStore
 import io.github.antonkulaga.glucowatch.data.DataSource
 import io.github.antonkulaga.glucowatch.data.GlucoseRepository
 import io.github.antonkulaga.glucowatch.data.PhoneConnection
@@ -53,14 +55,15 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
- * Source (demo, Dexcom Share, Nightscout or the phone app), its login, pairing with the phone,
- * units and the optional forecast.
+ * Source (demo, Dexcom Share, Nightscout, CareLink or the phone app), its login, the sources that
+ * add insulin and carbs, pairing with the phone, units and the optional forecast.
  * For development the fields can be prefilled from adb, see README ("Connect real Share data").
  */
 class SettingsActivity : Activity() {
     private val scope = MainScope()
     private val store by lazy { SettingsStore(this) }
     private val pairings by lazy { PhonePairingStore(this) }
+    private val carelinkTokens by lazy { CareLinkTokenStore(this) }
 
     private lateinit var source: RadioGroup
     private lateinit var username: EditText
@@ -84,6 +87,15 @@ class SettingsActivity : Activity() {
     private lateinit var loopPredictor: View
     private lateinit var phonePredictor: View
     private lateinit var phoneFields: List<View>
+    private lateinit var carelinkFields: List<View>
+    private lateinit var carelinkStatus: TextView
+    private lateinit var carelinkButton: Button
+
+    /** "Also import insulin and carbs from" boxes, one per [Settings.THERAPY_SOURCES]. */
+    private lateinit var alsoFrom: Map<DataSource, CheckBox>
+
+    /** The CareLink account signed in on this screen, saved with the other settings. */
+    private var carelinkAccount = ""
     private lateinit var phoneStatus: TextView
     private lateinit var pairButton: Button
     private lateinit var copyButton: Button
@@ -104,6 +116,7 @@ class SettingsActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val s = fromIntent(store.load())
+        carelinkAccount = s.carelinkAccount
         // Round screens clip the corners: inset the column and let the ends scroll to the middle.
         val screen = resources.displayMetrics.widthPixels
         val column = LinearLayout(this).apply {
@@ -178,6 +191,24 @@ class SettingsActivity : Activity() {
             label("API"), nightscoutApi,
         )
         phoneFields = listOf(hint("The phone app fetches and passes it on over Bluetooth. No login or internet on the watch."))
+        carelinkStatus = hint("")
+        carelinkButton = Button(this).apply {
+            text = "Get CareLink sign-in from phone"; Brand.style(this, primary = false)
+            setOnClickListener { moveCareLink() }
+        }
+        carelinkFields = listOf(
+            label("CareLink"), carelinkStatus, carelinkButton,
+            hint(
+                "CareLink's sign-in needs a browser, which the watch lacks. Sign in in the phone app, then get " +
+                    "it here. The sign-in moves to the watch: the phone keeps no copy.",
+            ),
+        )
+        alsoFrom = Settings.THERAPY_SOURCES.associateWith { extra ->
+            CheckBox(this).apply {
+                text = extra.label; isChecked = extra in s.alsoFrom
+                setOnCheckedChangeListener { _, _ -> updateVisibility() }
+            }
+        }
         phoneStatus = hint("")
         pairButton = Button(this).apply { Brand.style(this, primary = false); setOnClickListener { pair() } }
         codeView = TextView(this).apply {
@@ -192,9 +223,13 @@ class SettingsActivity : Activity() {
         phoneResult = TextView(this).apply { textSize = 12f; gravity = Gravity.CENTER; setTextColor(Brand.TEXT) }
         copyButton = Button(this).apply { text = "Copy login from phone"; Brand.style(this, primary = false); setOnClickListener { copyLogin() } }
 
-        listOf(label("Data source"), source).forEach(column::addView)
+        listOf(label("Glucose from"), source).forEach(column::addView)
+        column.addView(label("Also import insulin and carbs from"))
+        alsoFrom.values.forEach(column::addView)
+        column.addView(hint("For a pump on CareLink next to a Dexcom sensor. Readings still come from one source."))
         shareFields.forEach(column::addView)
         nightscoutFields.forEach(column::addView)
+        carelinkFields.forEach(column::addView)
         phoneFields.forEach(column::addView)
         listOf(label("Phone"), phoneStatus, pairButton, codeBlock, copyButton, phoneResult).forEach(column::addView)
         heartButton = Button(this).apply {
@@ -215,6 +250,7 @@ class SettingsActivity : Activity() {
         updateHeartRate()
         updateAlertPermission()
         updatePhone()
+        updateCareLink()
         setContentView(ScrollView(this).apply { addView(column) })
 
         source.setOnCheckedChangeListener { _, _ -> updateVisibility() }
@@ -249,6 +285,42 @@ class SettingsActivity : Activity() {
         requestPermissions(arrayOf(Manifest.permission.BLUETOOTH_CONNECT), REQUEST_BLUETOOTH)
     }
 
+    private fun updateCareLink() {
+        val token = carelinkTokens.load()?.takeIf { it.subject == carelinkAccount && carelinkAccount.isNotEmpty() }
+        carelinkStatus.text = token?.let { "Signed in to CareLink (${it.country})." } ?: "Not signed in to CareLink."
+        carelinkButton.text = if (token == null) "Get CareLink sign-in from phone" else "Get a new sign-in from phone"
+        carelinkButton.visibility = if (pairings.load() != null) View.VISIBLE else View.GONE
+    }
+
+    /** Takes the phone's CareLink sign-in. Stored at once: the phone has already forgotten it. */
+    private fun moveCareLink() = withBluetooth {
+        val pairing = pairings.load() ?: return@withBluetooth
+        carelinkStatus.text = "Asking the phone…"
+        scope.launch {
+            runCatching {
+                withContext(Dispatchers.IO) {
+                    PhoneConnection(this@SettingsActivity).open(pairing.address) { _, input, output ->
+                        WatchLinkClient(pairings.watchId).carelink(input, output, pairing.key)
+                    }
+                }
+            }.onSuccess { token ->
+                useCareLink(token)
+                carelinkStatus.text = "Got the CareLink sign-in (${token.country}). Tap Save & test."
+            }.onFailure { carelinkStatus.text = "⚠ ${it.message}" }
+        }
+    }
+
+    /** Keeps [token] and saves the account with it, so the next refresh uses the new sign-in. */
+    private fun useCareLink(token: CareLinkToken) {
+        carelinkTokens.save(token)
+        carelinkAccount = token.subject.orEmpty()
+        val old = store.load()
+        val new = old.copy(carelinkAccount = carelinkAccount)
+        if (new.accountKey != old.accountKey) GlucoseRepository(this).clearCache()
+        store.save(new)
+        updateCareLink()
+    }
+
     private fun updatePhone() {
         val pairing = pairings.load()
         val pending = pendingPairing != null
@@ -258,6 +330,7 @@ class SettingsActivity : Activity() {
         pairButton.visibility = if (pending) View.GONE else View.VISIBLE
         codeBlock.visibility = if (pending) View.VISIBLE else View.GONE
         copyButton.visibility = if (pairing != null && !pending) View.VISIBLE else View.GONE
+        if (::carelinkButton.isInitialized) updateCareLink()
     }
 
     /** Agrees on a key with the phone and shows the code the user compares on both screens. */
@@ -312,6 +385,10 @@ class SettingsActivity : Activity() {
     /** Puts the phone's login into the fields. Nothing is saved until Save & test. */
     private fun fillFrom(account: LinkAccount) {
         when (account.source) {
+            LinkSource.CARELINK -> {
+                phoneResult.text = "Choose Phone app to relay the combined chart, or use Get CareLink sign-in from phone to move its login here."
+                return
+            }
             LinkSource.DEMO -> {
                 phoneResult.text = "The phone shows demo data, so there is no login to copy."
                 return
@@ -352,10 +429,14 @@ class SettingsActivity : Activity() {
 
     private fun updateVisibility() {
         val source = DataSource.valueOf(selected(source))
+        // An extra's box is hidden while it is the main source; its fields show for either role.
+        alsoFrom.forEach { (extra, box) -> box.visibility = if (extra == source || source == DataSource.DEMO) View.GONE else View.VISIBLE }
+        fun used(of: DataSource) = source == of || (source != DataSource.DEMO && alsoFrom[of]?.isChecked == true)
         shareFields.forEach { it.visibility = if (source == DataSource.SHARE) View.VISIBLE else View.GONE }
-        nightscoutFields.forEach { it.visibility = if (source == DataSource.NIGHTSCOUT) View.VISIBLE else View.GONE }
+        nightscoutFields.forEach { it.visibility = if (used(DataSource.NIGHTSCOUT)) View.VISIBLE else View.GONE }
+        carelinkFields.forEach { it.visibility = if (used(DataSource.CARELINK)) View.VISIBLE else View.GONE }
         phoneFields.forEach { it.visibility = if (source == DataSource.PHONE) View.VISIBLE else View.GONE }
-        val loop = source in GlucoseRepository.LOOP_SOURCES
+        val loop = source in GlucoseRepository.LOOP_SOURCES || used(DataSource.NIGHTSCOUT)
         val phone = source == DataSource.PHONE
         loopPredictor.visibility = if (loop) View.VISIBLE else View.GONE
         phonePredictor.visibility = if (phone) View.VISIBLE else View.GONE
@@ -386,6 +467,8 @@ class SettingsActivity : Activity() {
             nightscoutUrl = nightscoutUrl.text.toString().trim(),
             nightscoutToken = nightscoutToken.text.toString().trim(),
             nightscoutApi = NightscoutApi.valueOf(selected(nightscoutApi)),
+            carelinkAccount = carelinkAccount,
+            alsoFrom = alsoFrom.filterValues { it.isChecked }.keys,
             unit = GlucoseUnit.valueOf(selected(unit)),
             predictionEnabled = prediction.isChecked,
             predictorId = selected(predictor),
@@ -406,11 +489,13 @@ class SettingsActivity : Activity() {
                 state.lastError != null -> "⚠ ${state.lastError}"
                 latest == null && new.source == DataSource.NIGHTSCOUT -> "Connected, but no readings in the last 24 h"
                 latest == null && new.source == DataSource.PHONE -> "Connected, but the phone has no readings yet"
+                latest == null && new.source == DataSource.CARELINK -> "Connected, but CareLink has no sensor readings in the last 24 h"
                 latest == null -> "Logged in, but no readings. Is Share on with at least one follower?"
                 new.source == DataSource.SHARE && latestAge != null && latestAge >= 7 ->
                     "Share answered, but its newest reading is $latestAge min old"
                 else -> "OK: ${new.unit.format(latest.mgdl.toDouble())} ${new.unit.label}, ${state.ageMinutes()} min ago" +
-                    state.loop?.let { "\nLoop reported ${it.ageMinutes()} min ago" }.orEmpty()
+                    state.loop?.let { "\nLoop reported ${it.ageMinutes()} min ago" }.orEmpty() +
+                    (if (new.extras.isNotEmpty()) "\nInsulin and carbs also from " + new.extras.joinToString(" and ") { it.label } else "")
             }
         }
     }
@@ -439,11 +524,18 @@ class SettingsActivity : Activity() {
     /**
      * adb shell am start -n …/.ui.SettingsActivity --es source SHARE --es username … (debug builds only).
      * Nightscout: --es source NIGHTSCOUT --es nightscoutUrl https://… --es nightscoutToken … --es nightscoutApi v1.
+     * Extras: --es also CARELINK,NIGHTSCOUT (or --es also "" for none). CareLink: --es carelinkToken
+     * with the JSON scripts/carelink_login.py saved (scripts/carelink_to_watch.py sends it).
      */
     private fun fromIntent(s: Settings): Settings {
         if (!isDebuggable) return s
         val e = intent.extras ?: return s
+        val token = e.getString("carelinkToken")?.let(CareLinkToken::decode)
+        if (token != null) carelinkTokens.save(token)
         return s.copy(
+            carelinkAccount = token?.subject ?: s.carelinkAccount,
+            alsoFrom = e.getString("also")?.split(',')?.mapNotNull { name -> DataSource.entries.firstOrNull { it.name == name.trim().uppercase() } }?.toSet()
+                ?: s.alsoFrom,
             source = e.getString("source")?.let { DataSource.valueOf(it.uppercase()) } ?: s.source,
             username = e.getString("username") ?: s.username,
             password = e.getString("password") ?: s.password,

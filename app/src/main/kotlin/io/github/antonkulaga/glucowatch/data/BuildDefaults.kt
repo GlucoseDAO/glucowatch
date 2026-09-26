@@ -17,10 +17,11 @@ internal object BuildDefaults {
     private val nightscoutToken = BuildConfig.DEV_NIGHTSCOUT_TOKEN
     private val nightscoutApi = BuildConfig.DEV_NIGHTSCOUT_API
     private val source = BuildConfig.DEV_GLUCOWATCH_SOURCE
+    private val also = BuildConfig.DEV_GLUCOWATCH_ALSO
     private val unit = BuildConfig.DEV_GLUCOWATCH_UNIT
     private val prediction = BuildConfig.DEV_GLUCOWATCH_PREDICTION
 
-    private val all get() = listOf(username, password, region, nightscoutUrl, nightscoutToken, nightscoutApi, source, unit, prediction)
+    private val all get() = listOf(username, password, region, nightscoutUrl, nightscoutToken, nightscoutApi, source, also, unit, prediction)
 
     val present get() = all.any { it.isNotEmpty() }
 
@@ -41,6 +42,8 @@ internal object BuildDefaults {
         nightscoutUrl = nightscoutUrl.ifEmpty { s.nightscoutUrl },
         nightscoutToken = nightscoutToken.ifEmpty { s.nightscoutToken },
         nightscoutApi = nightscoutApi.takeIf { it.isNotEmpty() }?.let(NightscoutApi::parse) ?: s.nightscoutApi,
+        // The CareLink sign-in itself never comes from .env: it needs a browser (scripts/carelink_to_watch.py).
+        alsoFrom = also.takeIf { it.isNotEmpty() }?.split(',')?.map { DataSource.valueOf(it.trim().uppercase()) }?.toSet() ?: s.alsoFrom,
         unit = unit.takeIf { it.isNotEmpty() }?.let(GlucoseUnit::parse) ?: s.unit,
         predictionEnabled = prediction.lowercase().toBooleanStrictOrNull() ?: s.predictionEnabled,
     )

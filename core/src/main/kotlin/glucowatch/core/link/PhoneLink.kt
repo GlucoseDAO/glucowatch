@@ -1,6 +1,7 @@
 package glucowatch.core.link
 
 import glucowatch.core.CacheFormat
+import glucowatch.core.CareLinkToken
 import glucowatch.core.GlucoseReading
 import glucowatch.core.LoopStatus
 import glucowatch.core.NightscoutApi
@@ -25,7 +26,8 @@ object PhoneLink {
     /** The phone's RFCOMM service record. Fixed: another value breaks every installed pairing. */
     val SERVICE_UUID: UUID = UUID.fromString("7d0c6a8e-2f41-4b9a-b3e5-1c9f0a6d42e7")
     const val SERVICE_NAME = "GlucoWatch"
-    const val VERSION = 1
+    // Version 2 carries basal kind, rate and duration in the treatment payload.
+    const val VERSION = 2
     const val ID_BYTES = 16
 
     /** [Prediction.modelId] of a forecast made on the phone; also the watch setting that selects it. */
@@ -34,6 +36,9 @@ object PhoneLink {
     internal const val PAIR = 1
     internal const val SYNC = 2
     internal const val ACCOUNT = 3
+
+    /** Added after [VERSION] 1 shipped: a phone app without it answers "Unknown request". */
+    internal const val CARELINK = 4
     internal const val OK = 0
     internal const val ERROR = 1
     internal const val MAX_MESSAGE = 1 shl 20
@@ -64,7 +69,7 @@ object PhoneLink {
 }
 
 /** The phone's own sources, which a watch can copy. */
-enum class LinkSource { DEMO, SHARE, NIGHTSCOUT }
+enum class LinkSource { DEMO, SHARE, NIGHTSCOUT, CARELINK }
 
 /** The phone's login, sent when the user copies it to the watch. */
 data class LinkAccount(
@@ -117,6 +122,17 @@ class WatchLinkClient(private val watchId: ByteArray) {
 
     fun account(input: InputStream, output: OutputStream, key: ByteArray): LinkAccount =
         PhoneLink.request(Frames(input, output), watchId, key, PhoneLink.ACCOUNT) {}.read { readAccount() }
+
+    /** Moves the phone's CareLink sign-in to the watch; the phone keeps no copy (see [PhoneLinkHandler.handOverCareLink]). */
+    fun carelink(input: InputStream, output: OutputStream, key: ByteArray): CareLinkToken {
+        val text = try {
+            PhoneLink.request(Frames(input, output), watchId, key, PhoneLink.CARELINK) {}.read { readText() }
+        } catch (e: LinkException) {
+            if (e.message.orEmpty().startsWith("Unknown request")) throw LinkException("Update the phone app: this one cannot pass on a CareLink sign-in")
+            throw e
+        }
+        return CareLinkToken.decode(text) ?: throw LinkException("The phone has no CareLink sign-in. Sign in to CareLink in the phone app first")
+    }
 }
 
 /** What the phone app provides to [PhoneLinkServer]. Called on the connection's thread. */
@@ -136,6 +152,13 @@ interface PhoneLinkHandler {
     fun snapshot(horizonMinutes: Int): LinkSnapshot
 
     fun account(): LinkAccount
+
+    /**
+     * The phone's CareLink sign-in as [CareLinkToken.encode] JSON, which the phone then forgets, or
+     * null without one. CareLink rotates the refresh token on every use, so a sign-in kept on two
+     * devices logs both out at the second refresh: it moves, it is not copied.
+     */
+    fun handOverCareLink(): String? = null
 }
 
 /** The phone's end: answers the one request that arrives on a connection. Never throws [LinkException]. */
@@ -151,11 +174,14 @@ object PhoneLinkServer {
             val watchId = request.readBytes(PhoneLink.ID_BYTES)
             when (kind) {
                 PhoneLink.PAIR -> pair(link, handler, watchId, request.readBlob())
-                PhoneLink.SYNC, PhoneLink.ACCOUNT -> {
+                PhoneLink.SYNC, PhoneLink.ACCOUNT, PhoneLink.CARELINK -> {
                     val key = handler.keyFor(watchId) ?: throw LinkException("This phone does not know this watch. Pair them again.")
                     PhoneLink.answer(link, watchId, key, kind, request.readBlob()) { body ->
-                        if (kind == PhoneLink.SYNC) message { writeSnapshot(handler.snapshot(body.readInt())) }
-                        else message { writeAccount(handler.account()) }
+                        when (kind) {
+                            PhoneLink.SYNC -> message { writeSnapshot(handler.snapshot(body.readInt())) }
+                            PhoneLink.ACCOUNT -> message { writeAccount(handler.account()) }
+                            else -> message { writeText(handler.handOverCareLink().orEmpty()) }
+                        }
                     }
                 }
                 else -> throw LinkException("Unknown request $kind")

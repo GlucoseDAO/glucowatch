@@ -108,7 +108,7 @@ class NightscoutClient(
         return docs.mapNotNull(::parseEntry).distinctBy { it.timeMillis }.sortedBy { it.timeMillis }
     }
 
-    /** Boluses and carbs entered at or after [sinceMillis], oldest first. Temp basals and notes are skipped. */
+    /** Boluses, temp basals and carbs entered at or after [sinceMillis], oldest first. */
     fun treatments(sinceMillis: Long, maxCount: Int = MAX_COUNT): List<Treatment> {
         val since = isoMillis(sinceMillis)
         val docs = when (api) {
@@ -116,7 +116,7 @@ class NightscoutClient(
             NightscoutApi.V3 -> getV3(
                 "api/v3/treatments", "created_at\$gte" to since, "sort\$desc" to "created_at",
                 "limit" to "${maxCount.coerceAtMost(V3_MAX_LIMIT)}",
-                "fields" to "date,mills,created_at,eventType,insulin,carbs,isSMB,type,automatic,isValid,bolus",
+                "fields" to "date,mills,created_at,eventType,insulin,carbs,isSMB,type,automatic,isValid,bolus,absolute,rate,percent,duration",
             )
         }
         return docs.mapNotNull(::parseTreatment).sortedBy { it.timeMillis }
@@ -253,10 +253,19 @@ class NightscoutClient(
 
         internal fun parseTreatment(obj: JsonObject): Treatment? {
             if (obj.bool("isValid") == false || obj.string("type").equals("PRIMING", ignoreCase = true)) return null
+            val time = obj.time("date", "mills", "created_at", "timestamp") ?: return null
+            if (obj.string("eventType").equals("Temp Basal", ignoreCase = true)) {
+                val duration = obj.double("duration")?.takeIf { it.isFinite() && it >= 0 } ?: return null
+                val percent = obj.double("percent")?.takeIf { it.isFinite() && it >= -100 }
+                val rate = (obj.double("absolute") ?: obj.double("rate").takeIf { percent == null })
+                    ?.takeIf { it.isFinite() && it >= 0 }
+                if (duration > 0 && rate == null && percent == null) return null
+                return Treatment(time, insulinKind = InsulinKind.BASAL, basalRate = rate,
+                    basalPercent = percent.takeIf { rate == null }, durationMinutes = duration)
+            }
             val insulin = obj.double("insulin")?.takeIf { it > 0 } ?: 0.0
             val carbs = obj.double("carbs")?.takeIf { it > 0 } ?: 0.0
             if (insulin == 0.0 && carbs == 0.0) return null
-            val time = obj.time("date", "mills", "created_at", "timestamp") ?: return null
             // AAPS: isSMB or type SMB; iAPS/Trio: eventType SMB; Loop: automatic.
             val automatic = obj.string("eventType").equals("SMB", ignoreCase = true) ||
                 obj.string("type").equals("SMB", ignoreCase = true) ||

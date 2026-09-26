@@ -18,7 +18,7 @@ val dotEnv: Map<String, String> = rootProject.file(".env").takeIf { it.isFile }?
 val devDefaults = listOf(
     "DEXCOM_USERNAME", "DEXCOM_PASSWORD", "DEXCOM_REGION",
     "NIGHTSCOUT_URL", "NIGHTSCOUT_TOKEN", "NIGHTSCOUT_API",
-    "GLUCOWATCH_SOURCE", "GLUCOWATCH_UNIT", "GLUCOWATCH_PREDICTION",
+    "GLUCOWATCH_SOURCE", "GLUCOWATCH_ALSO", "GLUCOWATCH_UNIT", "GLUCOWATCH_PREDICTION",
 ).associateWith { System.getenv(it) ?: dotEnv[it] ?: "" }
 
 fun checkDefault(key: String, allowed: Set<String>) = devDefaults.getValue(key).lowercase().let {
@@ -26,7 +26,10 @@ fun checkDefault(key: String, allowed: Set<String>) = devDefaults.getValue(key).
 }
 checkDefault("DEXCOM_REGION", setOf("eu", "ous", "us", "jp"))
 checkDefault("NIGHTSCOUT_API", setOf("v1", "v3"))
-checkDefault("GLUCOWATCH_SOURCE", setOf("demo", "share", "nightscout", "phone"))
+checkDefault("GLUCOWATCH_SOURCE", setOf("demo", "share", "nightscout", "carelink", "phone"))
+devDefaults.getValue("GLUCOWATCH_ALSO").lowercase().split(',').map(String::trim).filter(String::isNotEmpty).forEach {
+    require(it in setOf("nightscout", "carelink")) { ".env: GLUCOWATCH_ALSO lists nightscout and carelink, got '$it'" }
+}
 checkDefault("GLUCOWATCH_UNIT", setOf("mmol", "mmol/l", "mgdl", "mg/dl"))
 checkDefault("GLUCOWATCH_PREDICTION", setOf("true", "false"))
 
@@ -40,8 +43,8 @@ android {
         applicationId = "io.github.antonkulaga.glucowatch"
         minSdk = 33
         targetSdk = 36
-        versionCode = 7
-        versionName = "0.1.6"
+        versionCode = 8
+        versionName = "0.1.7"
     }
 
     buildFeatures {

@@ -4,6 +4,7 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
+import glucowatch.core.InsulinKind
 import java.io.File
 
 /**
@@ -16,6 +17,7 @@ data class FoodEntry(
     val photo: String?,
     val note: String = "",
     val insulin: Double = 0.0,
+    val insulinKind: InsulinKind = InsulinKind.BOLUS,
 ) {
     val isMeal get() = carbs > 0 || photo != null
 }
@@ -41,9 +43,9 @@ class FoodLog(context: Context) {
 
     fun photoFile(name: String): File? = photos.resolve(name).takeIf { it.isFile && it.parentFile == photos }
 
-    fun add(carbs: Double, note: String, photo: File?, insulin: Double = 0.0): FoodEntry {
+    fun add(carbs: Double, note: String, photo: File?, insulin: Double = 0.0, insulinKind: InsulinKind = InsulinKind.BOLUS): FoodEntry {
         val shrunk = photo?.takeIf { it.isFile }?.let(::shrink)
-        val entry = FoodEntry(System.currentTimeMillis(), carbs, shrunk?.name, note.trim(), insulin)
+        val entry = FoodEntry(System.currentTimeMillis(), carbs, shrunk?.name, note.trim(), insulin, insulinKind)
         write(all() + entry)
         return entry
     }
@@ -79,23 +81,25 @@ class FoodLog(context: Context) {
     }
 
     /**
-     * `time,carbs,photo,note,insulin` per row, each field percent-encoded, rows joined with `;`.
+     * `time,carbs,photo,note,insulin,kind` per row, each field percent-encoded, rows joined with `;`.
      * Rows written before insulin was added have four fields and read back with no insulin.
      */
     private fun encode(entries: List<FoodEntry>) = entries.joinToString(";") {
-        listOf(it.timeMillis.toString(), it.carbs.toString(), it.photo.orEmpty(), it.note, it.insulin.toString())
+        listOf(it.timeMillis.toString(), it.carbs.toString(), it.photo.orEmpty(), it.note, it.insulin.toString(), it.insulinKind.name)
             .joinToString(",") { field -> Uri.encode(field) }
     }
 
     private fun decode(text: String): List<FoodEntry> = text.split(';').mapNotNull { row ->
         val parts = row.split(',').map(Uri::decode)
-        if (parts.size != 4 && parts.size != 5) return@mapNotNull null
+        if (parts.size !in 4..6) return@mapNotNull null
         FoodEntry(
             timeMillis = parts[0].toLongOrNull() ?: return@mapNotNull null,
             carbs = parts[1].toDoubleOrNull() ?: return@mapNotNull null,
             photo = parts[2].takeIf(String::isNotEmpty),
             note = parts[3],
             insulin = parts.getOrNull(4)?.toDoubleOrNull() ?: 0.0,
+            insulinKind = if (parts.size < 6) InsulinKind.BOLUS else
+                InsulinKind.entries.firstOrNull { it.name == parts[5] } ?: return@mapNotNull null,
         )
     }
 

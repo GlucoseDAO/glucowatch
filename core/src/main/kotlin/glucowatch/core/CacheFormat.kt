@@ -16,17 +16,27 @@ object CacheFormat {
         }
 
     fun encodeTreatments(list: List<Treatment>): String =
-        list.joinToString(";") { "${it.timeMillis},${it.insulin},${it.carbs},${if (it.automatic) 1 else 0}" }
+        list.joinToString(";") {
+            listOf(it.timeMillis, it.insulin, it.carbs, if (it.automatic) 1 else 0,
+                it.insulinKind.name, it.basalRate, it.basalPercent, it.durationMinutes)
+                .joinToString(",") { field -> field?.toString().orEmpty() }
+        }
 
     fun decodeTreatments(text: String): List<Treatment> =
         text.split(';').mapNotNull { row ->
             val p = row.split(',')
-            if (p.size != 4) return@mapNotNull null
+            // Pre-basal caches contain four fields; those entries were all boluses/carbs.
+            if (p.size != 4 && p.size != 8) return@mapNotNull null
             Treatment(
                 timeMillis = p[0].toLongOrNull() ?: return@mapNotNull null,
                 insulin = p[1].toDoubleOrNull() ?: return@mapNotNull null,
                 carbs = p[2].toDoubleOrNull() ?: return@mapNotNull null,
                 automatic = p[3] == "1",
+                insulinKind = if (p.size == 4) InsulinKind.BOLUS else
+                    InsulinKind.entries.firstOrNull { it.name == p[4] } ?: return@mapNotNull null,
+                basalRate = p.getOrNull(5)?.toDoubleOrNull(),
+                basalPercent = p.getOrNull(6)?.toDoubleOrNull(),
+                durationMinutes = p.getOrNull(7)?.toDoubleOrNull(),
             )
         }
 

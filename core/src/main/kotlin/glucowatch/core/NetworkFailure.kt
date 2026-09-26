@@ -48,6 +48,8 @@ object NetworkFailure {
         return when {
             e is ShareException.AuthFailed || e is ShareException.TooManyAttempts -> FailureKind.AUTH
             e is ShareException.Server -> FailureKind.SERVER
+            e is CareLinkException.SignInNeeded || e is NightscoutException.Unauthorized -> FailureKind.AUTH
+            e is CareLinkException.Server || e is NightscoutException.Server -> FailureKind.SERVER
             e is UnknownHostException -> FailureKind.DNS
             e is SSLPeerUnverifiedException || e is SSLHandshakeException -> FailureKind.TLS
             e is SSLException -> if (isReset(message)) FailureKind.RESET else FailureKind.TLS

@@ -21,6 +21,7 @@ import glucowatch.core.formatAmount
 import glucowatch.core.lastCarbs
 import glucowatch.core.lastDelta
 import glucowatch.core.lastManualBolus
+import glucowatch.core.lastBasal
 import glucowatch.core.link.PhoneLink
 import io.github.antonkulaga.glucowatch.chart.ChartRenderer
 import io.github.antonkulaga.glucowatch.data.DataSource
@@ -154,6 +155,7 @@ class MainActivity : Activity() {
         therapy.text = listOfNotNull(
             loop?.takeIf { it.isStale(now) }?.let { "Loop quiet for ${formatAge(it.ageMinutes(now))}" },
             bolus?.let { "Bolus ${formatAmount(it.insulin)} U  ·  ${formatAge((now - it.timeMillis) / 60_000)} ago" },
+            state.treatments.lastBasal(now)?.let { "${it.basalDescription()}  ·  ${formatAge((now - it.timeMillis) / 60_000)} ago" },
             carbs?.let { "Carbs ${formatAmount(it.carbs, 0)} g  ·  ${formatAge((now - it.timeMillis) / 60_000)} ago" },
         ).joinToString("\n")
         therapy.visibility = if (therapy.text.isEmpty()) View.GONE else View.VISIBLE
@@ -164,8 +166,9 @@ class MainActivity : Activity() {
                 DataSource.DEMO -> "Demo data"
                 DataSource.SHARE -> "Dexcom Share · $region"
                 DataSource.NIGHTSCOUT -> "Nightscout · API ${state.settings.nightscoutApi.name.lowercase()}"
+                DataSource.CARELINK -> "CareLink"
                 DataSource.PHONE -> "Phone app" + state.relayedSource?.let { " · $it" }.orEmpty()
-            },
+            } + state.settings.extras.joinToString("") { " + " + if (it == DataSource.CARELINK) "CareLink" else it.label },
             state.lastError?.let { "⚠ $it" },
         ).joinToString("\n")
         source.setTextColor(if (state.lastError != null) ChartRenderer.COLOR_HIGH else Brand.MUTED)

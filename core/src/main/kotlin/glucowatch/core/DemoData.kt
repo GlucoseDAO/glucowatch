@@ -45,7 +45,13 @@ object DemoData {
             result += Treatment(meal + 50 * 60_000L, insulin = 0.3, automatic = true)
             meal += PERIOD_MS
         }
-        return result.filter { it.timeMillis in start..nowMillis }
+        // Temp basal settings, independent of meal/correction boluses. No network required.
+        var basal = start - Math.floorMod(start, 30 * 60_000L)
+        while (basal <= nowMillis) {
+            result += Treatment(basal, insulinKind = InsulinKind.BASAL, basalRate = 0.8, durationMinutes = 30.0)
+            basal += 30 * 60_000L
+        }
+        return result.filter { it.timeMillis in start..nowMillis }.sortedBy { it.timeMillis }
     }
 
     /**

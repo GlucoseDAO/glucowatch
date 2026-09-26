@@ -27,12 +27,13 @@ import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.ceil
 import kotlin.math.roundToLong
+import kotlin.math.sqrt
 
 /**
  * The glucose timeline, drawn the way the GlucoseDAO logo draws a glucose molecule: ball and
  * stick. Readings are atoms — a coloured ball with a dark core — strung on bonds and coloured by
- * where each sits. Around them: the target band, the model's forecast, insulin hanging from the
- * top, carbs and logged meals on the chain, and optionally a heart-rate track.
+ * where each sits. Around them: the target band, the model's forecast, dose-sized insulin atoms
+ * on the chain, carbs and logged meals, and optionally a heart-rate track.
  *
  * It follows "now" until the user drags it. Drag to go back through history, fling to travel
  * further, pinch to change how much time is shown, tap to read one point, double-tap to come back.
@@ -227,13 +228,14 @@ class GlucoseChartView(context: Context) : View(context) {
         plotRight = width - dp(20f)
         val left = plotLeft
         val right = plotRight
-        val top = dp(22f)
-        val bottom = height - dp(22f)
-        if (right <= left || bottom <= top) return
-
         val now = System.currentTimeMillis()
         val start = windowEnd(now) - windowMs
         val end = plotEnd(now)
+        val hasBasal = treatments.any { it.isBasal && it.timeMillis in start..end }
+        val top = dp(if (hasBasal) 40f else 22f)
+        val bottom = height - dp(22f)
+        if (right <= left || bottom <= top) return
+
         val samples = readings.filter { it.timeMillis in start..end }
         val points = if (live) forecast?.points.orEmpty() else emptyList()
         val values = samples.map { it.mgdl.toDouble() } + points.map { it.mgdl }
@@ -254,7 +256,8 @@ class GlucoseChartView(context: Context) : View(context) {
         if (samples.size >= 2) drawChain(canvas, samples, left, right, ::x, ::y)
         else drawEmpty(canvas, left, top, bottom)
         drawCarbs(canvas, start, end, ::x, ::y)
-        drawInsulin(canvas, left, right, top, start, end, ::x)
+        drawInsulin(canvas, left, right, top, start, end, ::x, ::y)
+        if (hasBasal) drawBasal(canvas, left, right, start, end, ::x)
         drawForecast(canvas, samples.lastOrNull(), points, ::x, ::y)
         if (live) drawLatest(canvas, samples.lastOrNull(), ::x, ::y)
         drawClock(canvas, start, end, ::x)
@@ -403,29 +406,60 @@ class GlucoseChartView(context: Context) : View(context) {
     }
 
     /**
-     * Insulin hangs from the top edge: a white atom and its units for a bolus the user gave, a
-     * small grey atom for one the loop gave on its own. Carbs stay on the curve below.
+     * A bolus sits on the nearest glucose reading and grows with the delivered units. If no
+     * reading exists within ten minutes, it stays in the top row rather than implying a value.
      */
-    private fun drawInsulin(canvas: Canvas, left: Float, right: Float, top: Float, start: Long, end: Long, x: (Long) -> Float) {
-        val row = top - dp(9f)
-        var lastLabelEnd = Float.NEGATIVE_INFINITY
-        treatments.filter { it.insulin > 0 && it.timeMillis in start..end }.forEach { dose ->
+    private fun drawInsulin(
+        canvas: Canvas, left: Float, right: Float, top: Float, start: Long, end: Long,
+        x: (Long) -> Float, y: (Double) -> Float,
+    ) {
+        val row = top - dp(5f)
+        val labelBounds = mutableListOf<RectF>()
+        treatments.filter { it.isBolus && it.timeMillis in start..end }.forEach { dose ->
             val at = x(dose.timeMillis)
             if (at < left || at > right) return@forEach
+            val reading = nearest(dose.timeMillis, TREATMENT_READING_WINDOW_MS)
+            val level = reading?.let { y(it.mgdl.toDouble()) } ?: row
+            val radius = dp((2.8f + 1.3f * sqrt(dose.insulin.coerceAtLeast(0.0)).toFloat()).coerceAtMost(8.5f))
             if (dose.automatic) {
-                atom(canvas, at, row, Brand.MUTED, dp(2.6f))
+                atom(canvas, at, level, Brand.MUTED, radius)
                 return@forEach
             }
-            atom(canvas, at, row, Brand.INSULIN, dp(4f))
+            atom(canvas, at, level, Brand.INSULIN, radius)
             paint.style = Paint.Style.FILL
             paint.textSize = dp(10f)
             paint.color = Brand.INSULIN
             val label = "${formatAmount(dose.insulin, 1)} U"
-            val labelX = at + dp(6f)
+            val labelWidth = paint.measureText(label)
+            val labelX = (at + radius + dp(3f)).takeIf { it + labelWidth <= right }
+                ?: (at - radius - dp(3f) - labelWidth)
+            val baseline = if (reading == null) row - dp(5f)
+                else (level - radius - dp(3f)).coerceAtLeast(top + paint.textSize)
+            val bounds = RectF(labelX, baseline - paint.textSize, labelX + labelWidth, baseline + dp(2f))
             // Boluses close together keep their atoms but not overlapping labels.
-            if (labelX > lastLabelEnd) {
-                canvas.drawText(label, labelX, row + dp(3.5f), paint)
-                lastLabelEnd = labelX + paint.measureText(label) + dp(4f)
+            if (labelX >= left && bounds.right <= right && labelBounds.none { RectF.intersects(it, bounds) }) {
+                canvas.drawText(label, labelX, baseline, paint)
+                labelBounds += bounds
+            }
+        }
+    }
+
+    /** Basal settings/doses occupy their own row, with square markers and explicit rate units. */
+    private fun drawBasal(canvas: Canvas, left: Float, right: Float, start: Long, end: Long, x: (Long) -> Float) {
+        var free = left
+        val row = dp(18f)
+        treatments.filter { it.isBasal && it.timeMillis in start..end }.forEach { basal ->
+            val at = x(basal.timeMillis)
+            if (at < left || at > right) return@forEach
+            paint.style = Paint.Style.FILL
+            paint.color = Brand.MUTED
+            canvas.drawRect(at - dp(2f), row - dp(2f), at + dp(2f), row + dp(2f), paint)
+            paint.textSize = dp(10f)
+            val label = "Basal ${basal.basalValue()}"
+            val labelX = (at + dp(5f)).coerceAtMost(right - paint.measureText(label))
+            if (labelX >= free && labelX + paint.measureText(label) <= right) {
+                canvas.drawText(label, labelX, row - dp(5f), paint)
+                free = labelX + paint.measureText(label) + dp(5f)
             }
         }
     }
@@ -524,8 +558,8 @@ class GlucoseChartView(context: Context) : View(context) {
         }
     }
 
-    /** The reading nearest [timeMillis] within 10 minutes, so a meal atom sits on the chain. */
-    private fun valueAt(timeMillis: Long): Double? = nearest(timeMillis, 10 * 60_000L)?.mgdl?.toDouble()
+    /** The reading nearest [timeMillis] within ten minutes, so a treatment sits on the chain. */
+    private fun valueAt(timeMillis: Long): Double? = nearest(timeMillis, TREATMENT_READING_WINDOW_MS)?.mgdl?.toDouble()
 
     private fun nearest(timeMillis: Long, within: Long): GlucoseReading? = readings
         .minByOrNull { abs(it.timeMillis - timeMillis) }
@@ -576,22 +610,30 @@ class GlucoseChartView(context: Context) : View(context) {
             if (showHeart) heart.minByOrNull { abs(it.timeMillis - time) }
                 ?.takeIf { abs(it.timeMillis - time) <= 5 * 60_000L }?.let { add("♥ ${it.bpm}") }
             treatments.filter { abs(it.timeMillis - time) <= 10 * 60_000L }.forEach { t ->
-                if (t.insulin > 0) add("${formatAmount(t.insulin, 1)} U")
+                if (t.isBasal) add(t.basalDescription())
+                else if (t.isBolus) add("${if (t.automatic) "Auto bolus" else "Bolus"} ${formatAmount(t.insulin, 1)} U")
                 if (t.carbs > 0) add("${formatAmount(t.carbs, 0)} g")
             }
         }
-        val text = parts.joinToString("  ·  ")
         paint.textSize = dp(12f)
         val pad = dp(7f)
-        val w = paint.measureText(text) + pad * 2
-        val h = dp(24f)
-        val boxX = (atX - w / 2).coerceIn(0f, width - w)
+        val available = (width - pad * 2).coerceAtLeast(1f)
+        val textPaint = android.text.TextPaint(paint)
+        val maxLines = ((bottom - top - pad * 2) / dp(17f)).toInt().coerceIn(1, 8)
+        val lines = (if (parts.size > maxLines) parts.take(maxLines - 1) + "…" else parts).map {
+            android.text.TextUtils.ellipsize(it, textPaint, available, android.text.TextUtils.TruncateAt.END).toString()
+        }
+        val w = ((lines.maxOfOrNull { paint.measureText(it) } ?: 0f) + pad * 2).coerceAtMost(width.toFloat())
+        val h = lines.size * dp(17f) + pad * 2
+        val boxX = (atX - w / 2).coerceIn(0f, (width - w).coerceAtLeast(0f))
         val box = RectF(boxX, top + dp(2f), boxX + w, top + dp(2f) + h)
         paint.style = Paint.Style.FILL
         paint.color = INSPECT_BOX
         canvas.drawRoundRect(box, dp(8f), dp(8f), paint)
         paint.color = reading?.let { Brand.glucoseColor(it.mgdl) } ?: Brand.TEXT
-        canvas.drawText(text, box.left + pad, box.top + h / 2 + dp(4f), paint)
+        lines.forEachIndexed { index, line ->
+            canvas.drawText(line, box.left + pad, box.top + pad + dp(12f) + index * dp(17f), paint)
+        }
     }
 
     private companion object {
@@ -608,6 +650,7 @@ class GlucoseChartView(context: Context) : View(context) {
         /** Longer than this between readings is a sensor gap, not a bond. */
         const val GAP_MS = 20 * 60_000L
         const val HEART_GAP_MS = 10 * 60_000L
+        const val TREATMENT_READING_WINDOW_MS = 10 * 60_000L
         const val MAX_FOOD = 8
 
         val MGDL_LEVELS = listOf(50.0, 100.0, 150.0, 220.0, 250.0, 300.0, 350.0)

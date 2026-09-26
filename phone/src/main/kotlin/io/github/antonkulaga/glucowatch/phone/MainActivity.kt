@@ -18,6 +18,7 @@ import android.view.Gravity
 import android.view.View
 import android.view.WindowInsets
 import android.widget.Button
+import android.widget.CheckBox
 import android.widget.EditText
 import android.widget.ImageView
 import android.widget.LinearLayout
@@ -37,11 +38,17 @@ import glucowatch.core.Region
 import glucowatch.core.Treatment
 import glucowatch.core.formatAge
 import glucowatch.core.lastManualBolus
+import glucowatch.core.lastBasal
+import glucowatch.core.InsulinKind
+import glucowatch.core.CareLinkToken
 import glucowatch.core.formatAmount
 import glucowatch.core.lastDelta
 import glucowatch.core.link.LinkSource
 import kotlinx.coroutines.MainScope
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import java.io.File
 import java.text.SimpleDateFormat
@@ -55,6 +62,7 @@ import java.util.Locale
  */
 class MainActivity : Activity() {
     private val scope = MainScope()
+    private var foregroundRefresh: Job? = null
     private val store by lazy { PhoneSettingsStore(this) }
     private val repository by lazy { PhoneRepository(this) }
     private val watches by lazy { PairedWatches(this) }
@@ -100,6 +108,10 @@ class MainActivity : Activity() {
     private lateinit var result: TextView
     private lateinit var shareFields: List<View>
     private lateinit var nightscoutFields: List<View>
+    private lateinit var carelinkFields: List<View>
+    private lateinit var carelinkStatus: TextView
+    private lateinit var carelinkCountry: EditText
+    private val therapySources = linkedMapOf<LinkSource, CheckBox>()
     private lateinit var watchList: LinearLayout
     private lateinit var pairButton: Button
     private lateinit var pairingText: TextView
@@ -117,14 +129,30 @@ class MainActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        if (BuildConfig.DEBUG && intent.getBooleanExtra("importCareLink", false)) {
+            // adb writes to this debug app's private files through stdin; tokens never enter an Intent or BuildConfig.
+            val file = filesDir.resolve("carelink-import.json")
+            val token = file.takeIf { it.isFile }?.readText()?.let(CareLinkToken::decode)
+            if (token?.subject != null) {
+                PhoneCareLinkStore(this).save(token)
+                store.save(store.load().copy(carelinkAccount = token.subject!!))
+                file.delete()
+            }
+        }
         // Screenshot automation chooses a source without putting credentials in adb arguments.
-        if (BuildConfig.DEBUG) intent.getStringExtra("source")?.let { name ->
-            runCatching { LinkSource.valueOf(name.uppercase()) }.getOrNull()?.let { chosen ->
-                val previous = store.load()
-                if (previous.source != chosen) {
-                    repository.clearCache()
-                    store.save(previous.copy(source = chosen))
+        if (BuildConfig.DEBUG) {
+            intent.getStringExtra("source")?.let { name ->
+                runCatching { LinkSource.valueOf(name.uppercase()) }.getOrNull()?.let { chosen ->
+                    val previous = store.load()
+                    if (previous.source != chosen) {
+                        repository.clearCache()
+                        store.save(previous.copy(source = chosen))
+                    }
                 }
+            }
+            intent.getStringExtra("also")?.let { names ->
+                store.save(store.load().copy(alsoFrom = names.split(',')
+                    .mapNotNull { runCatching { LinkSource.valueOf(it.uppercase()) }.getOrNull() }.toSet()))
             }
         }
         val s = store.load()
@@ -182,7 +210,6 @@ class MainActivity : Activity() {
         updatePairing()
 
         render(repository.state())
-        scope.launch { render(repository.refresh(maxAgeMs = 60_000)) }
         refreshHeartRate()
         // Ask for Nearby devices only once a watch is paired; pairing asks too.
         if (watches.all().isNotEmpty()) withBluetooth { LinkService.update(this) }
@@ -221,7 +248,7 @@ class MainActivity : Activity() {
                 else -> AlertDialog.Builder(this@MainActivity)
                     .setTitle("About ${getString(R.string.app_name)}")
                     .setMessage(
-                        "GlucoPhone reads Dexcom Share, your Nightscout, or demo data and relays it to a " +
+                        "GlucoPhone combines Dexcom Share, Nightscout and CareLink data, or shows demo data, and relays it to a " +
                             "paired GlucoWatch over Bluetooth. Your login, your meal photos and any model you " +
                             "import stay in this app's private storage.\n\n" +
                             "This is not a medical device. Keep using your CGM's official alerts."
@@ -460,6 +487,12 @@ class MainActivity : Activity() {
 
     /** Insulin the user gave, for a source such as Dexcom Share that carries glucose only. */
     private fun askInsulin() {
+        val kind = RadioGroup(this).apply {
+            orientation = RadioGroup.HORIZONTAL
+            addView(RadioButton(this@MainActivity).apply { id = View.generateViewId(); text = "Bolus" })
+            addView(RadioButton(this@MainActivity).apply { id = View.generateViewId(); text = "Basal" })
+            check(getChildAt(0).id)
+        }
         val units = EditText(this).apply {
             hint = "Insulin in units"
             inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL
@@ -470,15 +503,16 @@ class MainActivity : Activity() {
             .setView(LinearLayout(this).apply {
                 orientation = LinearLayout.VERTICAL
                 setPadding(dp(22), dp(8), dp(22), 0)
-                addView(units); addView(note)
+                addView(kind); addView(units); addView(note)
             })
             .setPositiveButton("Save") { _, _ ->
                 val dose = units.text.toString().trim().replace(',', '.').toDoubleOrNull()
-                if (dose == null || dose <= 0 || dose > 100) {
+                if (dose == null || !dose.isFinite() || dose <= 0 || dose > 100) {
                     mealSummary.text = "Enter the insulin as a number of units, up to 100."
                     return@setPositiveButton
                 }
-                foodLog.add(carbs = 0.0, note = note.text.toString(), photo = null, insulin = dose)
+                foodLog.add(carbs = 0.0, note = note.text.toString(), photo = null, insulin = dose,
+                    insulinKind = if (kind.checkedRadioButtonId == kind.getChildAt(1).id) InsulinKind.BASAL else InsulinKind.BOLUS)
                 render(repository.state())
             }
             .setNegativeButton("Cancel", null)
@@ -493,7 +527,7 @@ class MainActivity : Activity() {
             listOfNotNull(
                 clock.format(Date(entry.timeMillis)),
                 entry.carbs.takeIf { it > 0 }?.let { "${formatAmount(it, 0)} g" },
-                entry.insulin.takeIf { it > 0 }?.let { "${formatAmount(it, 1)} U" },
+                entry.insulin.takeIf { it > 0 }?.let { "${if (entry.insulinKind == InsulinKind.BASAL) "Basal" else "Bolus"} ${formatAmount(it, 1)} U" },
                 entry.note.takeIf { it.isNotEmpty() },
             ).joinToString("  ·  ")
         }
@@ -525,6 +559,15 @@ class MainActivity : Activity() {
         nightscoutUrl = field("https://your-site.example", s.nightscoutUrl, InputType.TYPE_TEXT_VARIATION_URI)
         nightscoutToken = field("optional", s.nightscoutToken, InputType.TYPE_TEXT_VARIATION_PASSWORD)
         nightscoutApi = radios(NightscoutApi.entries.map { it.name to it.label }, s.nightscoutApi.name)
+        carelinkStatus = hint("")
+        carelinkCountry = field("Two-letter country, e.g. DE", PhoneCareLinkStore(this).load()?.country ?: "DE", InputType.TYPE_TEXT_FLAG_CAP_CHARACTERS)
+        PhoneSettings.THERAPY_SOURCES.forEach { of ->
+            therapySources[of] = CheckBox(this).apply {
+                text = s.label(of); setTextColor(Brand.TEXT); isChecked = of in s.alsoFrom
+                buttonTintList = android.content.res.ColorStateList.valueOf(Brand.TEXT)
+                setOnCheckedChangeListener { _, _ -> if (::carelinkFields.isInitialized) updateVisibility() }
+            }
+        }
         unit = radios(GlucoseUnit.entries.map { it.name to it.label }, s.unit.name)
         result = TextView(this).apply { textSize = 14f; setTextColor(Brand.TEXT); setPadding(0, dp(10), 0, 0) }
 
@@ -535,12 +578,28 @@ class MainActivity : Activity() {
             label("Token or API secret"), nightscoutToken, hint("A token with the readable role is safer. v3 needs a token."),
             label("API"), nightscoutApi,
         )
+        carelinkFields = listOf(
+            label("CareLink account"), carelinkStatus, label("Country"), carelinkCountry,
+            Button(this).apply {
+                text = "Sign in to CareLink"; Brand.style(this, true)
+                setOnClickListener {
+                    saveConnectionSettings()
+                    startActivity(Intent(this@MainActivity, CareLinkSignInActivity::class.java)
+                        .putExtra("country", carelinkCountry.text.toString().trim().uppercase()))
+                }
+            },
+            hint("Sign in with a CareLink care partner account linked to your MiniMed pump. To share this combined chart, choose Phone app on the watch."),
+        )
         connect.addView(card().apply {
             addView(cardTitle("Glucose source"))
             addView(hint("Choose a source. Your login stays in private app storage."))
             addView(source)
+            addView(label("Additional insulin sources"))
+            addView(hint("For example: Dexcom for glucose, CareLink for pump insulin. Basal, bolus and carbs appear on the same timeline."))
+            therapySources.values.forEach(::addView)
             shareFields.forEach(::addView)
             nightscoutFields.forEach(::addView)
+            carelinkFields.forEach(::addView)
             addView(label("Units")); addView(unit)
             addView(Button(this@MainActivity).apply { text = "Save & test"; Brand.style(this, true); setOnClickListener { saveAndTest() } })
             addView(result)
@@ -688,6 +747,22 @@ class MainActivity : Activity() {
 
     // ---------------------------------------------------------------- lifecycle and results
 
+    override fun onStart() {
+        super.onStart()
+        foregroundRefresh = scope.launch {
+            while (isActive) {
+                render(repository.refresh(maxAgeMs = 60_000))
+                delay(60_000)
+            }
+        }
+    }
+
+    override fun onStop() {
+        foregroundRefresh?.cancel()
+        foregroundRefresh = null
+        super.onStop()
+    }
+
     override fun onDestroy() {
         PairingWindow.listener = null
         scope.cancel()
@@ -803,7 +878,7 @@ class MainActivity : Activity() {
         chart.food = logged.filter { it.isMeal }
         // Insulin logged on the phone joins what Nightscout reported, so a Share user has some too.
         chart.treatments = (state.treatments + logged.filter { it.insulin > 0 }
-            .map { Treatment(it.timeMillis, insulin = it.insulin) }).sortedBy { it.timeMillis }
+            .map { Treatment(it.timeMillis, insulin = it.insulin, insulinKind = it.insulinKind) }).sortedBy { it.timeMillis }
         updateInsulinLine(state, now)
         chartUnit.text = u.label
         valueUnit.text = u.label
@@ -816,27 +891,33 @@ class MainActivity : Activity() {
             trendArrow.text = ""
             age.text = ""
             statusPill.visibility = View.GONE
-            sourceLine.text = if (state.settings.source == LinkSource.DEMO) "Demo data" else "No readings yet"
+            sourceLine.text = if (state.settings.source == LinkSource.DEMO) "Demo data" else "${state.settings.sourceLabel} · No glucose readings yet"
             rangeValue.text = "—"
             changeValue.text = "—"
             forecastValue.text = "—"
         } else {
             val minutes = ((now - latest.timeMillis) / 60_000).coerceAtLeast(0)
+            // Match the watch's ten-minute freshness limit.
+            val stale = now - latest.timeMillis > 10 * 60_000L
+            val readingColor = if (stale) Brand.MUTED else Brand.glucoseColor(latest.mgdl)
             value.text = u.format(latest.mgdl.toDouble())
-            value.setTextColor(Brand.glucoseColor(latest.mgdl))
-            trendArrow.text = latest.trend.arrow
-            trendArrow.setTextColor(Brand.glucoseColor(latest.mgdl))
-            age.text = if (minutes == 0L) "just now" else "$minutes min ago"
+            value.setTextColor(readingColor)
+            trendArrow.text = if (stale) "" else latest.trend.arrow
+            trendArrow.setTextColor(readingColor)
+            age.text = if (minutes == 0L) "just now" else "${formatAge(minutes)} ago"
             statusPill.visibility = View.VISIBLE
             val status = when {
+                stale -> "STALE"
                 latest.mgdl < Brand.TARGET_LOW -> "LOW"
                 latest.mgdl > Brand.TARGET_HIGH -> "HIGH"
                 else -> "IN RANGE"
             }
             statusPill.text = status
-            statusPill.setTextColor(Brand.glucoseColor(latest.mgdl))
-            statusPill.background = outline(Brand.glucoseColor(latest.mgdl))
-            sourceLine.text = "${state.settings.sourceLabel}  ·  ${latest.trend.description.ifEmpty { "trend unavailable" }}" +
+            statusPill.setTextColor(readingColor)
+            statusPill.background = outline(readingColor)
+            sourceLine.text = if (stale) "${state.settings.sourceLabel} · Last known glucose\n" +
+                "${state.settings.label(state.settings.source)} has no recent glucose readings."
+            else "${state.settings.sourceLabel}  ·  ${latest.trend.description.ifEmpty { "trend unavailable" }}" +
                 (state.readings.lastDelta()?.let { "  ·  ${u.formatDelta(it)} in 5 min" } ?: "")
 
             val day = state.readings.filter { it.timeMillis >= now - 24 * 3_600_000L }
@@ -845,7 +926,7 @@ class MainActivity : Activity() {
             rangeValue.setTextColor(Brand.TEXT)
             val before = state.readings.asReversed().firstOrNull { latest.timeMillis - it.timeMillis >= 25 * 60_000L }
             val change = before?.let { (latest.mgdl - it.mgdl).toDouble() }
-            changeValue.text = change?.let(u::formatDelta) ?: "—"
+            changeValue.text = if (stale) "—" else change?.let(u::formatDelta) ?: "—"
             changeValue.setTextColor(Brand.TEXT)
             val forecast = chart.forecast?.points?.lastOrNull()
             forecastValue.text = forecast?.let { u.format(it.mgdl) } ?: "—"
@@ -863,12 +944,14 @@ class MainActivity : Activity() {
     private fun updateMealSummary() {
         val entries = foodLog.since(chartStart())
         val carbs = entries.sumOf { it.carbs }
-        val insulin = entries.sumOf { it.insulin }
+        val bolus = entries.filter { it.insulinKind == InsulinKind.BOLUS }.sumOf { it.insulin }
+        val basal = entries.filter { it.insulinKind == InsulinKind.BASAL }.sumOf { it.insulin }
         val span = formatAmount(chart.hours, 0)
         mealSummary.text = if (entries.isEmpty()) "Nothing logged on this phone in the last $span h."
             else listOfNotNull(
                 carbs.takeIf { it > 0 }?.let { "${formatAmount(it, 0)} g" },
-                insulin.takeIf { it > 0 }?.let { "${formatAmount(it, 1)} U" },
+                bolus.takeIf { it > 0 }?.let { "bolus ${formatAmount(it, 1)} U" },
+                basal.takeIf { it > 0 }?.let { "basal ${formatAmount(it, 1)} U" },
             ).joinToString(" · ") + " logged in the last $span h · tap to edit"
     }
 
@@ -883,6 +966,7 @@ class MainActivity : Activity() {
             loop?.iob?.let { "Insulin on board ${formatAmount(it, 1)} U" },
             loop?.cob?.let { "carbs on board ${formatAmount(it, 0)} g" },
             bolus?.let { "last bolus ${formatAmount(it.insulin, 1)} U, ${formatAge((now - it.timeMillis) / 60_000)} ago" },
+            chart.treatments.lastBasal(now)?.let { "${it.basalDescription()}, ${formatAge((now - it.timeMillis) / 60_000)} ago" },
         )
         insulinLine.text = parts.joinToString("  ·  ").replaceFirstChar { it.uppercase() }
         insulinLine.visibility = if (parts.isEmpty()) View.GONE else View.VISIBLE
@@ -892,11 +976,15 @@ class MainActivity : Activity() {
 
     private fun updateVisibility() {
         val chosen = LinkSource.valueOf(selected(source))
+        fun used(of: LinkSource) = chosen == of || (chosen != LinkSource.DEMO && therapySources[of]?.isChecked == true)
+        therapySources.forEach { (of, checkbox) -> checkbox.isEnabled = chosen != LinkSource.DEMO && chosen != of }
         shareFields.forEach { it.visibility = if (chosen == LinkSource.SHARE) View.VISIBLE else View.GONE }
-        nightscoutFields.forEach { it.visibility = if (chosen == LinkSource.NIGHTSCOUT) View.VISIBLE else View.GONE }
+        nightscoutFields.forEach { it.visibility = if (used(LinkSource.NIGHTSCOUT)) View.VISIBLE else View.GONE }
+        carelinkFields.forEach { it.visibility = if (used(LinkSource.CARELINK)) View.VISIBLE else View.GONE }
+        carelinkStatus.text = PhoneCareLinkStore(this).load()?.let { "Signed in (${it.country})" } ?: "Not signed in"
     }
 
-    private fun saveAndTest() {
+    private fun saveConnectionSettings(): PhoneSettings {
         val old = store.load()
         val new = old.copy(
             source = LinkSource.valueOf(selected(source)),
@@ -907,12 +995,18 @@ class MainActivity : Activity() {
             nightscoutToken = nightscoutToken.text.toString().trim(),
             nightscoutApi = NightscoutApi.valueOf(selected(nightscoutApi)),
             unit = GlucoseUnit.valueOf(selected(unit)),
+            alsoFrom = therapySources.filterValues { it.isChecked }.keys.toSet(),
         )
         if (new.accountKey != old.accountKey) repository.clearCache()
         store.save(new)
-        result.text = "Testing…"
         // Demo data brings its own heart rate; a real source reads Health Connect.
         if (new.source != old.source) refreshHeartRate()
+        return new
+    }
+
+    private fun saveAndTest() {
+        val new = saveConnectionSettings()
+        result.text = "Testing…"
         scope.launch {
             val state = repository.refresh()
             render(state)

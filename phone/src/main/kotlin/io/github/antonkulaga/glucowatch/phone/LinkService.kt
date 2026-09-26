@@ -166,6 +166,8 @@ class LinkService : Service() {
         override fun snapshot(horizonMinutes: Int) = repository.snapshot(horizonMinutes)
 
         override fun account() = settings.load().toLink()
+
+        override fun handOverCareLink() = repository.handOverCareLink()
     }
 
     companion object {

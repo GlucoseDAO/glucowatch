@@ -5,6 +5,7 @@ import android.content.SharedPreferences
 import android.security.NetworkSecurityPolicy
 import android.util.Log
 import glucowatch.core.CacheFormat
+import glucowatch.core.CareLinkClient
 import glucowatch.core.ConnectionCheck
 import glucowatch.core.DemoData
 import glucowatch.core.DirectAddress
@@ -25,6 +26,7 @@ import glucowatch.core.Treatment
 import glucowatch.core.ShareException
 import glucowatch.core.ShareFallbackPolicy
 import glucowatch.core.UrlConnectionTransport
+import glucowatch.core.mergeTreatments
 import glucowatch.core.Probe
 import glucowatch.core.link.PhoneLink
 import glucowatch.core.link.WatchLinkClient
@@ -38,7 +40,8 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
 /**
- * Snapshot of what the UI and complications show. [treatments] and [loop] come from Nightscout (or demo data).
+ * Snapshot of what the UI and complications show. [treatments] and [loop] come from Nightscout or
+ * CareLink (or demo data), from the main source and from [Settings.extras] together.
  * [relayedSource] is the phone app's own source ("Dexcom Share", "Nightscout") when the phone relays.
  */
 data class GlucoseState(
@@ -68,25 +71,38 @@ data class GlucoseState(
     }
 }
 
-/** Fetches readings (Share, Nightscout, the phone app or demo), keeps a 24 h cache on disk and computes the optional forecast. */
+/**
+ * Fetches readings (Share, Nightscout, CareLink, the phone app or demo), keeps a 24 h cache on disk
+ * and computes the optional forecast. Sources in [Settings.extras] add their insulin and carbs.
+ */
 class GlucoseRepository(context: Context) {
     private val appContext = context.applicationContext
     private val settingsStore = SettingsStore(context)
     private val cache = appContext.getSharedPreferences("cache", Context.MODE_PRIVATE)
+    private val carelink = CareLinkTokenStore(context)
 
     fun state(): GlucoseState {
         val settings = settingsStore.load()
         val now = System.currentTimeMillis()
         val demo = settings.source == DataSource.DEMO
+        val extras = if (demo) emptyList() else settings.extras
         val readings = if (demo) DemoData.readings(now) else CacheFormat.decodeReadings(cached(settings, SourceSync.READINGS))
-        val treatments = if (demo) DemoData.treatments(now) else CacheFormat.decodeTreatments(cached(settings, SourceSync.TREATMENTS))
-        val loop = if (demo) DemoData.loopStatus(now) else CacheFormat.decodeLoop(cached(settings, SourceSync.LOOP))
+        val treatments = if (demo) DemoData.treatments(now) else mergeTreatments(
+            (listOf(cached(settings, SourceSync.TREATMENTS)) + extras.map { cachedExtra(settings, it, SourceSync.TREATMENTS) })
+                .map(CacheFormat::decodeTreatments),
+        )
+        // Loop reports of all sources, newest values winning (a pump's IOB next to a sensor's readings).
+        val loop = if (demo) DemoData.loopStatus(now) else
+            (listOf(cached(settings, SourceSync.LOOP)) + extras.map { cachedExtra(settings, it, SourceSync.LOOP) })
+                .mapNotNull(CacheFormat::decodeLoop).sortedBy { it.timeMillis }
+                .fold(null as LoopStatus?) { older, newer -> newer.mergedOnto(older) }
         val phoneForecast = CacheFormat.decodePrediction(cached(settings, FORECAST))
         return GlucoseState(
             settings = settings,
             readings = readings,
             prediction = predict(settings, readings, loop, phoneForecast),
-            lastError = cache.getString("error", null),
+            lastError = listOfNotNull(cache.getString("error", null), cache.getString(EXTRA_ERROR, null).takeIf { extras.isNotEmpty() })
+                .joinToString("\n").ifEmpty { null },
             lastFetchMillis = cache.getLong("fetchedAt", 0),
             treatments = treatments,
             loop = loop,
@@ -100,12 +116,7 @@ class GlucoseRepository(context: Context) {
         withContext(Dispatchers.IO) {
             val settings = settingsStore.load()
             val pairing = PhonePairingStore(appContext).load()?.takeIf { it.phoneId == settings.phoneId }
-            val missing = when (settings.source) {
-                DataSource.DEMO -> null
-                DataSource.SHARE -> "Enter Dexcom username and password in settings".takeUnless { settings.hasCredentials }
-                DataSource.NIGHTSCOUT -> nightscoutProblem(settings.nightscoutUrl)
-                DataSource.PHONE -> "Pair with the phone in settings".takeIf { pairing == null }
-            }
+            val missing = problemOf(settings, settings.source, pairing)
             // Readings of another account or server never serve as history for this one.
             if (settings.source != DataSource.DEMO && cache.getString(ACCOUNT, null) != settings.accountKey) {
                 cache.edit().clear().putString(ACCOUNT, settings.accountKey).apply()
@@ -117,9 +128,41 @@ class GlucoseRepository(context: Context) {
                     .onSuccess { saveError(null) }
                     .onFailure { recordFailure(settings, it) }
             }
+            if (settings.source != DataSource.DEMO) refreshExtras(settings)
             cache.edit().putLong("fetchedAt", System.currentTimeMillis()).apply()
             state()
         }
+    }
+
+    /** Why [of] cannot be fetched yet, as the message for the settings screen, or null when it can. */
+    private fun problemOf(settings: Settings, of: DataSource, pairing: PhonePairing?): String? = when (of) {
+        DataSource.DEMO -> null
+        DataSource.SHARE -> "Enter Dexcom username and password in settings".takeUnless { settings.hasCredentials }
+        DataSource.NIGHTSCOUT -> nightscoutProblem(settings.nightscoutUrl)
+        DataSource.CARELINK -> "Sign in to CareLink in the phone app, then get the sign-in in settings"
+            .takeIf { carelink.load()?.subject.let { it == null || it != settings.carelinkAccount } }
+        DataSource.PHONE -> "Pair with the phone in settings".takeIf { pairing == null }
+    }
+
+    /**
+     * Insulin, carbs and active insulin from [Settings.extras], each into its own part of the
+     * cache. A failing extra never hides the main source's readings; its error is shown beside them.
+     */
+    private fun refreshExtras(settings: Settings) {
+        val prefixes = settings.extras.map { extraPrefix(settings, it) }.toSet()
+        cache.all.keys.filter { it.startsWith(EXTRA) && prefixes.none(it::startsWith) }.takeIf { it.isNotEmpty() }?.let { stale ->
+            cache.edit().apply { stale.forEach(::remove) }.apply()
+        }
+        val errors = settings.extras.mapNotNull { extra ->
+            problemOf(settings, extra, null)?.let { return@mapNotNull "${extra.label}: $it" }
+            runCatching { SourceSync(extraCache(settings, extra)).fetch(settings.account(extra, carelink)!!, settings.chartHours, glucose = false) }
+                .exceptionOrNull()
+                ?.let {
+                    Log.w(TAG, "$extra (extra) refresh failed", it)
+                    "${extra.label}: ${NetworkFailure.describe(it)}"
+                }
+        }
+        cache.edit().putString(EXTRA_ERROR, errors.joinToString("\n").ifEmpty { null }).apply()
     }
 
     fun clearCache() {
@@ -140,9 +183,9 @@ class GlucoseRepository(context: Context) {
         cache.edit().apply(write).putString(ACCOUNT, settings.accountKey).apply()
     }
 
-    /** Share and Nightscout through [SourceSync]; the phone app over Bluetooth. */
+    /** Share, Nightscout and CareLink through [SourceSync]; the phone app over Bluetooth. */
     private fun fetch(settings: Settings, pairing: PhonePairing?) {
-        val account = settings.account
+        val account = settings.account(settings.source, carelink)
         when {
             settings.source == DataSource.SHARE -> fetchShareWithWatchFallback(settings)
             account != null -> SourceSync(syncCache(settings)).fetch(account, settings.chartHours)
@@ -160,7 +203,7 @@ class GlucoseRepository(context: Context) {
      * a third party.
      */
     private fun fetchShareWithWatchFallback(settings: Settings) {
-        val account = settings.account!!
+        val account = settings.account(DataSource.SHARE, carelink)!!
         val primary = runCatching { SourceSync(syncCache(settings)).fetch(account, settings.chartHours) }
         val error = primary.exceptionOrNull()
         // Another route cannot fix bad credentials or an account lockout; avoid extra logins.
@@ -235,6 +278,29 @@ class GlucoseRepository(context: Context) {
     }
 
     /**
+     * An extra source's own part of the cache: keys under [extraPrefix], which names the extra's
+     * account, so its data is read only while the settings still use that account, and a late
+     * write for an extra the user removed or changed is dropped.
+     */
+    private fun cachedExtra(settings: Settings, extra: DataSource, key: String): String =
+        if (cache.getString(ACCOUNT, null) == settings.accountKey) cache.getString(extraPrefix(settings, extra) + key, "") ?: "" else ""
+
+    private fun extraCache(settings: Settings, extra: DataSource) = object : SyncCache {
+        private val prefix = extraPrefix(settings, extra)
+
+        override fun get(key: String): String? =
+            if (cache.getString(ACCOUNT, null) == settings.accountKey) cache.getString(prefix + key, null) else null
+
+        override fun put(values: Map<String, String?>) {
+            val now = settingsStore.load()
+            if (extra !in now.extras || extraPrefix(now, extra) != prefix) return
+            store(settings) { values.forEach { (key, value) -> putString(prefix + key, value) } }
+        }
+    }
+
+    private fun extraPrefix(settings: Settings, extra: DataSource) = "$EXTRA${settings.keyOf(extra)}|"
+
+    /**
      * The phone sends its whole day on every sync. Readings merge onto the cache while the phone
      * stays on one account ([glucowatch.core.link.LinkSnapshot.upstream]) and replace it when the
      * phone switched. Treatments, loop and forecast are the phone's current ones.
@@ -272,7 +338,7 @@ class GlucoseRepository(context: Context) {
 
     private fun predict(settings: Settings, readings: List<GlucoseReading>, loop: LoopStatus?, phoneForecast: Prediction?): Prediction? {
         if (!settings.predictionEnabled || readings.isEmpty()) return null
-        if (settings.predictorId == LoopStatus.MODEL_ID && settings.source in LOOP_SOURCES) {
+        if (settings.predictorId == LoopStatus.MODEL_ID && hasLoopForecast(settings)) {
             // Only the loop's own forecast; no silent fallback to another model.
             return loop?.prediction(readings.last().timeMillis, settings.horizonMinutes)
         }
@@ -313,6 +379,7 @@ class GlucoseRepository(context: Context) {
         val target = when (settings.source) {
             DataSource.SHARE -> settings.region.baseUrl
             DataSource.NIGHTSCOUT -> runCatching { NightscoutAddress.parse(settings.nightscoutUrl).baseUrl }.getOrNull()
+            DataSource.CARELINK -> if (carelink.load()?.country == "US") "https://carelink.minimed.com/" else CareLinkClient.DISCOVERY_URL
             else -> null
         } ?: return facts to emptyList()
         return facts to ConnectionCheck().run(target, DohResolver(settings.dohEndpoint))
@@ -326,10 +393,15 @@ class GlucoseRepository(context: Context) {
         private const val RELAYED_SOURCE = "relayedSource"
         private const val FALLBACK_ATTEMPT = "fallbackAttempt"
         private const val FAILURES = "failures"
+        private const val EXTRA = "also:"
+        private const val EXTRA_ERROR = "extraError"
         private const val MAX_DOH_ADDRESSES = 3
 
         /** Sources that can carry a loop's forecast: Nightscout, and the phone app when it reads Nightscout. */
         val LOOP_SOURCES = setOf(DataSource.NIGHTSCOUT, DataSource.PHONE)
+
+        /** A loop forecast can arrive from the main source or from Nightscout as an extra. */
+        fun hasLoopForecast(settings: Settings) = settings.source in LOOP_SOURCES || DataSource.NIGHTSCOUT in settings.extras
         private val lock = Mutex()
     }
 }

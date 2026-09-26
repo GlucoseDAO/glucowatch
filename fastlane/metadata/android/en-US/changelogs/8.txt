@@ -1,0 +1,1 @@
+Combine Dexcom or Nightscout glucose with CareLink/MiniMed insulin. Basal and bolus are shown separately, and dose-sized bolus markers follow the glucose curve. The phone dashboard refreshes while visible and clearly marks stale readings.

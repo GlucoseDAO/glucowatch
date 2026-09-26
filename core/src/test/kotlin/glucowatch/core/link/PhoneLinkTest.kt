@@ -144,6 +144,18 @@ class PhoneLinkTest {
     }
 
     @Test
+    fun `old protocol gets an update message instead of losing basal data silently`() {
+        val error = assertFailsWith<LinkException> {
+            connect(FakePhone()) { i, o ->
+                val link = Frames(i, o)
+                link.send(message { writeInt(1); writeByte(PhoneLink.SYNC); write(watchId) })
+                link.receiveOk()
+            }
+        }
+        assertTrue("Update both" in error.message!!)
+    }
+
+    @Test
     fun `a watch that reveals another key than it committed to is refused`() {
         val phone = FakePhone()
         val committed = PairingKeyPair.generate()

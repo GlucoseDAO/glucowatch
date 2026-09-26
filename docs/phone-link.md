@@ -7,7 +7,8 @@ The watch still works on its own. The phone app is optional and does two things:
 
 - **Relay.** On the watch, the source **Phone app** reads the phone's readings, treatments, loop
   status and, if asked, a forecast from the phone's model. Then the watch needs no login and no
-  internet. The phone fetches from Dexcom Share, Nightscout or demo data.
+  internet. The phone fetches from Dexcom Share, Nightscout, CareLink or demo data. Additional
+  insulin sources add pump/loop data to the selected CGM's trajectory (see [CareLink](carelink.md)).
 - **Copy login.** With the source **Dexcom Share** or **Nightscout**, the watch can copy the
   phone's login instead of the user typing it on the watch. After that the watch fetches by itself.
 
@@ -26,6 +27,11 @@ The phone app runs a foreground service (type `connectedDevice`) that listens on
 service record, `PhoneLink.SERVICE_UUID`. The watch opens one connection per request and the
 phone answers it. Each message is a 4-byte length followed by the body.
 
+Protocol version 2 adds the insulin kind, basal rate/percentage and duration to each relayed
+treatment. Update the watch and phone together; a version mismatch shows an update message.
+The service UUID and pairing keys are unchanged, so existing pairings survive the update.
+Old four-field treatment caches still read as boluses/carbs.
+
 | Request | When | Answer |
 |---|---|---|
 | `PAIR` | The user taps **Pair with phone** on the watch while pairing is open on the phone | The phone's id, public key and name |
@@ -34,13 +40,16 @@ phone answers it. Each message is a 4-byte length followed by the body.
 
 The phone sends the whole day on every sync, which is a few kB. The watch merges the readings
 into its cache while `LinkSnapshot.upstream` stays the same. `upstream` is a hash of the phone's
-account key. When the phone switches account, `upstream` changes and the watch replaces its cache
+account keys and selected additional insulin sources. When the phone switches account or pump
+selection, `upstream` changes and the watch replaces its cache
 instead of merging. The watch's own cache rule still applies: `Settings.accountKey` is
 `phone:<phone id>`, so a new pairing with another phone starts empty.
 
-A sync makes the phone fetch, unless its last fetch is under 30 s old. The phone schedules nothing
-of its own. The watch waits up to 45 s for an answer, which is enough for a Dexcom or Nightscout
-round trip.
+A sync makes the phone fetch, unless its last fetch is under 30 s old. While the phone dashboard
+is visible, it also checks for updates every minute and when reopened. This polling stops when
+the dashboard is hidden. Glucose older than ten minutes is grey and labelled **STALE**; a
+successful request does not make an old reading current. The watch waits up to 45 s for an
+answer, which is enough for a Dexcom or Nightscout round trip.
 
 ## Pairing and encryption
 
@@ -153,11 +162,14 @@ is relayed or uploaded. Demo data has its own synthetic heart rate
 ## Insulin
 
 Insulin comes from two places. From Nightscout: the treatments the loop or Careportal recorded,
-and the loop's insulin and carbs on board. From the phone: **Log insulin** records a dose here,
+and the loop's insulin and carbs on board. From the phone: **Log insulin** records a basal or bolus dose here,
 which is the only insulin a Dexcom Share user has, since Share carries glucose only. On the chart
 a bolus hangs from the top as a white atom with its units; a dose the loop gave on its own is a
 smaller grey atom. The line under the chart shows insulin and carbs on board, while the loop's
-report is under 30 minutes old, and the last bolus. Logged doses stay on the phone.
+report is under 30 minutes old, and the last bolus. Basal events have a separate row of square
+markers with U for doses and U/h (or percentage adjustment) for temp basal settings. The latest
+basal event appears with its age below the chart. Logged doses stay on the phone; basal doses
+are excluded from "last bolus". Previously logged doses keep their original bolus classification.
 
 ## Meals
 
@@ -171,8 +183,7 @@ is `required="false"`, so a phone with no camera still logs carbs. The photo is 
 640 px and re-encoded before it is kept.
 
 Meals and logged insulin are health data and stay on the phone: they are not relayed to the
-watch, not uploaded, and not written to Nightscout — the link protocol and `PhoneLink.VERSION`
-are unchanged. Entries older
+watch, not uploaded, and not written to Nightscout. Entries older
 than 30 days are dropped with their photos. Screenshots of a real meal log are the user's health
 data; do not publish them.
 

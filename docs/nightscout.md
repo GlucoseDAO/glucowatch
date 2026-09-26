@@ -11,7 +11,7 @@ network service. The `NonFreeNet` anti-feature remains because of Dexcom Share.
 | Data | v1 request | v3 request | Used for |
 |---|---|---|---|
 | Glucose | `api/v1/entries/sgv.json?find[date][$gte]=<ms>&count=` | `api/v3/entries?type$eq=sgv&date$gte=<ms>&sort$desc=date&limit=` | value, trend, chart |
-| Treatments | `api/v1/treatments.json?find[created_at][$gte]=<ISO>&count=` | `api/v3/treatments?created_at$gte=<ISO>&sort$desc=created_at` | bolus and carb markers, last bolus and carbs |
+| Treatments | `api/v1/treatments.json?find[created_at][$gte]=<ISO>&count=` | `api/v3/treatments?created_at$gte=<ISO>&sort$desc=created_at` | basal, bolus and carb markers and latest events |
 | Device status | `api/v1/devicestatus.json?find[created_at][$gte]=<ISO>&count=10` | `api/v3/devicestatus?created_at$gte=<ISO>&sort$desc=created_at&limit=10` | IOB, COB, loop forecast |
 
 Everything is read-only. v3 requests pass `fields=` so the server sends only what is used.
@@ -52,9 +52,24 @@ Nightscout on the development machine.
 | OpenAPS rigs | Careportal events | `openaps.iob` may be an array |
 | xDrip+, Careportal | manual entries | only uploader battery |
 
-The client keeps treatments with insulin or carbs, drops temp basals, notes, priming boluses and
+The client keeps boluses, carbs and temp basal settings, drops notes, priming boluses and
 entries with `isValid: false`, and marks SMBs and automatic boluses. It merges the device status
 documents of one cycle: newer values win, and a document that lacks a value keeps the older one.
+
+Basal and bolus are separate treatment kinds throughout the cache, Bluetooth relay and both
+apps. Temp basals retain `absolute` (or `rate`) in U/h and `duration` in minutes. A zero rate
+is retained; a zero duration is a cancellation. Percentage temps retain Nightscout's `percent`
+adjustment (`0` unchanged, `-100` suspended), not an inferred U/h value. The semantics follow
+[Nightscout's basal plugin](https://github.com/nightscout/cgm-remote-monitor/blob/master/lib/plugins/basalprofile.js).
+These are reported settings, not measured delivered doses. No dose is calculated by multiplying
+a rate by its requested duration, because it may have been cancelled or replaced early.
+
+Both apps show basal square markers separately from bolus markers and show the latest basal
+report with its age. This is historical information, not a claim that the last setting is still
+active. The scheduled basal profile is not fetched or reconstructed. CareLink's
+`AUTO_BASAL_DELIVERY` markers are retained as delivered basal pulses in U, separate from its
+`INSULIN` boluses (including `AUTOCORRECTION`). Neither basal pulses nor manually logged basal
+injections can become the "last bolus". IOB remains the value reported by the loop/pump.
 
 Oref systems upload up to four forecast curves. The watch draws one: `COB` while carbs are on
 board, otherwise `UAM`, then `IOB`, then `ZT`. Loop uploads a single curve. The curves are in
