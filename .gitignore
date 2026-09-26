@@ -12,5 +12,6 @@ captures/
 # Local developer secrets (see .env.example)
 .env
 
-# Python bytecode from scripts/
+# Python bytecode and the uv environment for the scripts (pyproject.toml)
 __pycache__/
+.venv/

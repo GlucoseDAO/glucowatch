@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Store screenshots and picker previews from the demo captures of scripts/screenshots.py.
 
-Run `python3 scripts/screenshots.py demo` first (the default watch, Watch6 Classic 43 mm). This then writes, from demo data only (never a
+Run `uv run scripts/screenshots.py demo` first (the default watch, Watch6 Classic 43 mm). This then writes, from demo data only (never a
 real account's readings):
 
     fastlane/metadata/android/en-US/images/phoneScreenshots/01-face.png ... 05-app.png
@@ -9,7 +9,7 @@ real account's readings):
     watchface/src/main/res/drawable/preview.png        the face in the watch face picker
     app/src/main/res/drawable/tile_preview*.png        each tile in the "Add tiles" list
 
-    python3 scripts/store_images.py
+    uv run scripts/store_images.py
 """
 import sys
 from pathlib import Path
@@ -21,9 +21,9 @@ ROOT = Path(__file__).resolve().parent.parent
 RAW = ROOT / 'data' / 'output' / 'screenshots' / 'watch6-classic-43' / 'raw'
 SHOTS = ROOT / 'fastlane' / 'metadata' / 'android' / 'en-US' / 'images' / 'phoneScreenshots'
 
-# GlucoseDAO: deep teal with an orange accent (see app/.../ui/Brand.kt).
-BACKGROUND_TOP, BACKGROUND_BOTTOM = (9, 38, 42), (4, 12, 14)
-TEAL_LIGHT, WHITE, BEZEL = (94, 194, 204), (255, 255, 255), (58, 58, 62)
+# Black, grey and white, as on the watch face (see core/.../GlucosePalette.kt).
+BACKGROUND_TOP, BACKGROUND_BOTTOM = (30, 30, 30), (0, 0, 0)   # charcoal to black, no tint
+GREY, WHITE, BEZEL = (154, 163, 168), (255, 255, 255), (58, 58, 62)
 FONT_BOLD = '/usr/share/fonts/opentype/inter/Inter-Bold.otf'
 FONT_REGULAR = '/usr/share/fonts/opentype/inter/Inter-Regular.otf'
 
@@ -63,7 +63,7 @@ def store_image(capture, title, subtitle):
     while ImageFont.truetype(FONT_BOLD, size).getlength(title) > w - 120:
         size -= 4
     d.text((w / 2, 250), title, font=ImageFont.truetype(FONT_BOLD, size), fill=WHITE, anchor='mm')
-    d.text((w / 2, 360), subtitle, font=ImageFont.truetype(FONT_REGULAR, 44), fill=TEAL_LIGHT, anchor='mm')
+    d.text((w / 2, 360), subtitle, font=ImageFont.truetype(FONT_REGULAR, 44), fill=GREY, anchor='mm')
     watch, bezel = 860, 34
     top = 560
     d.ellipse(((w - watch) / 2 - bezel, top - bezel, (w + watch) / 2 + bezel, top + watch + bezel), fill=BEZEL)
@@ -78,7 +78,7 @@ def main():
     missing = [raw for _, raw, _, _ in SCREENS if not (RAW / raw).is_file()]
     missing += [raw for raw in TILE_PREVIEWS.values() if not (RAW / raw).is_file() and raw not in missing]
     if missing:
-        sys.exit(f'missing {", ".join(missing)} in {RAW}: run python3 scripts/screenshots.py demo first')
+        sys.exit(f'missing {", ".join(missing)} in {RAW}: run uv run scripts/screenshots.py demo first')
     SHOTS.mkdir(parents=True, exist_ok=True)
     for old in SHOTS.glob('*.png'):
         old.unlink()

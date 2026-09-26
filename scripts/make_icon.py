@@ -4,12 +4,13 @@
 One geometry, two outputs, so they cannot drift apart:
 
     app/src/main/res/drawable/ic_launcher.xml         vector for the launcher, tiles, complications
+    phone/src/main/res/drawable/ic_launcher.xml       the companion app's matching icon
     fastlane/metadata/android/en-US/images/icon.png   512 px store icon
 
 As in the GlucoseDAO logo: black carbons with grey centres, red oxygens, white hydrogens, black
 bonds. The pyranose ring is drawn as a flat hexagon so it reads at launcher size.
 
-    python3 scripts/make_icon.py        # needs Pillow for the PNG
+    uv run scripts/make_icon.py        # Pillow comes from the repo pyproject.toml
 """
 import math
 from pathlib import Path
@@ -121,9 +122,10 @@ def png(atoms, bonds, scale, size=512, ss=4):
 
 def main():
     atoms, bonds, scale = geometry()
-    (ROOT / 'app/src/main/res/drawable/ic_launcher.xml').write_text(vector(atoms, bonds, scale))
+    for module in ('app', 'phone'):
+        (ROOT / module / 'src/main/res/drawable/ic_launcher.xml').write_text(vector(atoms, bonds, scale))
     png(atoms, bonds, scale).save(ROOT / 'fastlane/metadata/android/en-US/images/icon.png', optimize=True)
-    print('wrote ic_launcher.xml and icon.png')
+    print('wrote app and phone ic_launcher.xml and icon.png')
 
 
 if __name__ == '__main__':

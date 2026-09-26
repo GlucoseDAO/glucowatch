@@ -43,9 +43,9 @@ import java.time.ZoneId
 abstract class GlucoseTile : TileService() {
     protected open val light = false
     protected open val palette get() = if (light) ChartRenderer.Palette.LIGHT else ChartRenderer.Palette.DARK
-    protected val ink get() = if (light) Brand.NAVY else 0xFFFFFFFF.toInt()
+    protected val ink get() = if (light) Brand.LIGHT_TEXT else Brand.TEXT
     protected val muted get() = if (light) Brand.LIGHT_MUTED else Brand.MUTED
-    protected val accent get() = if (light) Brand.TEAL else Brand.TEAL_LIGHT
+    protected val accent get() = if (light) Brand.LIGHT_MUTED else Brand.MUTED
 
     /** The tile's content, centred on the screen. */
     protected abstract fun content(request: RequestBuilders.TileRequest, state: GlucoseState): LayoutElementBuilders.LayoutElement
@@ -192,18 +192,26 @@ abstract class GlucoseTile : TileService() {
 
 /**
  * glucose-only: value and trend, change and age, the chart through the wide middle of the circle
- * (40% of the screen height), and the forecast if it is on. The class keeps its first name so a
+ * (60% of the screen height), and the forecast if it is on. The class keeps its first name so a
  * tile added before the others existed stays in place.
  */
 open class GlucoseTileService : GlucoseTile() {
     override fun content(request: RequestBuilders.TileRequest, state: GlucoseState): LayoutElementBuilders.LayoutElement {
+        val chartAndReading = LayoutElementBuilders.Box.Builder()
+            .setWidth(expand())
+            .setHeight(dp(request.deviceConfiguration.screenHeightDp * 0.6f))
+            .setVerticalAlignment(LayoutElementBuilders.VERTICAL_ALIGN_TOP)
+            .setHorizontalAlignment(LayoutElementBuilders.HORIZONTAL_ALIGN_CENTER)
+            .addContent(chart(request, state, 0.6f))
+            .addContent(column()
+                .addContent(value(state, 40f))
+                .addContent(status(state))
+                .build())
+            .build()
         val column = column()
             .addContent(text("GlucoWatch", 12f, accent))
             .addContent(space(2f))
-            .addContent(value(state, 40f))
-            .addContent(status(state))
-            .addContent(space(6f))
-            .addContent(chart(request, state, 0.4f))
+            .addContent(chartAndReading)
         forecast(state)?.let { column.addContent(space(4f)).addContent(it) }
         return column.build()
     }
@@ -216,7 +224,7 @@ class GlucoseLightTileService : GlucoseAllTileService() {
 }
 
 /**
- * glucose-all and glucose-light: the clock on top, glucose under it, a short range chart, then
+ * glucose-all and glucose-light: the clock on top, glucose over a large range chart, then
  * heart rate and the watch battery in one quiet row. Clock and heart rate update on the watch; heart rate
  * needs the permission the app asks for in Settings, and shows "--" until then.
  */
@@ -236,12 +244,21 @@ open class GlucoseAllTileService : GlucoseTile() {
             .addContent(icon(request, R.drawable.ic_battery, "battery", 14f, gray))
             .addContent(gap(4f))
             .addContent(text("${battery()}%", 13f, primary))
+        val chartAndReading = LayoutElementBuilders.Box.Builder()
+            .setWidth(expand())
+            .setHeight(dp(request.deviceConfiguration.screenHeightDp * 0.55f))
+            .setVerticalAlignment(LayoutElementBuilders.VERTICAL_ALIGN_TOP)
+            .setHorizontalAlignment(LayoutElementBuilders.HORIZONTAL_ALIGN_CENTER)
+            .addContent(chart(request, state, 0.55f))
+            .addContent(column()
+                .addContent(glucoseValue(state, 36f))
+                .addContent(status(state, 11f))
+                .build())
+            .build()
         val content = column()
-            .addContent(dynamicText(clock(), "--:--", "00:00", 20f, primary, bold = true))
+            .addContent(dynamicText(clock(), "--:--", "00:00", 36f, primary, bold = true))
             .addContent(space(1f))
-            .addContent(glucoseValue(state, 43f))
-            .addContent(status(state, 11f))
-            .addContent(chart(request, state, 0.28f))
+            .addContent(chartAndReading)
             .addContent(space(2f))
             .addContent(footer.build())
             .build()

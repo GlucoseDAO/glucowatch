@@ -29,14 +29,15 @@ show, and data/output/screenshots/overview.png with both watches:
     overview.png                                        one row per scenario: face and tiles
     raw/                                                the unclipped square captures behind these
 
-    python3 scripts/screenshots.py                      # all scenarios that are configured
-    python3 scripts/screenshots.py nightscout dexcom    # some of them
-    python3 scripts/screenshots.py --watch all          # every screen size
-    python3 scripts/screenshots.py --watch watch8-classic watch6-classic-47
-    python3 scripts/screenshots.py --no-build --keep    # reuse the APKs, leave the emulators running
+    uv run scripts/screenshots.py                      # all scenarios that are configured
+    uv run scripts/screenshots.py nightscout dexcom    # some of them
+    uv run scripts/screenshots.py --watch all          # every screen size
+    uv run scripts/screenshots.py --watch watch8-classic watch6-classic-47
+    uv run scripts/screenshots.py --no-build --keep    # reuse the APKs, leave the emulators running
 
 Needs the Android SDK (local.properties or ANDROID_HOME) with the emulator and the
-system-images;android-36;android-wear-signed;x86_64 image, KVM, and Pillow (python3-pil).
+system-images;android-36;android-wear-signed;x86_64 image, KVM, and uv (Pillow comes from
+pyproject.toml).
 Settings come from .env and the environment, as for the debug build. See docs/screenshots.md.
 """
 import argparse
@@ -332,7 +333,7 @@ def main():
     try:
         from PIL import Image
     except ImportError:
-        sys.exit('Pillow is missing: pip install pillow (or apt install python3-pil)')
+        sys.exit('Pillow is missing. From the repo root: uv run scripts/screenshots.py')
 
     unknown = [s for s in args.scenarios if s not in SCENARIOS]
     if unknown:

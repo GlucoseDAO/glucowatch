@@ -13,7 +13,8 @@
   Every slot can be re-assigned to any other data source from the watch face editor.
   Keep the ComplicationSlot elements in slotId order: the Wear runtime keeps a user's providers
   by the position of the slot in this file, so reordering them swaps providers on update.
-  The glucose image and chart share the tile's green/yellow/red state palette.
+  The glucose image and chart share the tile's green/yellow/red state palette. The value image
+  becomes gray with an OLD DATA warning when its reading is more than 10 minutes old.
 -->
 <WatchFace width="450" height="450">
     <Metadata key="CLOCK_TYPE" value="DIGITAL" />
@@ -75,22 +76,22 @@
             <Complication type="EMPTY" />
         </ComplicationSlot>
 
-        <ComplicationSlot slotId="1" displayName="Chart" x="0" y="245" width="450" height="132"
+        <ComplicationSlot slotId="1" displayName="Chart" x="0" y="180" width="450" height="200"
             supportedTypes="SMALL_IMAGE PHOTO_IMAGE" isCustomizable="TRUE">
             <!-- Wear OS does not accept PHOTO_IMAGE as a default type, so the default is a photo-style SMALL_IMAGE. -->
             <DefaultProviderPolicy
                 defaultSystemProvider="EMPTY" defaultSystemProviderType="SMALL_IMAGE"
                 primaryProvider="io.github.antonkulaga.glucowatch/io.github.antonkulaga.glucowatch.complications.GlucoseChartComplicationService"
                 primaryProviderType="SMALL_IMAGE" />
-            <BoundingBox x="0" y="0" width="450" height="132" />
+            <BoundingBox x="0" y="0" width="450" height="200" />
             <Complication type="SMALL_IMAGE">
-                <PartImage x="0" y="0" width="450" height="132">
+                <PartImage x="0" y="0" width="450" height="200">
                     <Variant mode="AMBIENT" target="alpha" value="140" />
                     <Image resource="[COMPLICATION.SMALL_IMAGE]" />
                 </PartImage>
             </Complication>
             <Complication type="PHOTO_IMAGE">
-                <PartImage x="0" y="0" width="450" height="132">
+                <PartImage x="0" y="0" width="450" height="200">
                     <Variant mode="AMBIENT" target="alpha" value="140" />
                     <Image resource="[COMPLICATION.PHOTO_IMAGE]" />
                 </PartImage>

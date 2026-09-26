@@ -1,11 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- The device theme with GlucoseDAO teal as the accent (radio buttons, checkboxes, fields); see ui/Brand.kt. -->
+    <!-- Black, with GlucoseDAO green as the accent (radio buttons, checkboxes, fields); see ui/Brand.kt. -->
     <style name="Theme.GlucoWatch" parent="@android:style/Theme.DeviceDefault">
-        <item name="android:colorAccent">#FF2FB3C6</item>
-        <item name="android:colorControlActivated">#FF2FB3C6</item>
-        <item name="android:colorControlHighlight">#402FB3C6</item>
-        <item name="android:textColorHighlight">#662FB3C6</item>
+        <item name="android:colorAccent">#FF4FBF85</item>
+        <item name="android:colorControlActivated">#FF4FBF85</item>
+        <item name="android:colorControlHighlight">#33FFFFFF</item>
+        <item name="android:textColorHighlight">#664FBF85</item>
         <item name="android:windowBackground">#FF000000</item>
     </style>
 </resources>

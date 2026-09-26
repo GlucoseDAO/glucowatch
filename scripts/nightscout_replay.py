@@ -9,7 +9,7 @@ result as a Nightscout v1 API. Glucose, boluses, carbs and forecasts keep their 
 Serves /api/v1/entries/sgv.json, /api/v1/treatments.json and /api/v1/devicestatus.json with the
 `count` and `find[...][$gte]` filters GlucoWatch uses. For screenshots and manual testing only.
 
-    python3 scripts/nightscout_replay.py https://my.nightscout.example 8537 [token]
+    uv run scripts/nightscout_replay.py https://my.nightscout.example 8537 [token]
 
 The emulator reaches it at http://10.0.2.2:8537 (debug builds allow plain http to that host).
 """

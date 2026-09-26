@@ -1,16 +1,43 @@
-# Screenshots on a simulated watch
+# GlucoWatch screenshots
 
 Checked on 2026-09-25 with the Wear OS 6 emulator image (API 36) and the code after tag `v0.1.4`.
 
-`scripts/screenshots.py` builds both debug APKs, installs them on an emulator that matches a
+## Phone companion screenshots
+
+`uv run scripts/phone_screenshots.py` builds the phone debug APK and captures its dashboard on
+a Galaxy S22-sized Android emulator. The default frame is **1080 × 2340 px**, matching the
+[Galaxy S22 display resolution](https://www.samsung.com/au/business/smartphones/galaxy-s/galaxy-s22-for-business-sm-s901-sm-s901elbeats/).
+The emulator uses density 425 as an approximation of the phone's pixel density; it remains a
+Pixel 7 system image with Galaxy S22 display dimensions, not a Samsung firmware emulator.
+
+It captures `demo-today.png`, `demo-today-bottom.png`, `demo-connect.png`, `demo-model.png`,
+`demo-watch.png`, and, when configured, `dexcom-today.png` and `nightscout-today.png`. An
+`overview.png` puts the available Today screenshots side by side. Output is in the gitignored
+`data/output/screenshots/phone-galaxy-s22/` directory. Use `--no-build` to reuse the debug APK
+or `--keep` to leave the emulator running.
+
+The phone debug APK reads the same `.env` defaults as the watch debug APK. The screenshot script
+passes only the source name over adb; it does not print or pass passwords through adb arguments.
+Dexcom needs `DEXCOM_USERNAME` and `DEXCOM_PASSWORD`; Nightscout needs `NIGHTSCOUT_URL` and
+optionally `NIGHTSCOUT_TOKEN`/`NIGHTSCOUT_API`. Captures using either real source contain private
+health data. Keep them local and do not use them as store images.
+
+The phone's heart-rate card reads optional Health Connect data on Android 14 and later. The
+unmodified emulator has no samples, so its screenshots show the empty state.
+The script uses adb port 5588, the same port as the optional 480 px watch capture; run those
+captures separately.
+
+## Watch screenshots
+
+`uv run scripts/screenshots.py` builds both debug APKs, installs them on an emulator that matches a
 Galaxy Watch, and saves round screenshots of the watch face, the three tiles and the app for each
 data source. Every file is named after what it shows.
 
 ```bash
-python3 scripts/screenshots.py                     # every scenario that is configured
-python3 scripts/screenshots.py dexcom nightscout   # only these
-python3 scripts/screenshots.py --no-build --keep   # reuse built APKs, leave the emulator running
-python3 scripts/screenshots.py --unit mmol         # override GLUCOWATCH_UNIT for this run
+uv run scripts/screenshots.py                     # every scenario that is configured
+uv run scripts/screenshots.py dexcom nightscout   # only these
+uv run scripts/screenshots.py --no-build --keep   # reuse built APKs, leave the emulator running
+uv run scripts/screenshots.py --unit mmol         # override GLUCOWATCH_UNIT for this run
 ```
 
 A full run takes about 3 minutes: 1 to boot the emulator, 1 to build, and about 20 seconds per scenario.
@@ -27,9 +54,9 @@ Those come in three screen sizes, and the script has one simulated watch for eac
 | `watch6-classic-47` | `glucowatch_gw6c47` | round 480 × 480 px | `emulator-5588` | Watch6 44 mm, Watch6 Classic 47 mm, Watch7 44 mm, Watch8 44 mm, Watch Ultra (2024, 2025) |
 
 ```bash
-python3 scripts/screenshots.py demo                                   # the default watch
-python3 scripts/screenshots.py demo --watch all                       # all three sizes
-python3 scripts/screenshots.py demo --watch watch8-classic watch6-classic-47
+uv run scripts/screenshots.py demo                                   # the default watch
+uv run scripts/screenshots.py demo --watch all                       # all three sizes
+uv run scripts/screenshots.py demo --watch watch8-classic watch6-classic-47
 ```
 
 All three run Wear OS 6 (`system-images;android-36;android-wear-signed;x86_64`) at density 340.
@@ -67,7 +94,7 @@ elements off the screenshot. `scripts/nightscout_replay.py` fetches the last 30 
 `NIGHTSCOUT_URL`, shifts every timestamp so the last loop report is 90 seconds old, and serves it
 on port 8537. The emulator reaches it at `http://10.0.2.2:8537`, which only debug builds allow
 (`app/src/debug/res/xml/network_security_config.xml`). It can also run on its own for manual
-testing: `python3 scripts/nightscout_replay.py <url> 8537 [token]`.
+testing: `uv run scripts/nightscout_replay.py <url> 8537 [token]`.
 
 Each scenario sets the source with the debug-only adb extras of `SettingsActivity` (see README,
 "From the PC over adb"). It then waits until the app's `fetchedAt` changes, captures the app
@@ -99,7 +126,7 @@ asking the person the data belongs to.
   (`sdkmanager "system-images;android-36;android-wear-signed;x86_64"`), found through
   `ANDROID_HOME` or `sdk.dir` in `local.properties`
 - KVM (`/dev/kvm`)
-- Python 3 with Pillow (`pip install pillow` or `apt install python3-pil`)
+- [uv](https://docs.astral.sh/uv/). `uv run` from the repo root installs Pillow from `pyproject.toml` into `.venv`
 - The same JDK setup as any build (see `AGENTS.md`)
 
 ## Pitfalls found while building this

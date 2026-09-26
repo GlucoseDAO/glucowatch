@@ -29,7 +29,7 @@ import kotlin.math.min
 object ChartRenderer {
     const val COLOR_LOW = Brand.LOW
     const val COLOR_HIGH = Brand.HIGH
-    const val COLOR_IN_RANGE = Brand.TEAL_BRIGHT
+    const val COLOR_IN_RANGE = Brand.GREEN
     const val COLOR_INSULIN = Brand.INSULIN
     const val COLOR_CARBS = Brand.CARBS
     const val COLOR_FORECAST = Brand.FORECAST
@@ -43,18 +43,18 @@ object ChartRenderer {
             val DARK = Palette(
                 low = COLOR_LOW, high = COLOR_HIGH, inRange = COLOR_IN_RANGE,
                 insulin = COLOR_INSULIN, carbs = COLOR_CARBS, forecast = COLOR_FORECAST,
-                band = Brand.TEAL_BRIGHT and 0x00FFFFFF or 0x1A000000,
-                guide = Brand.TEAL_LIGHT and 0x00FFFFFF or 0x4D000000,
+                band = Brand.GREEN and 0x00FFFFFF or 0x1A000000,
+                guide = 0x4DFFFFFF,
                 grid = 0x12FFFFFF, label = 0x8CFFFFFF.toInt(), background = 0xFF000000.toInt(),
             )
 
             /** GlucoseDAO's poster colours as printed: they are made for a light background. */
             val LIGHT = Palette(
-                low = Brand.LIGHT_LOW, high = Brand.LIGHT_HIGH, inRange = Brand.TEAL,
+                low = Brand.LIGHT_LOW, high = Brand.LIGHT_HIGH, inRange = Brand.LIGHT_CARBS,
                 insulin = Brand.LIGHT_INSULIN, carbs = Brand.LIGHT_CARBS, forecast = Brand.LIGHT_FORECAST,
-                band = Brand.TEAL and 0x00FFFFFF or 0x1A000000,
-                guide = Brand.TEAL and 0x00FFFFFF or 0x66000000,
-                grid = Brand.NAVY and 0x00FFFFFF or 0x1A000000, label = Brand.NAVY and 0x00FFFFFF or 0xB3000000.toInt(),
+                band = Brand.LIGHT_CARBS and 0x00FFFFFF or 0x1A000000,
+                guide = Brand.LIGHT_TEXT and 0x00FFFFFF or 0x66000000,
+                grid = Brand.LIGHT_TEXT and 0x00FFFFFF or 0x1A000000, label = Brand.LIGHT_TEXT and 0x00FFFFFF or 0xB3000000.toInt(),
                 background = Brand.LIGHT_BACKGROUND,
             )
 
