@@ -48,6 +48,22 @@ object DemoData {
         return result.filter { it.timeMillis in start..nowMillis }
     }
 
+    /**
+     * Synthetic heart rate, one sample a minute: a resting rate that drifts slowly, rises for a while
+     * after each demo meal, and never leaves 48–150 bpm. Deterministic, like [valueAt].
+     */
+    fun heartRate(nowMillis: Long, hours: Int = 24): List<HeartSample> {
+        val last = nowMillis - nowMillis % 60_000L
+        return (hours * 60 - 1 downTo 0).map { i ->
+            val t = last - i * 60_000L
+            val minutes = t / 60_000.0
+            val afterMeal = Math.floorMod(t - MEAL_OFFSET_MS, PERIOD_MS) / 60_000.0
+            val digestion = if (afterMeal < 60) 9 * sin(PI * afterMeal / 60) else 0.0
+            val bpm = 64 + 6 * sin(2 * PI * minutes / 190 + 0.7) + 3 * sin(2 * PI * minutes / 23) + digestion
+            HeartSample(t, bpm.toInt().coerceIn(48, 150))
+        }
+    }
+
     /** IOB and COB from [treatments], decaying linearly over 4 h and 3 h. No loop forecast. */
     fun loopStatus(nowMillis: Long): LoopStatus {
         val t = nowMillis - nowMillis % STEP_MS

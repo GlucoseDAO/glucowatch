@@ -9,6 +9,8 @@ import glucowatch.core.DemoData
 import glucowatch.core.GlucoseReading
 import glucowatch.core.LoopStatus
 import glucowatch.core.NightscoutAddress
+import glucowatch.core.OnnxPredictor
+import glucowatch.core.Prediction
 import glucowatch.core.Predictors
 import glucowatch.core.SourceSync
 import glucowatch.core.SyncCache
@@ -42,6 +44,7 @@ data class PhoneState(
  */
 class PhoneRepository(context: Context) {
     private val settingsStore = PhoneSettingsStore(context)
+    private val modelStore = PhoneModelStore(context)
     private val cache = context.applicationContext.getSharedPreferences("cache", Context.MODE_PRIVATE)
 
     fun state(): PhoneState {
@@ -50,8 +53,8 @@ class PhoneRepository(context: Context) {
         val demo = settings.source == LinkSource.DEMO
         return PhoneState(
             settings = settings,
-            readings = if (demo) DemoData.readings(now) else CacheFormat.decodeReadings(cached(settings, SourceSync.READINGS)),
-            treatments = if (demo) DemoData.treatments(now) else CacheFormat.decodeTreatments(cached(settings, SourceSync.TREATMENTS)),
+            readings = if (demo) DemoData.readings(now, HISTORY_HOURS) else CacheFormat.decodeReadings(cached(settings, SourceSync.READINGS)),
+            treatments = if (demo) DemoData.treatments(now, HISTORY_HOURS) else CacheFormat.decodeTreatments(cached(settings, SourceSync.TREATMENTS)),
             loop = if (demo) DemoData.loopStatus(now) else CacheFormat.decodeLoop(cached(settings, SourceSync.LOOP)),
             lastError = cache.getString("error", null),
             lastFetchMillis = cache.getLong("fetchedAt", 0),
@@ -73,7 +76,7 @@ class PhoneRepository(context: Context) {
                 else -> {
                     val missing = problem(settings)
                     val result = if (missing != null) Result.failure(IllegalStateException(missing))
-                    else runCatching { SourceSync(syncCache(settings)).fetch(account, CHART_HOURS) }
+                    else runCatching { SourceSync(syncCache(settings), retainMs = HISTORY_MS).fetch(account, CHART_HOURS) }
                     result.exceptionOrNull()?.let { Log.w(TAG, "${settings.source} refresh failed", it) }
                     cache.edit()
                         .putString("error", result.exceptionOrNull()?.let { it.message ?: it.javaClass.simpleName })
@@ -89,19 +92,29 @@ class PhoneRepository(context: Context) {
         cache.edit().clear().apply()
     }
 
+    fun forecast(state: PhoneState, horizonMinutes: Int): Prediction? {
+        val latest = state.latest ?: return null
+        if (System.currentTimeMillis() - latest.timeMillis > 15 * 60_000L) return null
+        val predictor = if (state.settings.predictorId == OnnxPredictor.ID) modelStore.predictor()
+            else Predictors.byId(state.settings.predictorId)
+        return predictor?.let { runCatching { it.predict(state.readings, horizonMinutes) }
+            .onFailure { Log.w(TAG, "Predictor ${state.settings.predictorId} failed", it) }
+            .getOrNull() }
+    }
+
     /** For a watch's sync: fresh data (at most [FRESH_MS] old) and, if asked, a forecast from the phone's model. */
     fun snapshot(horizonMinutes: Int): LinkSnapshot {
         val state = runBlocking { refresh(maxAgeMs = FRESH_MS) }
         val settings = state.settings
-        val forecast = if (horizonMinutes <= 0 || state.readings.isEmpty()) null
-        else runCatching { Predictors.byId(settings.predictorId).predict(state.readings, horizonMinutes) }
-            .onFailure { Log.w(TAG, "Predictor ${settings.predictorId} failed", it) }
-            .getOrNull()
+        val forecast = if (horizonMinutes <= 0 || state.readings.isEmpty()) null else forecast(state, horizonMinutes)
+        // The phone keeps two weeks for its own chart; the watch caches a day, so send it a day.
+        // That keeps the Bluetooth message the size it always was.
+        val dayAgo = System.currentTimeMillis() - SourceSync.DAY_MS
         return LinkSnapshot(
             upstream = LinkCrypto.sha256(settings.accountKey.toByteArray()).copyOf(12).let(Base64.getEncoder()::encodeToString),
             sourceLabel = settings.sourceLabel,
-            readings = state.readings,
-            treatments = state.treatments,
+            readings = state.readings.filter { it.timeMillis >= dayAgo },
+            treatments = state.treatments.filter { it.timeMillis >= dayAgo },
             loop = state.loop,
             forecast = forecast,
             error = state.lastError.takeIf { settings.source != LinkSource.DEMO },
@@ -148,6 +161,13 @@ class PhoneRepository(context: Context) {
 
         /** The watch shows up to this many hours; the phone keeps the same treatment window. */
         private const val CHART_HOURS = 6
+
+        /**
+         * How far back the phone's chart can be dragged. Dexcom Share serves a day at a time, so a
+         * longer history accumulates over repeated fetches; Nightscout backfills on the first run.
+         */
+        const val HISTORY_HOURS = 14 * 24
+        private const val HISTORY_MS = HISTORY_HOURS * 3_600_000L
 
         /** A watch that polls every minute while a reading is late still costs at most two fetches a minute. */
         private const val FRESH_MS = 30_000L

@@ -87,3 +87,6 @@ fun List<GlucoseReading>.lastDelta(): Double? {
         ?: return null
     return (last.mgdl - prev.mgdl).toDouble()
 }
+
+/** One heart-rate sample, from the phone's Health Connect or from [DemoData]. */
+data class HeartSample(val timeMillis: Long, val bpm: Int)

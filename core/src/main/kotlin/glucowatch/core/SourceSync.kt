@@ -22,11 +22,21 @@ interface SyncCache {
 /**
  * Fetches from Dexcom Share or Nightscout and merges the result into a [SyncCache], under the keys
  * [READINGS], [TREATMENTS] and [LOOP] in [CacheFormat]. The watch app and the phone app both use it.
+ *
+ * [retainMs] is how far back the cache keeps readings and treatments. The watch keeps a day. The
+ * phone keeps longer so the user can drag back through history: Dexcom Share only ever serves the
+ * last 24 hours, so a longer phone history is built up fetch by fetch, while Nightscout's first run
+ * backfills as far as one request allows.
  */
 class SourceSync(
     private val cache: SyncCache,
     private val transport: HttpTransport = UrlConnectionTransport(),
+    private val retainMs: Long = DAY_MS,
 ) {
+    init {
+        require(retainMs >= DAY_MS) { "Keep at least a day, the most Dexcom Share returns" }
+    }
+
     fun fetch(account: SourceAccount, chartHours: Int, now: Long = System.currentTimeMillis()) = when (account) {
         is SourceAccount.Share -> fetchShare(account, now)
         is SourceAccount.Nightscout -> fetchNightscout(account, chartHours, now)
@@ -43,7 +53,7 @@ class SourceSync(
         val sessionKey = "session:${account.region}:${account.username}"
         val client = DexcomShareClient(account.region, account.username, account.password, cache.get(sessionKey), transport)
         val fresh = client.readings(minutes, maxCount)
-        cache.put(mapOf(READINGS to CacheFormat.encodeReadings(merge(old, fresh, now)), sessionKey to client.sessionId))
+        cache.put(mapOf(READINGS to CacheFormat.encodeReadings(merge(old, fresh, now, retainMs)), sessionKey to client.sessionId))
     }
 
     /**
@@ -58,13 +68,13 @@ class SourceSync(
         val firstRun = cache.get(TREATMENTS) == null
         try {
             val old = CacheFormat.decodeReadings(cache.get(READINGS).orEmpty())
-            val since = old.lastOrNull()?.timeMillis?.minus(15 * 60_000L) ?: (now - DAY_MS)
-            val readings = merge(old, client.readings(since), now)
+            val since = old.lastOrNull()?.timeMillis?.minus(15 * 60_000L) ?: (now - firstRunMs())
+            val readings = merge(old, client.readings(since), now, retainMs)
             cache.put(mapOf(READINGS to CacheFormat.encodeReadings(readings)))
 
             val oldTreatments = CacheFormat.decodeTreatments(cache.get(TREATMENTS).orEmpty())
-            val window = if (firstRun) DAY_MS else maxOf(chartHours, 3) * 3_600_000L
-            val treatments = oldTreatments.filter { it.timeMillis in (now - DAY_MS) until (now - window) } +
+            val window = if (firstRun) firstRunMs() else maxOf(chartHours, 3) * 3_600_000L
+            val treatments = oldTreatments.filter { it.timeMillis in (now - retainMs) until (now - window) } +
                 client.treatments(now - window)
 
             val oldLoop = CacheFormat.decodeLoop(cache.get(LOOP).orEmpty())
@@ -82,18 +92,26 @@ class SourceSync(
         }
     }
 
+    /**
+     * How far a Nightscout first run looks back. One request returns at most
+     * [NightscoutClient.MAX_COUNT] readings, about five days of five-minute data, so asking for
+     * more would silently return only the newest part.
+     */
+    private fun firstRunMs() = minOf(retainMs, NIGHTSCOUT_BACKFILL_MS)
+
     companion object {
         const val READINGS = "readings"
         const val TREATMENTS = "treatments"
         const val LOOP = "loop"
         const val DAY_MS = 24 * 3_600_000L
+        private const val NIGHTSCOUT_BACKFILL_MS = 5 * DAY_MS
 
-        /** One reading per timestamp, newest data wins, nothing older than a day. */
-        fun merge(old: List<GlucoseReading>, fresh: List<GlucoseReading>, now: Long) =
+        /** One reading per timestamp, newest data wins, nothing older than [retainMs]. */
+        fun merge(old: List<GlucoseReading>, fresh: List<GlucoseReading>, now: Long, retainMs: Long = DAY_MS) =
             (old + fresh)
                 .associateBy { it.timeMillis }
                 .values
-                .filter { now - it.timeMillis <= DAY_MS }
+                .filter { now - it.timeMillis <= retainMs }
                 .sortedBy { it.timeMillis }
     }
 }

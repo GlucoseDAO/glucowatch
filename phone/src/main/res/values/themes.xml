@@ -1,11 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- Dark, with GlucoseDAO teal as the accent, like the watch app (app/src/main/res/values/themes.xml). -->
+    <!-- Black, neutral grey and white, with green for in-range glucose; see Brand.kt. -->
     <style name="Theme.GlucoWatchPhone" parent="@android:style/Theme.DeviceDefault.NoActionBar">
-        <item name="android:colorAccent">#FF2FB3C6</item>
-        <item name="android:colorControlActivated">#FF2FB3C6</item>
-        <item name="android:colorControlHighlight">#402FB3C6</item>
-        <item name="android:textColorHighlight">#662FB3C6</item>
-        <item name="android:windowBackground">#FF0B1622</item>
+        <item name="android:colorAccent">#FF4ADE80</item>
+        <item name="android:colorControlActivated">#FF4ADE80</item>
+        <item name="android:colorControlHighlight">#33FFFFFF</item>
+        <item name="android:textColorHighlight">#554ADE80</item>
+        <item name="android:windowBackground">#FF000000</item>
     </style>
 </resources>

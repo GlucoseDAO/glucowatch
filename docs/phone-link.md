@@ -71,16 +71,110 @@ in both apps). Forgetting a watch on the phone removes its key.
 | `BLUETOOTH` | Not needed: minSdk 33 | API 29–30 only (`maxSdkVersion="30"`) |
 | `FOREGROUND_SERVICE_CONNECTED_DEVICE` | – | For the listening service |
 | `POST_NOTIFICATIONS` | – | For the service's notification. Optional; the service runs without it |
+| `CAMERA` | – | Not declared. A meal photo is taken by the phone's own camera app through a `FileProvider` |
+| `health.READ_HEART_RATE` | – | Optional, foreground only, Android 14+. Never relayed or uploaded |
 
 ## Forecast on the phone
 
 The watch's forecast setting gets a choice **Phone app model** (`PhoneLink.MODEL_ID`) when its
 source is **Phone app**. The phone then runs the model chosen in its own settings, from
-`Predictors`. A new model goes into `core/`, implements `GlucosePredictor` and is registered on
-`Predictors`, as before, so both apps get it. The rule against binary models holds on the phone
-too. The watch shows the phone's forecast only when it starts from the latest reading. Otherwise
+`Predictors` or a user-imported ONNX model. The latter stays in the phone's app-private storage;
+no model is bundled, fetched automatically, uploaded or sent to the watch. The source-only
+interpreter in `core/` accepts a single float32 input `[1,12]` or `[1,24]` of five-minute
+glucose values in mg/dL, oldest first, and a single float32 output `[1,1..24]` of future
+five-minute mg/dL values. Supported operators are Gemm, MatMul, Add, Sub, Mul, Relu, Sigmoid,
+Tanh, Identity, Flatten and Reshape. Other ONNX graphs are rejected on import.
+
+A model comes from one of two places, and only when the user asks for it:
+
+- **A Hugging Face repo.** The repo id on its own is enough (`owner/model`, or `owner/model@rev`);
+  a repo page, a `tree`, `blob` or `resolve` link works too. `HuggingFaceModel` in `core/` turns
+  what was typed into `https://huggingface.co/api/models/<repo>/revision/<rev>`, the app reads
+  that listing, and the repo's `.onnx` files are shown for the user to pick from. Only then is a
+  file downloaded, over HTTPS, following Hugging Face's redirect to its file storage. A `resolve`
+  or `blob` link to one file skips the listing, so a repo whose listing is unavailable still
+  works. Gated and private repos are refused rather than authenticated: no token is ever sent.
+- **A file on the phone**, through the system document picker.
+
+Either way the model is loaded and checked before it replaces the one already stored, is capped at
+10 MB, and lives only in `filesDir`. A new bundled model still belongs in `core/` as source and
+implements `GlucosePredictor`. The watch shows the
+phone's forecast only when it starts from the latest reading. Otherwise
 it shows "No fresh phone forecast". The choice **Loop (Nightscout)** also works through the phone,
 because the phone relays the loop status.
+
+## The phone screen
+
+Four tabs on a bottom bar, built in code like the watch app's screens, with no layout XML and no
+UI library:
+
+- **Today.** The latest reading in its colour with its trend arrow, an IN RANGE / LOW / HIGH
+  pill, its age and the current heart rate; the glucose chart; insulin and carbs on board and the
+  last bolus; time in range, the 30-minute change and the forecast; logging a meal or insulin;
+  and the switch for the heart-rate track.
+- **Connect.** Source, login and units — the same fields as before.
+- **Model.** The forecast model, and importing one (above).
+- **Watch.** Pairing, and the watches this phone answers.
+
+The chart is `GlucoseChartView`, a plain `View` drawing on a `Canvas`, in the style of the
+GlucoseDAO logo: readings are ball-and-stick atoms — a coloured ball with a dark core — strung on
+bonds. Gaps longer than 20 minutes are left open rather than bridged, the forecast is dashed in
+grey because it is a guess and not a measurement, and logged meals hang off the chain.
+
+The palette is in `phone/…/Brand.kt`: black, `#9AA3A8` grey, `#F0525A` red and white, the same
+values as the watch face in `watchface/src/main/res/raw/watchface.xml`. Colour means one thing
+only — where the glucose sits — as a numeric code running green through yellow and orange to red,
+interpolated between anchors so a run drifting high shades over before it crosses 180. The watch
+app's `ui/Brand.kt` still holds the older teal for its tiles, complications and settings screens;
+that is a separate palette and nothing in `phone/` reads it.
+
+## History
+
+The chart follows now until it is dragged. Drag sideways to go back, fling to travel further,
+pinch to show between 1 and 48 hours, tap to read one moment (time, glucose, heart rate, insulin
+and carbs there), and double-tap or **Now** to come back. Midnight is marked and labelled with the
+day, and the day being shown sits in the top corner.
+
+The phone keeps 14 days (`PhoneRepository.HISTORY_HOURS`), through `SourceSync(retainMs = …)`;
+the watch keeps its day, the default. Dexcom Share only ever serves the last 24 hours, so a Share
+user's longer history builds up fetch by fetch, from the day the app is installed. Nightscout's
+first run backfills up to five days, as much as one request returns. The phone still sends the
+watch only its last 24 hours, so the Bluetooth message is the size it was.
+
+## Heart rate
+
+The current heart rate is always in the header: a red heart and the bpm, greyed when the newest
+sample is more than 30 minutes old. The row under the meals adds or removes a heart-rate track on
+the chart: a thin red line across the top of the plot on its own bpm scale, so glucose keeps the
+full height. It reads Health Connect (Android 14 and later) in the foreground only, and nothing
+is relayed or uploaded. Demo data has its own synthetic heart rate
+(`DemoData.heartRate`), so the demo shows both with no watch and no Health Connect.
+
+## Insulin
+
+Insulin comes from two places. From Nightscout: the treatments the loop or Careportal recorded,
+and the loop's insulin and carbs on board. From the phone: **Log insulin** records a dose here,
+which is the only insulin a Dexcom Share user has, since Share carries glucose only. On the chart
+a bolus hangs from the top as a white atom with its units; a dose the loop gave on its own is a
+smaller grey atom. The line under the chart shows insulin and carbs on board, while the loop's
+report is under 30 minutes old, and the last bolus. Logged doses stay on the phone.
+
+## Meals
+
+The Today tab can log what the user ate: **Photograph food** opens whatever camera app the phone
+has, then asks for the carbohydrates and an optional note. The entry appears on the chart as a
+marker on the curve with the grams and a thumbnail of the photo.
+
+The app declares no `CAMERA` permission. It hands the camera app one private file through a
+`FileProvider` limited to `filesDir/food/` (`res/xml/file_paths.xml`), and `android.hardware.camera`
+is `required="false"`, so a phone with no camera still logs carbs. The photo is scaled down to
+640 px and re-encoded before it is kept.
+
+Meals and logged insulin are health data and stay on the phone: they are not relayed to the
+watch, not uploaded, and not written to Nightscout — the link protocol and `PhoneLink.VERSION`
+are unchanged. Entries older
+than 30 days are dropped with their photos. Screenshots of a real meal log are the user's health
+data; do not publish them.
 
 ## Stores
 
@@ -108,6 +202,10 @@ because the phone relays the loop status.
   foreground service.
 - On a Wear OS emulator, Settings offers the four sources, asks for Nearby devices, and reports
   when no phone answers. Dexcom Share and Nightscout still fetch through `SourceSync`.
+- On a 1080 × 2340 phone emulator, the companion dashboard and its source, model and watch tabs
+  were captured with Demo, Dexcom Share and Nightscout (`scripts/phone_screenshots.py`). The
+  optional heart-rate card uses platform Health Connect on Android 14+ with foreground permission;
+  the emulator has no heart-rate samples.
 - **Not yet verified: the RFCOMM link between a real watch and a real phone.** Emulators cannot
   bond a Wear OS AVD to a phone AVD over Bluetooth. Check pairing, a sync and copying a login on
   the Galaxy Watch and a phone before tagging a release that ships `phone/`.

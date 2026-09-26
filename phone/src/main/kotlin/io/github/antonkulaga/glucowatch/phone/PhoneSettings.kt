@@ -11,15 +11,17 @@ import glucowatch.core.link.LinkSource
 
 /** The phone's own source and the model it forecasts with for the watch. */
 data class PhoneSettings(
-    val source: LinkSource = LinkSource.DEMO,
-    val username: String = "",
-    val password: String = "",
-    val region: Region = Region.OUS,
-    val nightscoutUrl: String = "",
-    val nightscoutToken: String = "",
-    val nightscoutApi: NightscoutApi = NightscoutApi.V1,
-    val unit: GlucoseUnit = GlucoseUnit.MMOL,
+    val source: LinkSource = runCatching { LinkSource.valueOf(BuildConfig.DEV_GLUCOWATCH_SOURCE.uppercase()) }.getOrDefault(LinkSource.DEMO),
+    val username: String = BuildConfig.DEV_DEXCOM_USERNAME,
+    val password: String = BuildConfig.DEV_DEXCOM_PASSWORD,
+    val region: Region = runCatching { Region.parse(BuildConfig.DEV_DEXCOM_REGION) }.getOrDefault(Region.OUS),
+    val nightscoutUrl: String = BuildConfig.DEV_NIGHTSCOUT_URL,
+    val nightscoutToken: String = BuildConfig.DEV_NIGHTSCOUT_TOKEN,
+    val nightscoutApi: NightscoutApi = runCatching { NightscoutApi.parse(BuildConfig.DEV_NIGHTSCOUT_API) }.getOrDefault(NightscoutApi.V1),
+    val unit: GlucoseUnit = runCatching { GlucoseUnit.parse(BuildConfig.DEV_GLUCOWATCH_UNIT) }.getOrDefault(GlucoseUnit.MMOL),
     val predictorId: String = LinearTrendPredictor.ID,
+    /** Draw heart rate as a second track on the glucose chart. The current bpm shows either way. */
+    val heartTrack: Boolean = false,
 ) {
     val account: SourceAccount? get() = when (source) {
         LinkSource.SHARE -> SourceAccount.Share(region, username, password)
@@ -59,6 +61,7 @@ class PhoneSettingsStore(context: Context) {
             nightscoutApi = enumOr(prefs.getString("nightscoutApi", null), d.nightscoutApi),
             unit = enumOr(prefs.getString("unit", null), d.unit),
             predictorId = prefs.getString("predictor", d.predictorId)!!,
+            heartTrack = prefs.getBoolean("heartTrack", d.heartTrack),
         )
     }
 
@@ -73,6 +76,7 @@ class PhoneSettingsStore(context: Context) {
             .putString("nightscoutApi", s.nightscoutApi.name)
             .putString("unit", s.unit.name)
             .putString("predictor", s.predictorId)
+            .putBoolean("heartTrack", s.heartTrack)
             .apply()
     }
 
