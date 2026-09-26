@@ -106,6 +106,20 @@ class PhoneLinkTest {
     }
 
     @Test
+    fun `watch-started search completes the handshake when phone pairing opens later`() {
+        val phone = FakePhone(open = false)
+        var time = 0L
+        var refusals = 0
+        val search = PairingSearch({ time }) { time += it; phone.open = true }
+        val offer = search.await(onRetry = { refusals++ }) {
+            connect(phone) { input, output -> WatchLinkClient(watchId).pair(input, output) }
+        }
+        assertEquals(1, refusals)
+        assertEquals(offer.keys.code, assertNotNull(phone.offered).code)
+        assertContentEquals(offer.keys.key, phone.offered!!.key)
+    }
+
+    @Test
     fun `sync relays the phone's day and forecast`() {
         val phone = FakePhone()
         val key = paired(phone)

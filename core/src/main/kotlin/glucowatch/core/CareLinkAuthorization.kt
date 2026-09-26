@@ -10,6 +10,7 @@ import kotlinx.serialization.json.put
 import java.net.URI
 import java.net.URLDecoder
 import java.net.URLEncoder
+import java.io.IOException
 import java.security.MessageDigest
 import java.security.SecureRandom
 import java.util.Base64
@@ -74,7 +75,7 @@ class CareLinkAuthorization(private val transport: HttpTransport = UrlConnection
         require(query["state"] == pending.state) { "CareLink sign-in does not match this request. Start again." }
         require(query["error"] == null) { "CareLink sign-in was cancelled or refused" }
         val code = requireNotNull(query["code"]?.takeIf { it.isNotBlank() }) { "CareLink returned no sign-in code" }
-        val response = transport.execute(HttpRequest("POST", pending.tokenUrl,
+        val response = request(HttpRequest("POST", pending.tokenUrl,
             mapOf("Content-Type" to "application/x-www-form-urlencoded"), form(mapOf(
                 "grant_type" to "authorization_code", "client_id" to pending.clientId, "redirect_uri" to pending.redirect,
                 "code" to code, "code_verifier" to pending.verifier,
@@ -87,9 +88,15 @@ class CareLinkAuthorization(private val transport: HttpTransport = UrlConnection
 
     private fun get(url: String): JsonObject {
         require(URI(url).scheme == "https") { "CareLink requires HTTPS" }
-        val response = transport.execute(HttpRequest.get(url))
+        val response = request(HttpRequest.get(url))
         check(response.status in 200..299) { "CareLink sign-in configuration: HTTP ${response.status}" }
         return Json.parseToJsonElement(response.body) as JsonObject
+    }
+
+    private fun request(request: HttpRequest): HttpResponse = try {
+        executeCareLink(transport, request)
+    } catch (error: IOException) {
+        throw CareLinkException.Network(error)
     }
 
     private fun form(values: Map<String, String>) = values.entries.joinToString("&") {

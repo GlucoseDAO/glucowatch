@@ -7,10 +7,56 @@ The watch still works on its own. The phone app is optional and does two things:
 
 - **Relay.** On the watch, the source **Phone app** reads the phone's readings, treatments, loop
   status and, if asked, a forecast from the phone's model. Then the watch needs no login and no
-  internet. The phone fetches from Dexcom Share, Nightscout, CareLink or demo data. Additional
+  internet. The phone reads G6 notifications, fetches from Dexcom Share, Nightscout or CareLink,
+  or generates demo data. Additional
   insulin sources add pump/loop data to the selected CGM's trajectory (see [CareLink](carelink.md)).
 - **Copy login.** With the source **Dexcom Share** or **Nightscout**, the watch can copy the
   phone's login instead of the user typing it on the watch. After that the watch fetches by itself.
+
+## Local Dexcom G6 notifications
+
+In GlucoPhone's **Connect** tab, select **Dexcom** and check **Use G6 notifications instead of
+Dexcom Share**. Turn on **Quick Glance** in the official G6 app on the same phone. Tap **Allow
+notification access**, enable GlucoPhone in Android settings, then return and tap **Save & test**.
+The next G6 notification update can take five minutes. Uncheck the box and save to return to Share;
+the saved Share credentials are retained. Existing installs continue using Share by default.
+On the watch, choose **Phone app** as the source. Notification mode cannot supply a login for
+the watch to copy, and does not require Share, followers or internet access for glucose.
+Any separately selected insulin sources still use their own network connections.
+
+The platform `NotificationListenerService` receives notifications after Android grants access.
+When the glucose provider changes, **Save & test** asks whether to keep the glucose history already
+on the chart or clear it. Keeping history carries only glucose points into the new provider's cache;
+new readings then come from the newly selected provider. Treatments and connection state are loaded
+again from the currently selected therapy sources. The switch uses the repository lock and account
+guard, so a late Share response or notification callback cannot write into the new source.
+That permission covers all apps, but GlucoPhone ignores everything except ongoing notifications
+from the G6 US package and the eleven known regional G6 packages. It reads standard text extras
+and visible text/content descriptions in custom Quick Glance layouts. Other notifications and
+their text are not stored or logged. Only parsed glucose, its timestamp/trend, the G6 package
+name and a generic status are stored privately; glucose is relayed to paired watches through the
+existing encrypted link. No SDK, cloud service, accessibility service or Play Services is added.
+
+Units come from explicit notification units, falling back to the G6 regional package, independently
+of GlucoPhone's display units. Ambiguous values, known error/alert text, `LOW`/`HIGH` without a
+numeric reading and unsupported layouts are rejected. Image-only arrows remain unavailable.
+The parser does not extract numbers from arbitrary alarm prose or infer glucose from thresholds.
+Only one G6 package is accepted at a time; changing sources clears that package binding.
+
+History accumulates while enabled; there is no backfill. Timestamps are Android's notification
+post times, **not guaranteed sensor times**. Reconnecting the listener does not import existing
+notifications or mark them fresh. Old/future posts and callbacks within a minute of the previous
+sample are rejected. A G6 app that republishes stale glucose with a new post time cannot always be
+detected, so the official G6 app remains the reference. After ten minutes without a readable
+update, the phone reports that notification data is stale. Source switches change the watch's
+upstream identity. The phone either carries glucose history into the new source or clears it,
+according to the user's choice; late callbacks cannot write into another source.
+
+This option uses the public Android notification API, but G6 notification layouts are not a
+stable Dexcom data API. Parser tests and emulator checks cover synthetic standard/custom layouts;
+collection across real G6 versions, screen-off operation and battery restrictions needs hardware
+verification. See [xDrip's companion-mode description](https://navid200.github.io/xDrip/docs/Follow/CompanionApp.html)
+for the same general collection approach. This implementation is independent code.
 
 ## Why no Play Services
 
@@ -60,13 +106,27 @@ answer, which is enough for a Dexcom or Nightscout round trip.
 
 ## Pairing and encryption
 
-1. On the phone, **Pair a watch** opens pairing for two minutes. At any other time the phone
-   refuses `PAIR`.
+1. Start on **either device**. On the phone, **Watch → Pair a watch** waits for three minutes and
+   tells the user to open **GlucoWatch → Settings → Pair with phone** on the watch. On the watch,
+   **Pair with phone** checks the phone, then retries automatically for up to three minutes while
+   showing **GlucoPhone → Watch → Pair a watch** instructions. A phone that is not yet ready is
+   retried; the user does not have to press Pair on the watch again after starting the phone.
+   Allow Nearby devices on both devices and keep their pairing screens open. Both sides offer
+   Cancel; a timeout returns to the start button. The phone still refuses `PAIR` outside its window.
 2. The watch sends a SHA-256 commitment to a fresh P-256 public key. The phone answers with its
    own public key. Then the watch reveals its key, and the phone checks it against the commitment.
 3. Both derive a key and a six-digit code from the ECDH secret and a hash of both ids and both
    public keys (HMAC-SHA256). Both screens show the code, and the user confirms it on both. The
    phone keeps the key only after its user confirms, and so does the watch.
+
+Each watch attempt has an eight-second budget across bonded devices, with a two-second pause
+before retrying. Success ends retries; cancellation or closing the watch settings screen closes
+the in-flight socket. Retries rotate the first bonded candidate so an unavailable old phone
+cannot block the current phone indefinitely. The phone reports Bluetooth/permission/startup
+problems in its pairing screen. A cancelled or restarted phone window rejects late handshakes,
+and another request cannot replace a code already being compared. Expiry also stops an unpaired
+phone's listener when the activity is not visible. The service UUID, message format and saved
+pairing keys are unchanged; no Data Layer or new discovery permission is needed.
 
 The commitment comes first so a device in the middle cannot choose keys that make the two codes
 match. It would have to guess the code, a one-in-a-million chance per attempt.
@@ -83,7 +143,7 @@ in both apps). Forgetting a watch on the phone removes its key.
 
 | | Watch app | Phone app |
 |---|---|---|
-| `BLUETOOTH_CONNECT` ("Nearby devices") | Asked when the user pairs, copies a login or saves with the source **Phone app** | Asked on first start and when pairing |
+| `BLUETOOTH_CONNECT` ("Nearby devices") | Asked when the user pairs, copies a login or saves with the source **Phone app** | Asked when pairing, or on startup if a watch is already paired |
 | `BLUETOOTH` | Not needed: minSdk 33 | API 29–30 only (`maxSdkVersion="30"`) |
 | `FOREGROUND_SERVICE_CONNECTED_DEVICE` | – | For the listening service |
 | `POST_NOTIFICATIONS` | – | For the service's notification. Optional; the service runs without it |
@@ -150,6 +210,21 @@ The chart follows now until it is dragged. Drag sideways to go back, fling to tr
 pinch to show between 1 and 48 hours, tap to read one moment (time, glucose, heart rate, insulin
 and carbs there), and double-tap or **Now** to come back. Midnight is marked and labelled with the
 day, and the day being shown sits in the top corner.
+
+A solid grey **Now** line marks the current time, independently of the newest reading. The live
+view leaves at least ten minutes of space after now, including when no forecast is available.
+Missing readings break the glucose curve after a 7.5-minute interval (a five-minute sample plus
+jitter allowance). Faint red shading runs from the first expected missing sample until readings
+resume, or until now for an ongoing gap. It is labelled **No readings**, since the chart cannot
+distinguish a sensor signal loss from a missing cloud or phone update. Tapping the shaded period
+shows that it has no readings instead of snapping to a nearby glucose value.
+
+**30 min change** compares the latest fresh reading with the actual reading nearest thirty
+minutes earlier, within five minutes. It never substitutes an hours-old reading or interpolates
+through a gap. When both endpoints exist, their difference is shown even across a gap, with
+**Gap in data** underneath. Without a suitable baseline it says **Need 30 min history**; with
+stale current data it says **No recent data**. A comparison more than a minute away from thirty
+minutes reports its actual interval underneath.
 
 The phone keeps 14 days (`PhoneRepository.HISTORY_HOURS`), through `SourceSync(retainMs = …)`;
 the watch keeps its day, the default. Dexcom Share only ever serves the last 24 hours, so a Share

@@ -14,6 +14,7 @@ import android.view.ScaleGestureDetector
 import android.view.View
 import android.widget.OverScroller
 import glucowatch.core.GlucoseReading
+import glucowatch.core.GlucoseHistory
 import glucowatch.core.GlucoseUnit
 import glucowatch.core.HeartSample
 import glucowatch.core.PredictedPoint
@@ -214,7 +215,7 @@ class GlucoseChartView(context: Context) : View(context) {
 
     /** Following now, the plot runs on past it to fit the forecast; in history it ends at the window. */
     private fun plotEnd(now: Long) =
-        if (live) maxOf(now, forecast?.points?.lastOrNull()?.timeMillis ?: now) else windowEnd(now)
+        if (live) maxOf(now + 10 * 60_000L, forecast?.points?.lastOrNull()?.timeMillis ?: now) else windowEnd(now)
 
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
         // The chart is what this screen is for, so it takes the height the screen can spare.
@@ -251,9 +252,11 @@ class GlucoseChartView(context: Context) : View(context) {
         drawBand(canvas, left, right, ::y)
         drawGrid(canvas, left, right, top, bottom, start, end, ::x)
         drawLevels(canvas, left, right, min, max, ::y)
+        drawGaps(canvas, left, right, top, bottom, start, minOf(end, now), ::x)
+        if (now in start..end) drawNow(canvas, now, left, right, top, bottom, ::x)
         if (showHeart) drawHeart(canvas, left, right, top, bottom, start, end, ::x)
         drawFood(canvas, left, right, bottom, start, end, ::x, ::y)
-        if (samples.size >= 2) drawChain(canvas, samples, left, right, ::x, ::y)
+        if (samples.isNotEmpty()) drawChain(canvas, samples, left, right, ::x, ::y)
         else drawEmpty(canvas, left, top, bottom)
         drawCarbs(canvas, start, end, ::x, ::y)
         drawInsulin(canvas, left, right, top, start, end, ::x, ::y)
@@ -272,6 +275,42 @@ class GlucoseChartView(context: Context) : View(context) {
         paint.style = Paint.Style.FILL
         paint.color = BAND
         canvas.drawRect(left, y(Brand.TARGET_HIGH.toDouble()), right, y(Brand.TARGET_LOW.toDouble()), paint)
+    }
+
+    private fun drawNow(canvas: Canvas, now: Long, left: Float, right: Float, top: Float, bottom: Float, x: (Long) -> Float) {
+        paint.pathEffect = null
+        paint.strokeWidth = dp(1.3f)
+        paint.style = Paint.Style.STROKE
+        paint.color = Brand.MUTED
+        canvas.drawLine(x(now), top, x(now), bottom, paint)
+        paint.style = Paint.Style.FILL
+        paint.textSize = dp(10f)
+        val label = "Now"
+        canvas.drawText(label, (x(now) - paint.measureText(label) / 2).coerceIn(left, right - paint.measureText(label)), top - dp(7f), paint)
+    }
+
+    private fun drawGaps(
+        canvas: Canvas, left: Float, right: Float, top: Float, bottom: Float,
+        start: Long, until: Long, x: (Long) -> Float,
+    ) {
+        val gaps = GlucoseHistory.gaps(readings, until).filter { it.endMillis > start && it.startMillis < until }
+        if (gaps.isEmpty()) return
+        paint.pathEffect = null
+        gaps.forEach { gap ->
+            val from = x(maxOf(gap.startMillis, start)).coerceIn(left, right)
+            val to = x(minOf(gap.endMillis, until)).coerceIn(left, right)
+            paint.style = Paint.Style.FILL
+            paint.color = Brand.RED and 0x22FFFFFF
+            canvas.drawRect(from, top, to, bottom, paint)
+            paint.style = Paint.Style.STROKE
+            paint.strokeWidth = dp(2f)
+            paint.color = Brand.RED
+            canvas.drawLine(from, top, to, top, paint)
+        }
+        paint.style = Paint.Style.FILL
+        paint.textSize = dp(10f)
+        paint.color = Brand.RED
+        canvas.drawText("No readings", left, top - dp(7f), paint)
     }
 
     private fun drawGrid(
@@ -343,8 +382,8 @@ class GlucoseChartView(context: Context) : View(context) {
         paint.strokeCap = Paint.Cap.ROUND
         paint.strokeJoin = Paint.Join.ROUND
         samples.zipWithNext().forEach { (from, to) ->
-            // A gap means the sensor dropped out; leaving it open says so more honestly than a line.
-            if (to.timeMillis - from.timeMillis > GAP_MS) return@forEach
+            // Missing readings may be a sensor or transport issue; never draw a measured curve across them.
+            if (to.timeMillis - from.timeMillis > GlucoseHistory.GAP_MS) return@forEach
             paint.color = Brand.glucoseColor(to.mgdl)
             canvas.drawLine(x(from.timeMillis), y(from.mgdl.toDouble()), x(to.timeMillis), y(to.mgdl.toDouble()), paint)
         }
@@ -594,7 +633,9 @@ class GlucoseChartView(context: Context) : View(context) {
         start: Long, end: Long, x: (Long) -> Float, y: (Double) -> Float,
     ) {
         if (at !in start..end) return
-        val reading = nearest(at, 8 * 60_000L)
+        val inGap = GlucoseHistory.gaps(readings, minOf(end, System.currentTimeMillis()))
+            .any { at >= it.startMillis && at < it.endMillis }
+        val reading = if (inGap) null else nearest(at, 8 * 60_000L)
         val time = reading?.timeMillis ?: at
         val atX = x(time)
         paint.pathEffect = null
@@ -606,6 +647,7 @@ class GlucoseChartView(context: Context) : View(context) {
 
         val parts = buildList {
             add(clock.format(Date(time)))
+            if (inGap) add("No glucose readings")
             reading?.let { add("${unit.format(it.mgdl.toDouble())} ${unit.label}") }
             if (showHeart) heart.minByOrNull { abs(it.timeMillis - time) }
                 ?.takeIf { abs(it.timeMillis - time) <= 5 * 60_000L }?.let { add("♥ ${it.bpm}") }
@@ -647,8 +689,6 @@ class GlucoseChartView(context: Context) : View(context) {
         /** Dragged to within this of now, the chart takes up following now again. */
         const val LIVE_SNAP_MS = 2 * 60_000L
 
-        /** Longer than this between readings is a sensor gap, not a bond. */
-        const val GAP_MS = 20 * 60_000L
         const val HEART_GAP_MS = 10 * 60_000L
         const val TREATMENT_READING_WINDOW_MS = 10 * 60_000L
         const val MAX_FOOD = 8

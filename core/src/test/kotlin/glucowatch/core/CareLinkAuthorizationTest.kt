@@ -1,6 +1,7 @@
 package glucowatch.core
 
 import java.net.URI
+import java.net.UnknownHostException
 import java.net.URLDecoder
 import java.security.MessageDigest
 import java.util.Base64
@@ -66,5 +67,29 @@ class CareLinkAuthorizationTest {
         ).forEach { (url, time) -> assertFailsWith<IllegalArgumentException> { auth.finish(pending, url, time) } }
         assertEquals(0, calls)
         assertTrue(CareLinkAuthorization.Pending.decode("bad") == null)
+    }
+
+    @Test
+    fun `discovery retries the official global host only when eu dns fails`() {
+        val calls = mutableListOf<String>()
+        val auth = CareLinkAuthorization(HttpTransport { request ->
+            calls += request.url
+            when {
+                request.url == CareLinkClient.DISCOVERY_URL -> throw UnknownHostException("clcloud.minimed.eu")
+                request.url.startsWith("https://clcloud.minimed.com/") -> HttpResponse(200, """{
+                    "supportedCountries":[{"DE":{"region":"EU"}}],
+                    "CP":[{"region":"EU","SSOConfiguration":"https://cfg.test/auth"}]
+                }""")
+                else -> HttpResponse(200, """{
+                    "server":{"hostname":"login.test","port":443},
+                    "client":{"client_id":"public","scope":"openid","redirect_uri":"com.medtronic.carepartner:/sso","audience":"pump"},
+                    "system_endpoints":{"authorization_endpoint_path":"/authorize","token_endpoint_path":"/token"}
+                }""")
+            }
+        })
+
+        auth.begin("DE", now)
+        assertEquals(CareLinkClient.DISCOVERY_URL, calls[0])
+        assertTrue(calls[1].startsWith("https://clcloud.minimed.com/"))
     }
 }

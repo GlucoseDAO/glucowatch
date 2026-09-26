@@ -34,6 +34,7 @@ import glucowatch.core.UrlConnectionTransport
 import glucowatch.core.link.LinkAccount
 import glucowatch.core.link.LinkSource
 import glucowatch.core.link.PhoneLink
+import glucowatch.core.link.PairingSearch
 import glucowatch.core.link.WatchLinkClient
 import io.github.antonkulaga.glucowatch.R
 import io.github.antonkulaga.glucowatch.data.CareLinkTokenStore
@@ -50,6 +51,8 @@ import io.github.antonkulaga.glucowatch.data.StaleAlertReceiver
 import io.github.antonkulaga.glucowatch.data.toHex
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.MainScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -99,6 +102,7 @@ class SettingsActivity : Activity() {
     private var carelinkAccount = ""
     private lateinit var phoneStatus: TextView
     private lateinit var pairButton: Button
+    private lateinit var cancelPairButton: Button
     private lateinit var copyButton: Button
     private lateinit var codeBlock: View
     private lateinit var codeView: TextView
@@ -108,6 +112,9 @@ class SettingsActivity : Activity() {
 
     /** A pairing the phone agreed to, shown as a code until the user confirms it here. */
     private var pendingPairing: PhonePairing? = null
+    private var pairingSearch: PairingSearch? = null
+    private var pairingConnection: PhoneConnection? = null
+    private var pairingJob: Job? = null
 
     /** What to do once the user allows Nearby devices. */
     private var afterBluetooth: (() -> Unit)? = null
@@ -217,6 +224,10 @@ class SettingsActivity : Activity() {
         }
         phoneStatus = hint("")
         pairButton = Button(this).apply { Brand.style(this, primary = false); setOnClickListener { pair() } }
+        cancelPairButton = Button(this).apply {
+            text = "Cancel pairing"; Brand.style(this, primary = false)
+            setOnClickListener { cancelPairing(); phoneResult.text = "Pairing cancelled."; updatePhone() }
+        }
         codeView = TextView(this).apply {
             textSize = 26f; gravity = Gravity.CENTER; setTextColor(Brand.TEXT); typeface = Typeface.DEFAULT_BOLD
         }
@@ -241,7 +252,7 @@ class SettingsActivity : Activity() {
         nightscoutFields.forEach(column::addView)
         carelinkFields.forEach(column::addView)
         phoneFields.forEach(column::addView)
-        listOf(label("Phone"), phoneStatus, pairButton, codeBlock, copyButton, phoneResult).forEach(column::addView)
+        listOf(label("Phone"), phoneStatus, pairButton, cancelPairButton, codeBlock, copyButton, phoneResult).forEach(column::addView)
         heartButton = Button(this).apply {
             text = "Allow heart rate"; Brand.style(this, primary = false)
             setOnClickListener { requestPermissions(arrayOf(heartPermission), REQUEST_HEART_RATE) }
@@ -280,7 +291,7 @@ class SettingsActivity : Activity() {
             val action = afterBluetooth
             afterBluetooth = null
             if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) action?.invoke()
-            else phoneResult.text = "⚠ The phone app needs the Nearby devices permission"
+            else phoneResult.text = "⚠ Allow Nearby devices for GlucoWatch on this watch, then tap Pair with phone again."
         }
         if (requestCode == REQUEST_NOTIFICATIONS) {
             updateAlertPermission()
@@ -334,36 +345,61 @@ class SettingsActivity : Activity() {
     private fun updatePhone() {
         val pairing = pairings.load()
         val pending = pendingPairing != null
-        phoneStatus.text = pairing?.let { "Paired with ${it.phoneName}." }
-            ?: "Not paired. Tap Pair a watch in the phone app, then Pair here."
+        phoneStatus.text = when {
+            pairingSearch != null -> "Waiting for phone (3 min).\nOn the phone: GlucoPhone → Watch → Pair a watch."
+            pending -> "Compare the code with GlucoPhone, then confirm on both devices."
+            else -> pairing?.let { "Paired with ${it.phoneName}." }
+                ?: "Not paired. Start here or in GlucoPhone → Watch on your phone."
+        }
         pairButton.text = if (pairing == null) "Pair with phone" else "Pair again"
-        pairButton.visibility = if (pending) View.GONE else View.VISIBLE
+        pairButton.visibility = if (pending || pairingSearch != null) View.GONE else View.VISIBLE
+        cancelPairButton.visibility = if (pairingSearch != null) View.VISIBLE else View.GONE
         codeBlock.visibility = if (pending) View.VISIBLE else View.GONE
-        copyButton.visibility = if (pairing != null && !pending) View.VISIBLE else View.GONE
+        copyButton.visibility = if (pairing != null && !pending && pairingSearch == null) View.VISIBLE else View.GONE
         if (::carelinkButton.isInitialized) updateCareLink()
     }
 
     /** Agrees on a key with the phone and shows the code the user compares on both screens. */
     private fun pair() = withBluetooth {
-        phoneResult.text = "Looking for GlucoWatch on the phone…"
-        pairButton.isEnabled = false
-        scope.launch {
+        if (pairingSearch != null) return@withBluetooth
+        val search = PairingSearch()
+        val connection = PhoneConnection(this)
+        pairingSearch = search
+        pairingConnection = connection
+        phoneResult.text = "Checking the phone… Leave both pairing screens open. This watch retries automatically."
+        updatePhone()
+        pairingJob = scope.launch {
             val found = runCatching {
                 withContext(Dispatchers.IO) {
-                    PhoneConnection(this@SettingsActivity).open(null) { device, input, output ->
-                        val offer = WatchLinkClient(pairings.watchId).pair(input, output)
-                        PhonePairing(offer.phoneId.toHex(), offer.phoneName, device.address, offer.keys.key) to offer.keys.displayCode
+                    search.await(onRetry = { error -> runOnUiThread {
+                        if (pairingSearch === search) phoneResult.text = "Retrying automatically…\n${error.message}"
+                    } }) { budget ->
+                        connection.open(null, timeoutMs = budget, totalTimeoutMs = budget) { device, input, output ->
+                            val offer = WatchLinkClient(pairings.watchId).pair(input, output)
+                            PhonePairing(offer.phoneId.toHex(), offer.phoneName, device.address, offer.keys.key) to offer.keys.displayCode
+                        }
                     }
                 }
             }
-            pairButton.isEnabled = true
+            coroutineContext.ensureActive()
+            pairingSearch = null
+            pairingConnection = null
             found.onSuccess { (pairing, code) ->
                 pendingPairing = pairing
                 codeView.text = code
                 phoneResult.text = "Check that ${pairing.phoneName} shows the same code, then confirm on both."
-            }.onFailure { phoneResult.text = "⚠ ${it.message}" }
+            }.onFailure { phoneResult.text = "⚠ ${it.message}\nTap Pair with phone to wait again. On the phone use GlucoPhone → Watch → Pair a watch." }
             updatePhone()
         }
+    }
+
+    private fun cancelPairing() {
+        pairingSearch?.cancel()
+        pairingConnection?.cancel()
+        pairingJob?.cancel()
+        pairingSearch = null
+        pairingConnection = null
+        pairingJob = null
     }
 
     private fun confirmPairing() {
@@ -433,6 +469,7 @@ class SettingsActivity : Activity() {
     }
 
     override fun onDestroy() {
+        cancelPairing()
         scope.cancel()
         super.onDestroy()
     }

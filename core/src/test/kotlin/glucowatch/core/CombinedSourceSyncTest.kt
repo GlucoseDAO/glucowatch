@@ -15,6 +15,24 @@ class CombinedSourceSyncTest {
     private fun source(host: String, cache: SyncCache) = SyncSource(host, SourceAccount.Nightscout("https://$host", "", NightscoutApi.V1), cache)
 
     @Test
+    fun `local glucose needs no cloud request and extra sources fetch therapy only`() {
+        val requests = mutableListOf<String>()
+        val transport = HttpTransport { r ->
+            requests += r.url
+            assertTrue("pump.test" in r.url)
+            assertTrue("/entries" !in r.url)
+            HttpResponse(200, if ("/treatments" in r.url) """[{"date":$now,"insulin":2}]""" else "[]")
+        }
+        val sync = CombinedSourceSync(transport)
+        assertTrue(sync.fetch(null, emptyList(), 3, now).isEmpty())
+        assertTrue(requests.isEmpty())
+        val pump = MemoryCache()
+        assertTrue(sync.fetch(null, listOf(source("pump.test", pump)), 3, now).isEmpty())
+        assertTrue(requests.isNotEmpty())
+        assertEquals(2.0, CombinedSourceSync.read(MemoryCache(), listOf(pump)).treatments.single().insulin)
+    }
+
+    @Test
     fun `secondary sensor values never enter the CGM trajectory and therapy merges once`() {
         val primary = MemoryCache()
         val pump = MemoryCache()

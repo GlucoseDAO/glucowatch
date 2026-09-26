@@ -4,6 +4,7 @@ import android.Manifest
 import android.bluetooth.BluetoothClass
 import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothManager
+import android.bluetooth.BluetoothSocket
 import android.content.Context
 import android.content.pm.PackageManager
 import android.util.Log
@@ -15,6 +16,8 @@ import java.io.InputStream
 import java.io.OutputStream
 import java.util.Base64
 import java.util.Timer
+import java.util.concurrent.atomic.AtomicReference
+import android.os.SystemClock
 import kotlin.concurrent.schedule
 
 /** The phone app this watch paired with. [key] seals every request, [address] is the phone's Bluetooth address. */
@@ -55,6 +58,15 @@ class PhonePairingStore(context: Context) {
  */
 class PhoneConnection(context: Context) {
     private val appContext = context.applicationContext
+    private val activeSocket = AtomicReference<BluetoothSocket?>()
+    @Volatile private var cancelled = false
+    private var discoveryOffset = 0
+
+    /** Close a blocked pairing connect/read immediately when its screen cancels the search. */
+    fun cancel() {
+        cancelled = true
+        runCatching { activeSocket.getAndSet(null)?.close() }
+    }
 
     /** BLUETOOTH_CONNECT, shown to the user as "Nearby devices". */
     fun hasPermission() = appContext.checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED
@@ -64,7 +76,10 @@ class PhoneConnection(context: Context) {
      * and runs [block] on the first that answers. A refusal from the phone app ([LinkException])
      * ends the search; a device without the app is skipped.
      */
-    fun <T> open(address: String?, timeoutMs: Long = TIMEOUT_MS, block: (BluetoothDevice, InputStream, OutputStream) -> T): T {
+    fun <T> open(address: String?, timeoutMs: Long = TIMEOUT_MS, totalTimeoutMs: Long? = null,
+                 block: (BluetoothDevice, InputStream, OutputStream) -> T): T {
+        if (cancelled) throw IOException("Pairing cancelled")
+        val deadline = totalTimeoutMs?.let { SystemClock.elapsedRealtime() + it }
         val adapter = appContext.getSystemService(BluetoothManager::class.java)?.adapter ?: throw IOException("This watch has no Bluetooth")
         if (!hasPermission()) throw IOException("Allow Nearby devices for GlucoWatch in Settings")
         if (!adapter.isEnabled) throw IOException("Bluetooth is off")
@@ -77,12 +92,19 @@ class PhoneConnection(context: Context) {
             bonded.filter { it.address == address }.ifEmpty { throw IOException("The paired phone is not connected to this watch") }
         } else {
             // Phones first; a watch is bonded to few devices, but earbuds each cost a timeout.
-            bonded.filter { it.bluetoothClass?.majorDeviceClass == BluetoothClass.Device.Major.PHONE }.ifEmpty { bonded }
+            val ordered = bonded.sortedByDescending { it.bluetoothClass?.majorDeviceClass == BluetoothClass.Device.Major.PHONE }
+            // An unreachable old phone must not consume every retry's entire connection budget.
+            val offset = if (ordered.isEmpty()) 0 else discoveryOffset++ % ordered.size
+            ordered.drop(offset) + ordered.take(offset)
         }
+        if (candidates.isEmpty()) throw IOException("Connect this watch to your phone in Galaxy Wearable first, then try pairing again.")
         var last: IOException? = null
         for (device in candidates) {
+            if (cancelled) throw IOException("Pairing cancelled")
+            val remaining = deadline?.let { it - SystemClock.elapsedRealtime() } ?: timeoutMs
+            if (remaining <= 0) break
             try {
-                return connect(device, timeoutMs, block)
+                return connect(device, minOf(timeoutMs, remaining), block)
             } catch (e: LinkException) {
                 throw e
             } catch (e: IOException) {
@@ -90,7 +112,7 @@ class PhoneConnection(context: Context) {
                 last = e
             }
         }
-        throw IOException("GlucoWatch on the phone did not answer. Is it installed and Bluetooth on?", last)
+        throw IOException("GlucoPhone did not answer. On the phone, open GlucoPhone → Watch → Pair a watch and allow Nearby devices.", last)
     }
 
     private fun <T> connect(device: BluetoothDevice, timeoutMs: Long, block: (BluetoothDevice, InputStream, OutputStream) -> T): T {
@@ -99,15 +121,18 @@ class PhoneConnection(context: Context) {
         } catch (e: SecurityException) {
             throw IOException("Allow Nearby devices for GlucoWatch in Settings")
         }
+        activeSocket.set(socket)
         // RFCOMM sockets have no timeouts of their own: closing the socket ends a blocked connect or read.
         val watchdog = Timer("phone-link", true).apply { schedule(timeoutMs) { runCatching { socket.close() } } }
         try {
+            if (cancelled) throw IOException("Pairing cancelled")
             socket.connect()
             return block(device, socket.inputStream, socket.outputStream)
         } catch (e: SecurityException) {
             throw IOException("Allow Nearby devices for GlucoWatch in Settings")
         } finally {
             watchdog.cancel()
+            activeSocket.compareAndSet(socket, null)
             runCatching { socket.close() }
         }
     }

@@ -9,6 +9,8 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.put
 import java.io.IOException
+import java.net.URI
+import java.net.UnknownHostException
 import java.net.URLEncoder
 import java.util.Base64
 import kotlin.math.abs
@@ -235,7 +237,7 @@ class CareLinkClient(
     }
 
     private fun execute(request: HttpRequest): HttpResponse = try {
-        transport.execute(request)
+        executeCareLink(transport, request)
     } catch (e: IOException) {
         throw CareLinkException.Network(e)
     }
@@ -331,6 +333,33 @@ class CareLinkClient(
         }
     }
 }
+
+/**
+ * MiniMed publishes the same CarePartner service on `.eu` and `.com`. Some roaming/mobile DNS
+ * resolvers intermittently fail the `.eu` name while resolving `.com`. Retry only that exact DNS
+ * failure on the other official hostname; every request still uses HTTPS and normal certificate
+ * verification. Route, TLS and server failures are not hidden by this fallback.
+ */
+internal fun executeCareLink(transport: HttpTransport, request: HttpRequest): HttpResponse = try {
+    transport.execute(request)
+} catch (error: IOException) {
+    val uri = URI(request.url)
+    if (uri.host != CARELINK_EU_HOST || !error.hasUnknownHost()) throw error
+    val alternate = URI(uri.scheme, uri.userInfo, CARELINK_GLOBAL_HOST, uri.port, uri.path, uri.query, uri.fragment).toString()
+    transport.execute(request.copy(url = alternate))
+}
+
+private fun Throwable.hasUnknownHost(): Boolean {
+    var error: Throwable? = this
+    repeat(12) {
+        if (error is UnknownHostException) return true
+        error = error?.cause?.takeIf { it !== error } ?: return false
+    }
+    return false
+}
+
+private const val CARELINK_EU_HOST = "clcloud.minimed.eu"
+private const val CARELINK_GLOBAL_HOST = "clcloud.minimed.com"
 
 private fun JsonObject.string(key: String) = (this[key] as? JsonPrimitive)?.contentOrNull
 private fun JsonObject.double(key: String) = string(key)?.toDoubleOrNull()

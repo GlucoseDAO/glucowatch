@@ -8,6 +8,7 @@ import glucowatch.core.CacheFormat
 import glucowatch.core.CombinedSourceSync
 import glucowatch.core.SyncSource
 import glucowatch.core.DemoData
+import glucowatch.core.DexcomNotification
 import glucowatch.core.GlucoseReading
 import glucowatch.core.LoopStatus
 import glucowatch.core.NightscoutAddress
@@ -45,6 +46,7 @@ data class PhoneState(
  * The visible dashboard and a watch's sync trigger fetches; there is no background polling job.
  */
 class PhoneRepository(context: Context) {
+    private val appContext = context.applicationContext
     private val settingsStore = PhoneSettingsStore(context)
     private val modelStore = PhoneModelStore(context)
     private val cache = context.applicationContext.getSharedPreferences("cache", Context.MODE_PRIVATE)
@@ -60,7 +62,10 @@ class PhoneRepository(context: Context) {
             readings = if (demo) DemoData.readings(now, HISTORY_HOURS) else combined.readings,
             treatments = if (demo) DemoData.treatments(now, HISTORY_HOURS) else combined.treatments,
             loop = if (demo) DemoData.loopStatus(now) else combined.loop,
-            lastError = cached(settings, "error").takeIf { cache.getString(PLAN, null) == settings.configurationKey }?.ifEmpty { null },
+            lastError = listOfNotNull(
+                notificationProblem(settings, combined.readings.lastOrNull(), now),
+                cached(settings, "error").takeIf { cache.getString(PLAN, null) == settings.configurationKey }?.ifEmpty { null },
+            ).joinToString("\n").ifEmpty { null },
             lastFetchMillis = cached(settings, "fetchedAt").toLongOrNull() ?: 0L,
         )
     }
@@ -85,7 +90,8 @@ class PhoneRepository(context: Context) {
                     fun selected(of: LinkSource) = SyncSource(settings.label(of), settings.account(of, carelink)!!,
                         syncCache(settings, of), problem(settings, of))
                     val errors = CombinedSourceSync(retainMs = HISTORY_MS)
-                        .fetch(selected(settings.source), settings.extras.map(::selected), CHART_HOURS, now)
+                        .fetch(if (settings.usesDexcomNotifications) null else selected(settings.source),
+                            settings.extras.map(::selected), CHART_HOURS, now)
                     store(settings) {
                         putString("error", errors.joinToString("\n").ifEmpty { null })
                         putLong("fetchedAt", now)
@@ -99,6 +105,66 @@ class PhoneRepository(context: Context) {
 
     fun clearCache() {
         cache.edit().clear().apply()
+    }
+
+    /**
+     * Changes the configured source under the fetch/listener lock. When requested, glucose already
+     * on the chart is moved to the new account cache; treatments and connection state are fetched
+     * anew from the selected sources. Old fetches and notification callbacks cannot write across
+     * this transaction because they use this lock and [store]'s configuration guard.
+     */
+    suspend fun changeSettings(new: PhoneSettings, keepGlucoseHistory: Boolean) = lock.withLock {
+        val old = settingsStore.load()
+        if (old.accountKey == new.accountKey) {
+            settingsStore.save(new)
+            return@withLock
+        }
+        val history = if (keepGlucoseHistory && old.source != LinkSource.DEMO && new.source != LinkSource.DEMO) {
+            CombinedSourceSync.read(syncCache(old), emptyList()).readings
+        } else emptyList()
+        settingsStore.save(new)
+        cache.edit().clear().putString(ACCOUNT, new.accountKey).apply()
+        if (history.isNotEmpty()) {
+            syncCache(new).put(mapOf(SourceSync.READINGS to CacheFormat.encodeReadings(history)))
+        }
+    }
+
+    /** Uses the same lock and account guard as remote fetches; a queued callback cannot cross a source switch. */
+    suspend fun acceptNotification(settings: PhoneSettings, packageName: String, reading: GlucoseReading?) = lock.withLock {
+        if (!settings.usesDexcomNotifications || settingsStore.load().configurationKey != settings.configurationKey ||
+            !DexcomNotificationService.hasAccess(appContext)) return@withLock
+        if (cache.getString(ACCOUNT, null) != settings.accountKey) store(settings) { clear() }
+        val origin = cached(settings, "notificationPackage")
+        if (origin.isNotEmpty() && origin != packageName) {
+            store(settings) { putString("notificationError", "More than one G6 app is sending readings. Keep Quick Glance enabled in only one app.") }
+            return@withLock
+        }
+        if (reading == null) {
+            store(settings) { putString("notificationError", "G6 notification has no readable current glucose. Check Quick Glance in the G6 app.") }
+            return@withLock
+        }
+        val now = System.currentTimeMillis()
+        if (now - reading.timeMillis > DexcomNotification.MAX_AGE_MS) return@withLock
+        val sourceCache = syncCache(settings)
+        val previous = CacheFormat.decodeReadings(sourceCache.get(SourceSync.READINGS).orEmpty())
+        if (!DexcomNotification.isNew(reading, previous.lastOrNull())) return@withLock
+        sourceCache.put(mapOf(SourceSync.READINGS to CacheFormat.encodeReadings(
+            SourceSync.merge(previous, listOf(reading), now, HISTORY_MS))))
+        store(settings) {
+            putString("notificationPackage", packageName)
+            remove("notificationError")
+        }
+    }
+
+    private fun notificationProblem(settings: PhoneSettings, latest: GlucoseReading?, now: Long): String? {
+        if (!settings.usesDexcomNotifications) return null
+        return when {
+            !DexcomNotificationService.hasAccess(appContext) -> "Allow GlucoPhone notification access in Connect."
+            cached(settings, "notificationError").isNotEmpty() -> cached(settings, "notificationError")
+            latest == null -> "Waiting for the next G6 notification. Enable Quick Glance in the G6 app; this can take five minutes."
+            now - latest.timeMillis > DexcomNotification.MAX_AGE_MS -> "No recent G6 notification. Check the G6 app and notification access."
+            else -> null
+        }
     }
 
     fun forecast(state: PhoneState, horizonMinutes: Int): Prediction? {

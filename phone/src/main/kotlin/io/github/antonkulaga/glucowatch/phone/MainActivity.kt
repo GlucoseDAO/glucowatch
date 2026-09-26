@@ -13,6 +13,7 @@ import android.os.Build
 import android.os.Bundle
 import android.provider.MediaStore
 import android.text.InputType
+import android.text.method.PasswordTransformationMethod
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
@@ -80,6 +81,7 @@ class MainActivity : Activity() {
     private lateinit var chartUnit: TextView
     private lateinit var rangeValue: TextView
     private lateinit var changeValue: TextView
+    private lateinit var changeNote: TextView
     private lateinit var forecastValue: TextView
     private lateinit var mealSummary: TextView
     private lateinit var heartState: TextView
@@ -107,6 +109,9 @@ class MainActivity : Activity() {
     private lateinit var predictor: RadioGroup
     private lateinit var result: TextView
     private lateinit var shareFields: List<View>
+    private lateinit var dexcomNotifications: CheckBox
+    private lateinit var notificationFields: List<View>
+    private lateinit var notificationAccess: Button
     private lateinit var nightscoutFields: List<View>
     private lateinit var carelinkFields: List<View>
     private lateinit var carelinkStatus: TextView
@@ -117,6 +122,7 @@ class MainActivity : Activity() {
     private lateinit var pairingText: TextView
     private lateinit var pairingCode: TextView
     private lateinit var pairingButtons: View
+    private lateinit var confirmPairButton: Button
 
     /** What to do once the user allows Nearby devices. */
     private var afterBluetooth: (() -> Unit)? = null
@@ -370,12 +376,13 @@ class MainActivity : Activity() {
 
         rangeValue = metricValue()
         changeValue = metricValue()
+        changeNote = hint("").apply { textSize = 10f; gravity = Gravity.CENTER }
         forecastValue = metricValue()
         val metrics = LinearLayout(this).apply {
             setPadding(0, dp(10), 0, dp(14))
             addView(metricColumn("Time in range", rangeValue))
             addView(divider())
-            addView(metricColumn("30 min change", changeValue))
+            addView(metricColumn("30 min change", changeValue, changeNote))
             addView(divider())
             addView(metricColumn("Forecast", forecastValue))
         }
@@ -552,9 +559,28 @@ class MainActivity : Activity() {
     // ---------------------------------------------------------------- connect, model, watch
 
     private fun buildConnect(connect: LinearLayout, s: PhoneSettings) {
-        source = radios(LinkSource.entries.map { it.name to PhoneSettings(source = it).sourceLabel }, s.source.name)
+        source = radios(LinkSource.entries.map { it.name to if (it == LinkSource.SHARE) "Dexcom" else PhoneSettings(source = it).sourceLabel }, s.source.name)
+        dexcomNotifications = CheckBox(this).apply {
+            text = "Use G6 notifications instead of Dexcom Share"
+            setTextColor(Brand.TEXT)
+            buttonTintList = android.content.res.ColorStateList.valueOf(Brand.TEXT)
+            isChecked = s.dexcomNotifications
+            setOnCheckedChangeListener { _, _ -> updateVisibility() }
+        }
+        notificationAccess = Button(this).apply {
+            Brand.style(this, false)
+            setOnClickListener {
+                startActivity(Intent(android.provider.Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
+            }
+        }
+        notificationFields = listOf(
+            hint("Reads the official G6 app's ongoing Quick Glance notification on this phone. Enable Quick Glance in G6, allow notification access below, then tap Save & test. No Dexcom login or internet is needed for glucose. New readings can take five minutes to arrive."),
+            hint("Android grants access to notifications from all apps; GlucoPhone only processes G6. It stores glucose locally and shares it with your paired watch. Choose Phone app as the watch's source. History starts here; notification times may differ from sensor times."),
+            notificationAccess,
+        )
         username = field("Dexcom username / email", s.username, InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS)
         password = field("Password", s.password, InputType.TYPE_TEXT_VARIATION_PASSWORD)
+        val showPassword = passwordToggle(password, "Show password")
         region = radios(Region.entries.map { it.name to it.label }, s.region.name)
         nightscoutUrl = field("https://your-site.example", s.nightscoutUrl, InputType.TYPE_TEXT_VARIATION_URI)
         nightscoutToken = field("optional", s.nightscoutToken, InputType.TYPE_TEXT_VARIATION_PASSWORD)
@@ -571,7 +597,7 @@ class MainActivity : Activity() {
         unit = radios(GlucoseUnit.entries.map { it.name to it.label }, s.unit.name)
         result = TextView(this).apply { textSize = 14f; setTextColor(Brand.TEXT); setPadding(0, dp(10), 0, 0) }
 
-        shareFields = listOf(label("Account"), username, password, label("Region"), region,
+        shareFields = listOf(label("Account"), username, password, showPassword, label("Region"), region,
             hint("Share must be on in the Dexcom app, with at least one follower."))
         nightscoutFields = listOf(
             label("Nightscout address"), nightscoutUrl,
@@ -579,21 +605,22 @@ class MainActivity : Activity() {
             label("API"), nightscoutApi,
         )
         carelinkFields = listOf(
-            label("CareLink account"), carelinkStatus, label("Country"), carelinkCountry,
+            label("CareLink account"), carelinkStatus, label("CareLink account country"), carelinkCountry,
             Button(this).apply {
                 text = "Sign in to CareLink"; Brand.style(this, true)
                 setOnClickListener {
-                    saveConnectionSettings()
                     startActivity(Intent(this@MainActivity, CareLinkSignInActivity::class.java)
                         .putExtra("country", carelinkCountry.text.toString().trim().uppercase()))
                 }
             },
-            hint("Sign in with a CareLink care partner account linked to your MiniMed pump. To share this combined chart, choose Phone app on the watch."),
+            hint("Your CareLink username and password are entered only on Medtronic's browser page and are never stored by GlucoPhone. The country selects your account's regional login server. Sign in with a care partner account linked to the patient. To share the combined chart, choose Phone app on the watch."),
         )
         connect.addView(card().apply {
             addView(cardTitle("Glucose source"))
             addView(hint("Choose a source. Your login stays in private app storage."))
             addView(source)
+            addView(dexcomNotifications)
+            notificationFields.forEach(::addView)
             addView(label("Additional insulin sources"))
             addView(hint("For example: Dexcom for glucose, CareLink for pump insulin. Basal, bolus and carbs appear on the same timeline."))
             therapySources.values.forEach(::addView)
@@ -652,8 +679,9 @@ class MainActivity : Activity() {
         pairingCode = TextView(this).apply {
             textSize = 34f; gravity = Gravity.CENTER; setTextColor(Brand.TEXT); typeface = Typeface.DEFAULT_BOLD
         }
+        confirmPairButton = Button(this).apply { text = "Codes match"; Brand.style(this, true); setOnClickListener { confirmPairing() } }
         pairingButtons = LinearLayout(this).apply {
-            addView(Button(this@MainActivity).apply { text = "Codes match"; Brand.style(this, true); setOnClickListener { confirmPairing() } }, weight())
+            addView(confirmPairButton, weight())
             addView(Button(this@MainActivity).apply {
                 text = "Cancel"; Brand.style(this, false)
                 setOnClickListener { PairingWindow.close(); LinkService.update(this@MainActivity) }
@@ -661,7 +689,7 @@ class MainActivity : Activity() {
         }
         watch.addView(card().apply {
             addView(cardTitle("Paired watches"))
-            addView(hint("Your watch asks this phone for fresh readings and a forecast over the encrypted Bluetooth link."))
+            addView(hint("Start pairing here or on your watch. The first device waits while you start the other; then confirm the matching code on both."))
             addView(watchList); addView(pairButton); addView(pairingText); addView(pairingCode); addView(pairingButtons)
         })
     }
@@ -749,10 +777,11 @@ class MainActivity : Activity() {
 
     override fun onStart() {
         super.onStart()
+        updateVisibility()
         foregroundRefresh = scope.launch {
             while (isActive) {
                 render(repository.refresh(maxAgeMs = 60_000))
-                delay(60_000)
+                delay(if (store.load().usesDexcomNotifications) 5_000 else 60_000)
             }
         }
     }
@@ -776,7 +805,12 @@ class MainActivity : Activity() {
         val action = afterBluetooth
         afterBluetooth = null
         if (LinkService.hasPermission(this)) action?.invoke()
-        else result.text = "⚠ The watch can only connect with the Nearby devices permission"
+        else {
+            val message = "Allow Nearby devices for GlucoPhone in the phone's app permissions, then tap Pair a watch again."
+            result.text = "⚠ $message"
+            pairingText.text = message
+            pairingText.visibility = View.VISIBLE
+        }
     }
 
     @Deprecated("The platform result API is enough for these two one-off imports")
@@ -894,6 +928,8 @@ class MainActivity : Activity() {
             sourceLine.text = if (state.settings.source == LinkSource.DEMO) "Demo data" else "${state.settings.sourceLabel} · No glucose readings yet"
             rangeValue.text = "—"
             changeValue.text = "—"
+            changeNote.text = "Need 30 min history"
+            changeNote.setTextColor(Brand.MUTED)
             forecastValue.text = "—"
         } else {
             val minutes = ((now - latest.timeMillis) / 60_000).coerceAtLeast(0)
@@ -915,19 +951,29 @@ class MainActivity : Activity() {
             statusPill.text = status
             statusPill.setTextColor(readingColor)
             statusPill.background = outline(readingColor)
+            val recentDelta = state.readings.filter {
+                it.timeMillis >= latest.timeMillis - glucowatch.core.GlucoseHistory.GAP_MS
+            }.lastDelta()
             sourceLine.text = if (stale) "${state.settings.sourceLabel} · Last known glucose\n" +
                 "${state.settings.label(state.settings.source)} has no recent glucose readings."
             else "${state.settings.sourceLabel}  ·  ${latest.trend.description.ifEmpty { "trend unavailable" }}" +
-                (state.readings.lastDelta()?.let { "  ·  ${u.formatDelta(it)} in 5 min" } ?: "")
+                (recentDelta?.let { "  ·  ${u.formatDelta(it)} in 5 min" } ?: "")
 
             val day = state.readings.filter { it.timeMillis >= now - 24 * 3_600_000L }
             rangeValue.text = if (day.isEmpty()) "—"
                 else "${100 * day.count { it.mgdl in Brand.TARGET_LOW..Brand.TARGET_HIGH } / day.size}%"
             rangeValue.setTextColor(Brand.TEXT)
-            val before = state.readings.asReversed().firstOrNull { latest.timeMillis - it.timeMillis >= 25 * 60_000L }
-            val change = before?.let { (latest.mgdl - it.mgdl).toDouble() }
-            changeValue.text = if (stale) "—" else change?.let(u::formatDelta) ?: "—"
+            val change = glucowatch.core.GlucoseHistory.change30Minutes(state.readings, now)
+            changeValue.text = change?.let { u.formatDelta(it.mgdl) } ?: "—"
             changeValue.setTextColor(Brand.TEXT)
+            changeNote.text = when {
+                stale -> "No recent data"
+                change == null -> "Need 30 min history"
+                change.hasGap -> "Gap in data"
+                kotlin.math.abs(change.elapsedMillis - 30 * 60_000L) >= 60_000L -> "${change.elapsedMillis / 60_000} min apart"
+                else -> u.label
+            }
+            changeNote.setTextColor(if (change?.hasGap == true) Brand.RED else Brand.MUTED)
             val forecast = chart.forecast?.points?.lastOrNull()
             forecastValue.text = forecast?.let { u.format(it.mgdl) } ?: "—"
             forecastValue.setTextColor(forecast?.let { Brand.glucoseColor(it.mgdl.toInt()) } ?: Brand.TEXT)
@@ -978,16 +1024,21 @@ class MainActivity : Activity() {
         val chosen = LinkSource.valueOf(selected(source))
         fun used(of: LinkSource) = chosen == of || (chosen != LinkSource.DEMO && therapySources[of]?.isChecked == true)
         therapySources.forEach { (of, checkbox) -> checkbox.isEnabled = chosen != LinkSource.DEMO && chosen != of }
-        shareFields.forEach { it.visibility = if (chosen == LinkSource.SHARE) View.VISIBLE else View.GONE }
+        dexcomNotifications.visibility = if (chosen == LinkSource.SHARE) View.VISIBLE else View.GONE
+        val notifications = chosen == LinkSource.SHARE && dexcomNotifications.isChecked
+        notificationFields.forEach { it.visibility = if (notifications) View.VISIBLE else View.GONE }
+        notificationAccess.text = if (DexcomNotificationService.hasAccess(this)) "Notification access allowed · Manage" else "Allow notification access"
+        shareFields.forEach { it.visibility = if (chosen == LinkSource.SHARE && !notifications) View.VISIBLE else View.GONE }
         nightscoutFields.forEach { it.visibility = if (used(LinkSource.NIGHTSCOUT)) View.VISIBLE else View.GONE }
         carelinkFields.forEach { it.visibility = if (used(LinkSource.CARELINK)) View.VISIBLE else View.GONE }
         carelinkStatus.text = PhoneCareLinkStore(this).load()?.let { "Signed in (${it.country})" } ?: "Not signed in"
     }
 
-    private fun saveConnectionSettings(): PhoneSettings {
+    private fun connectionSettings(): PhoneSettings {
         val old = store.load()
-        val new = old.copy(
+        return old.copy(
             source = LinkSource.valueOf(selected(source)),
+            dexcomNotifications = dexcomNotifications.isChecked,
             username = username.text.toString().trim(),
             password = password.text.toString(),
             region = Region.valueOf(selected(region)),
@@ -997,17 +1048,33 @@ class MainActivity : Activity() {
             unit = GlucoseUnit.valueOf(selected(unit)),
             alsoFrom = therapySources.filterValues { it.isChecked }.keys.toSet(),
         )
-        if (new.accountKey != old.accountKey) repository.clearCache()
-        store.save(new)
-        // Demo data brings its own heart rate; a real source reads Health Connect.
-        if (new.source != old.source) refreshHeartRate()
-        return new
     }
 
     private fun saveAndTest() {
-        val new = saveConnectionSettings()
+        val old = store.load()
+        val new = connectionSettings()
+        val providerChanged = old.glucoseProvider != new.glucoseProvider &&
+            old.source != LinkSource.DEMO && new.source != LinkSource.DEMO
+        if (providerChanged) {
+            AlertDialog.Builder(this)
+                .setTitle("Change glucose source?")
+                .setMessage("You are changing from ${old.sourceLabel} to ${new.sourceLabel}. " +
+                    "Keep the glucose history already on the chart, or clear it and start with the new source?")
+                .setPositiveButton("Keep history") { _, _ -> applyConnectionSettings(old, new, keepHistory = true) }
+                .setNegativeButton("Clear history") { _, _ -> applyConnectionSettings(old, new, keepHistory = false) }
+                .setNeutralButton("Cancel", null)
+                .show()
+            return
+        }
+        applyConnectionSettings(old, new, keepHistory = false)
+    }
+
+    private fun applyConnectionSettings(old: PhoneSettings, new: PhoneSettings, keepHistory: Boolean) {
         result.text = "Testing…"
         scope.launch {
+            repository.changeSettings(new, keepHistory)
+            // Demo data brings its own heart rate; a real source reads Health Connect.
+            if (new.source != old.source) refreshHeartRate()
             val state = repository.refresh()
             render(state)
             result.text = when {
@@ -1037,7 +1104,7 @@ class MainActivity : Activity() {
     }
 
     private fun startPairing() = withBluetooth {
-        PairingWindow.open()
+        PairingWindow.open(this)
         LinkService.update(this)
     }
 
@@ -1055,13 +1122,16 @@ class MainActivity : Activity() {
         val open = PairingWindow.isOpen
         pairingText.text = when {
             pending != null -> "${pending.watchName} wants to pair. Check that the watch shows the same code."
-            open -> "On the watch, open GlucoWatch → Settings and tap Pair with phone. Pairing stays open for 2 minutes."
+            open -> listOfNotNull(LinkService.problem,
+                "Waiting for watch…\nOn the watch: GlucoWatch → Settings → Pair with phone. If it is already searching, leave it there; it will connect automatically. This phone waits for 3 minutes.").joinToString("\n")
+            PairingWindow.expired -> "Pairing timed out. Start again here or on the watch, then start the other device."
             else -> ""
         }
         pairingText.visibility = if (pairingText.text.isEmpty()) View.GONE else View.VISIBLE
         pairingCode.text = pending?.keys?.displayCode.orEmpty()
         pairingCode.visibility = if (pending != null) View.VISIBLE else View.GONE
-        pairingButtons.visibility = if (pending != null) View.VISIBLE else View.GONE
+        pairingButtons.visibility = if (pending != null || open) View.VISIBLE else View.GONE
+        confirmPairButton.visibility = if (pending != null) View.VISIBLE else View.GONE
         pairButton.visibility = if (open || pending != null) View.GONE else View.VISIBLE
     }
 
@@ -1090,6 +1160,20 @@ class MainActivity : Activity() {
     private fun field(hint: String, value: String, variation: Int) = EditText(this).apply {
         this.hint = hint; setText(value); isSingleLine = true
         inputType = InputType.TYPE_CLASS_TEXT or variation
+    }
+
+    /** An explicit, accessible password control; the eye reinforces what the checkbox reveals. */
+    private fun passwordToggle(field: EditText, text: String) = CheckBox(this).apply {
+        this.text = text
+        setTextColor(Brand.MUTED)
+        buttonTintList = android.content.res.ColorStateList.valueOf(Brand.MUTED)
+        setCompoundDrawablesRelativeWithIntrinsicBounds(0, 0, R.drawable.ic_visibility, 0)
+        compoundDrawablePadding = dp(8)
+        compoundDrawableTintList = android.content.res.ColorStateList.valueOf(Brand.MUTED)
+        setOnCheckedChangeListener { _, visible ->
+            field.transformationMethod = if (visible) null else PasswordTransformationMethod.getInstance()
+            field.setSelection(field.text.length)
+        }
     }
 
     private fun radios(options: List<Pair<String, String>>, checked: String) = RadioGroup(this).apply {
@@ -1138,13 +1222,14 @@ class MainActivity : Activity() {
         textSize = 24f; setTextColor(Brand.TEXT); typeface = Typeface.DEFAULT_BOLD; setPadding(0, dp(4), 0, 0)
     }
 
-    private fun metricColumn(title: String, number: TextView) = LinearLayout(this).apply {
+    private fun metricColumn(title: String, number: TextView, note: TextView? = null) = LinearLayout(this).apply {
         orientation = LinearLayout.VERTICAL
         gravity = Gravity.CENTER_HORIZONTAL
         addView(TextView(this@MainActivity).apply {
             text = title; textSize = 12f; setTextColor(Brand.MUTED); gravity = Gravity.CENTER
         })
         addView(number)
+        note?.let(::addView)
         layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
     }
 

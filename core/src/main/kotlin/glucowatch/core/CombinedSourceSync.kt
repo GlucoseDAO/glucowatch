@@ -14,11 +14,12 @@ class CombinedSourceSync(
     private val transport: HttpTransport = UrlConnectionTransport(),
     private val retainMs: Long = SourceSync.DAY_MS,
 ) {
-    fun fetch(primary: SyncSource, extras: List<SyncSource>, chartHours: Int, now: Long = System.currentTimeMillis()): List<String> =
-        (listOf(primary) + extras).mapIndexedNotNull { index, source ->
+    // A local notification source has no remote primary; extras still fetch therapy only.
+    fun fetch(primary: SyncSource?, extras: List<SyncSource>, chartHours: Int, now: Long = System.currentTimeMillis()): List<String> =
+        (listOfNotNull(primary?.let { it to true }) + extras.map { it to false }).mapNotNull { (source, glucose) ->
             runCatching {
                 source.problem?.let { throw IllegalStateException(it) }
-                SourceSync(source.cache, transport, retainMs).fetch(source.account, chartHours, now, glucose = index == 0)
+                SourceSync(source.cache, transport, retainMs).fetch(source.account, chartHours, now, glucose = glucose)
             }.exceptionOrNull()?.let { "${source.label}: ${NetworkFailure.describe(it)}" }
         }
 

@@ -9,7 +9,11 @@ the extra sources never splice a second sensor's glucose values into it.
 **Sign in to CareLink** opens the system browser. Choose the account's two-letter country code
 and sign in with a care partner account linked to the patient. The app validates OAuth state,
 uses PKCE and stores the resulting rotating tokens in private app storage. It does not store a
-CareLink password. The flow uses the CarePartner discovery endpoint, as described by
+CareLink username or password. The country is required before sign-in because it selects the
+account's regional server; it is the account country, not necessarily the phone's current
+location. If mobile DNS cannot resolve the official `.eu` CarePartner cloud, the client retries
+the identical discovery/API path on MiniMed's official `.com` cloud. This retry happens only for
+a DNS failure and keeps normal HTTPS certificate verification. The flow uses the CarePartner discovery endpoint, as described by
 [xDrip's CareLink maintainers](https://github.com/NightscoutFoundation/xDrip/discussions/4318).
 
 For the watch to show the phone's combined data, choose **Phone app** on the watch. Its encrypted

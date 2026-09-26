@@ -25,7 +25,11 @@ data class PhoneSettings(
     val heartTrack: Boolean = false,
     val carelinkAccount: String = "",
     val alsoFrom: Set<LinkSource> = emptySet(),
+    val dexcomNotifications: Boolean = false,
 ) {
+    val usesDexcomNotifications get() = source == LinkSource.SHARE && dexcomNotifications
+    /** Identifies the provider of future glucose readings, independently of its account. */
+    val glucoseProvider get() = if (usesDexcomNotifications) "DEXCOM_NOTIFICATIONS" else source.name
     val extras get() = if (source == LinkSource.DEMO) emptyList() else THERAPY_SOURCES.filter { it in alsoFrom && it != source }
 
     fun account(of: LinkSource, carelink: CareLinkLogin): SourceAccount? = when (of) {
@@ -38,7 +42,7 @@ data class PhoneSettings(
     /** Changes when readings would come from another account or server, as on the watch. */
     fun keyOf(of: LinkSource): String = when (of) {
         LinkSource.DEMO -> "demo"
-        LinkSource.SHARE -> "share:$region:$username"
+        LinkSource.SHARE -> if (dexcomNotifications) "dexcom-notifications" else "share:$region:$username"
         LinkSource.NIGHTSCOUT -> "nightscout:${nightscoutUrl.trim().trimEnd('/').lowercase()}:$nightscoutApi"
         LinkSource.CARELINK -> "carelink:$carelinkAccount"
     }
@@ -52,12 +56,15 @@ data class PhoneSettings(
 
     fun label(of: LinkSource) = when (of) {
         LinkSource.DEMO -> "Demo data"
-        LinkSource.SHARE -> "Dexcom Share"
+        LinkSource.SHARE -> if (dexcomNotifications) "Dexcom notifications" else "Dexcom Share"
         LinkSource.NIGHTSCOUT -> "Nightscout"
         LinkSource.CARELINK -> "CareLink (MiniMed)"
     }
 
-    fun toLink() = LinkAccount(source, username, password, region, nightscoutUrl, nightscoutToken, nightscoutApi)
+    fun toLink(): LinkAccount {
+        check(!usesDexcomNotifications) { "Dexcom notifications have no login to copy. Choose Phone app as the watch's source." }
+        return LinkAccount(source, username, password, region, nightscoutUrl, nightscoutToken, nightscoutApi)
+    }
 
     companion object {
         val THERAPY_SOURCES = listOf(LinkSource.NIGHTSCOUT, LinkSource.CARELINK)
@@ -81,6 +88,7 @@ class PhoneSettingsStore(context: Context) {
             unit = enumOr(prefs.getString("unit", null), d.unit),
             predictorId = prefs.getString("predictor", d.predictorId)!!,
             heartTrack = prefs.getBoolean("heartTrack", d.heartTrack),
+            dexcomNotifications = prefs.getBoolean("dexcomNotifications", false),
             carelinkAccount = prefs.getString("carelinkAccount", "").orEmpty(),
             alsoFrom = prefs.getString("alsoFrom", "").orEmpty().split(',')
                 .mapNotNull { runCatching { LinkSource.valueOf(it) }.getOrNull() }.toSet(),
@@ -99,6 +107,7 @@ class PhoneSettingsStore(context: Context) {
             .putString("unit", s.unit.name)
             .putString("predictor", s.predictorId)
             .putBoolean("heartTrack", s.heartTrack)
+            .putBoolean("dexcomNotifications", s.dexcomNotifications)
             .putString("carelinkAccount", s.carelinkAccount)
             .putString("alsoFrom", s.alsoFrom.joinToString(",") { it.name })
             .apply()

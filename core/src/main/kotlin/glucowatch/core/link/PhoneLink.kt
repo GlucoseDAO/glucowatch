@@ -194,7 +194,7 @@ object PhoneLinkServer {
     }
 
     private fun pair(link: Frames, handler: PhoneLinkHandler, watchId: ByteArray, commitment: ByteArray) {
-        if (!handler.pairingOpen()) throw LinkException("On the phone, open GlucoWatch and tap Pair a watch first")
+        if (!handler.pairingOpen()) throw LinkException("On the phone, open GlucoPhone → Watch → Pair a watch. Leave this watch searching while you do that.")
         val own = PairingKeyPair.generate()
         link.ok { write(handler.phoneId); writeBlob(own.publicKey); writeText(handler.phoneName) }
         val watchPublic = link.receive().read { readBlob() }
