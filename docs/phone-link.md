@@ -73,10 +73,11 @@ The phone app runs a foreground service (type `connectedDevice`) that listens on
 service record, `PhoneLink.SERVICE_UUID`. The watch opens one connection per request and the
 phone answers it. Each message is a 4-byte length followed by the body.
 
-Protocol version 2 adds the insulin kind, basal rate/percentage and duration to each relayed
-treatment. Update the watch and phone together; a version mismatch shows an update message.
+Protocol version 2 added the insulin kind, basal rate/percentage and duration to each relayed
+treatment. Version 3 (0.1.9) adds the flag distinguishing a pump's percent of the scheduled
+basal from Nightscout's percentage adjustment. Update the watch and phone together; a version mismatch shows an update message.
 The service UUID and pairing keys are unchanged, so existing pairings survive the update.
-Old four-field treatment caches still read as boluses/carbs.
+Old four-field treatment caches still read as boluses/carbs, and eight-field basal caches remain readable.
 
 | Request | When | Answer |
 |---|---|---|

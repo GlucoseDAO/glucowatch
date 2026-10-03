@@ -26,8 +26,8 @@ object PhoneLink {
     /** The phone's RFCOMM service record. Fixed: another value breaks every installed pairing. */
     val SERVICE_UUID: UUID = UUID.fromString("7d0c6a8e-2f41-4b9a-b3e5-1c9f0a6d42e7")
     const val SERVICE_NAME = "GlucoWatch"
-    // Version 2 carries basal kind, rate and duration in the treatment payload.
-    const val VERSION = 2
+    // Version 3 adds the pump's percent-of-profile flag to relayed treatments.
+    const val VERSION = 3
     const val ID_BYTES = 16
 
     /** [Prediction.modelId] of a forecast made on the phone; also the watch setting that selects it. */

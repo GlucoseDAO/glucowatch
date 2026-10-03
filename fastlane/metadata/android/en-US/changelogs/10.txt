@@ -1,0 +1,1 @@
+The watch face shows a larger glucose value and trend arrow beside the date and time. Open Check graphs in the watch app to browse a full day, using the bezel or swipes to pan through history. A running temporary basal shows its rate or percentage and time remaining. CareLink reads temporary basal markers and the currently running temp, including cancellation.

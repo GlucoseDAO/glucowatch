@@ -19,7 +19,7 @@ object CacheFormat {
         list.joinToString(";") {
             val fields = mutableListOf<Any?>(it.timeMillis, it.insulin, it.carbs, if (it.automatic) 1 else 0,
                 it.insulinKind.name, it.basalRate, it.basalPercent, it.durationMinutes)
-            // Only a pump percent-of-profile adds a field, so older caches and older phones still read the rest.
+            // Only a pump percent-of-profile adds a field; other rows retain the eight-field cache form.
             if (it.percentOfProfile) fields += 1
             fields.joinToString(",") { field -> field?.toString().orEmpty() }
         }
