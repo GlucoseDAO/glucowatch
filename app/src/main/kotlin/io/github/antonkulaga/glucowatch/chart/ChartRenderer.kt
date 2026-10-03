@@ -17,6 +17,10 @@ import glucowatch.core.Trend
 import glucowatch.core.formatAmount
 import io.github.antonkulaga.glucowatch.data.GlucoseState
 import io.github.antonkulaga.glucowatch.ui.Brand
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
+import java.time.temporal.ChronoUnit
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
@@ -416,6 +420,111 @@ object ChartRenderer {
     }
 
     private const val TREATMENT_READING_WINDOW_MS = 10 * 60_000L
+
+    /**
+     * The stored day as one strip. [width] is the whole day, wider than the watch, so the screen
+     * can pan along it. Hour labels are clock times. A local midnight is a dotted line, with the
+     * day that ends there (`dd.MM`) at the bottom of the line.
+     */
+    fun renderHistory(
+        state: GlucoseState, width: Int, height: Int, start: Long, end: Long,
+        zone: ZoneId = ZoneId.systemDefault(), palette: Palette = Palette.DARK,
+    ): Bitmap {
+        val bmp = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+        val c = Canvas(bmp)
+        val s = state.settings
+        val visible = state.readings.filter { it.timeMillis in start..end }
+        val values = visible.map { it.mgdl.toDouble() }
+        val yMin = min(s.lowMgdl - 15.0, (values.minOrNull() ?: 60.0) - 12).coerceAtLeast(39.0)
+        val yMax = max(s.highMgdl + 40.0, (values.maxOrNull() ?: 220.0) + 12).coerceAtMost(401.0)
+        val textSize = height * 0.075f
+        val stroke = max(2.5f, height / 70f)
+        val axisRow = textSize * 1.6f
+        val edge = stroke * 2
+        val plot = RectF(edge, stroke * 2, width - edge, height - axisRow)
+        val span = (end - start).coerceAtLeast(1L)
+        fun x(t: Long) = plot.left + (t - start).toFloat() / span * plot.width()
+        fun y(v: Double) = plot.bottom - ((v - yMin) / (yMax - yMin)).toFloat() * plot.height()
+        val yHigh = y(s.highMgdl.toDouble())
+        val yLow = y(s.lowMgdl.toDouble())
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+        paint.color = palette.band
+        c.drawRect(plot.left, yHigh, plot.right, yLow, paint)
+        val guide = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            style = Paint.Style.STROKE; color = palette.guide; strokeWidth = max(1f, stroke / 2.5f)
+            pathEffect = DashPathEffect(floatArrayOf(stroke * 1.5f, stroke * 1.5f), 0f)
+        }
+        c.drawLine(plot.left, yHigh, plot.right, yHigh, guide)
+        c.drawLine(plot.left, yLow, plot.right, yLow, guide)
+
+        val label = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = palette.label; this.textSize = textSize; textAlign = Paint.Align.CENTER
+            typeface = Typeface.create(Typeface.DEFAULT, Typeface.NORMAL)
+        }
+        val hourFormat = DateTimeFormatter.ofPattern("HH:mm")
+        val dayFormat = DateTimeFormatter.ofPattern("dd.MM")
+        var hour = Instant.ofEpochMilli(start).atZone(zone).truncatedTo(ChronoUnit.HOURS)
+        if (hour.toInstant().toEpochMilli() < start) hour = hour.plusHours(1)
+        while (hour.toInstant().toEpochMilli() <= end) {
+            val t = hour.toInstant().toEpochMilli()
+            val gx = x(t)
+            c.drawLine(gx, plot.top, gx, plot.bottom, Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = palette.grid; strokeWidth = max(1f, stroke / 2.5f)
+            })
+            val text = hour.format(hourFormat)
+            val half = label.measureText(text) / 2
+            if (gx - half >= 0f && gx + half <= width) c.drawText(text, gx, height - textSize * 0.25f, label)
+            hour = hour.plusHours(1)
+        }
+
+        val dayLine = Paint(guide).apply {
+            color = palette.label
+            pathEffect = DashPathEffect(floatArrayOf(stroke, stroke * 1.4f), 0f)
+        }
+        val dayLabel = Paint(label).apply { color = palette.label; this.textSize = textSize * 0.9f }
+        var midnight = Instant.ofEpochMilli(start).atZone(zone).toLocalDate().plusDays(1).atStartOfDay(zone)
+        while (midnight.toInstant().toEpochMilli() <= end) {
+            val t = midnight.toInstant().toEpochMilli()
+            if (t > start) {
+                val gx = x(t)
+                c.drawLine(gx, plot.top, gx, plot.bottom, dayLine)
+                val text = midnight.minusDays(1).format(dayFormat)
+                val half = dayLabel.measureText(text) / 2
+                val tx = gx.coerceIn(half, width - half)
+                outlined(c, text, tx, plot.bottom - stroke, dayLabel, palette.label, palette.background)
+            }
+            midnight = midnight.plusDays(1)
+        }
+
+        val runs = mutableListOf(mutableListOf<PointF>())
+        visible.forEachIndexed { i, r ->
+            if (i > 0 && r.timeMillis - visible[i - 1].timeMillis > GAP_MS) runs += mutableListOf<PointF>()
+            runs.last() += PointF(x(r.timeMillis), y(r.mgdl.toDouble()))
+        }
+        val bands = listOf(Triple(0f, yHigh, palette.high), Triple(yHigh, yLow, palette.inRange), Triple(yLow, height.toFloat(), palette.low))
+        val lineStroke = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            style = Paint.Style.STROKE; strokeWidth = stroke; strokeCap = Paint.Cap.ROUND; strokeJoin = Paint.Join.ROUND
+        }
+        runs.filter { it.isNotEmpty() }.forEach { run ->
+            val line = smooth(run)
+            for ((top, bottom, color) in bands) {
+                c.save()
+                c.clipRect(0f, top, width.toFloat(), bottom)
+                lineStroke.color = color
+                if (run.size == 1) c.drawCircle(run[0].x, run[0].y, stroke * 0.8f, lineStroke) else c.drawPath(line, lineStroke)
+                c.restore()
+            }
+        }
+        visible.lastOrNull()?.let { last ->
+            paint.color = colorFor(last.mgdl.toDouble(), state, palette)
+            c.drawCircle(x(last.timeMillis), y(last.mgdl.toDouble()), stroke * 1.5f, paint)
+        }
+        if (visible.isEmpty()) {
+            label.textAlign = Paint.Align.CENTER
+            c.drawText("No readings", plot.centerX(), plot.centerY(), label)
+        }
+        return bmp
+    }
 
     /** Catmull-Rom spline through [points], as cubic Béziers. */
     private fun smooth(points: List<PointF>): Path = Path().apply {

@@ -8,6 +8,7 @@ import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
 import android.util.TypedValue
 import android.view.Gravity
+import android.view.MotionEvent
 import android.view.View
 import android.widget.Button
 import android.widget.ImageView
@@ -21,6 +22,7 @@ import glucowatch.core.formatAmount
 import glucowatch.core.lastCarbs
 import glucowatch.core.lastDelta
 import glucowatch.core.lastManualBolus
+import glucowatch.core.activeTempBasal
 import glucowatch.core.lastBasal
 import glucowatch.core.link.PhoneLink
 import io.github.antonkulaga.glucowatch.chart.ChartRenderer
@@ -44,6 +46,7 @@ class MainActivity : Activity() {
     private lateinit var forecast: TextView
     private lateinit var therapy: TextView
     private lateinit var source: TextView
+    private lateinit var scroll: ScrollView
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -76,6 +79,11 @@ class MainActivity : Activity() {
             text = "Refresh"; setOnClickListener { refresh() }
             Brand.style(this, primary = true)
         }
+        val graphs = Button(this).apply {
+            text = "Check graphs"
+            setOnClickListener { startActivity(Intent(this@MainActivity, HistoryActivity::class.java)) }
+            Brand.style(this, primary = false)
+        }
         val settings = Button(this).apply {
             text = "Settings"
             setOnClickListener { startActivity(Intent(this@MainActivity, SettingsActivity::class.java)) }
@@ -90,12 +98,18 @@ class MainActivity : Activity() {
         column.addView(therapy, wrap(8))
         column.addView(source, wrap(8))
         column.addView(refresh, wrap(14))
+        column.addView(graphs, wrap(6))
         column.addView(settings, wrap(6))
-        setContentView(ScrollView(this).apply { isVerticalScrollBarEnabled = false; addView(column) })
+        scroll = ScrollView(this).apply { isVerticalScrollBarEnabled = false; addView(column); attachRotary() }
+        setContentView(scroll)
     }
+
+    override fun onGenericMotionEvent(event: MotionEvent): Boolean =
+        if (scroll.onRotaryScroll(event)) true else super.onGenericMotionEvent(event)
 
     override fun onResume() {
         super.onResume()
+        scroll.requestFocus()
         show(GlucoseRepository(this).state())
         refresh()
     }
@@ -155,7 +169,8 @@ class MainActivity : Activity() {
         therapy.text = listOfNotNull(
             loop?.takeIf { it.isStale(now) }?.let { "Loop quiet for ${formatAge(it.ageMinutes(now))}" },
             bolus?.let { "Bolus ${formatAmount(it.insulin)} U  ·  ${formatAge((now - it.timeMillis) / 60_000)} ago" },
-            state.treatments.lastBasal(now)?.let { "${it.basalDescription()}  ·  ${formatAge((now - it.timeMillis) / 60_000)} ago" },
+            state.treatments.activeTempBasal(now)?.let { it.activeTempLabel(now) }
+                ?: state.treatments.lastBasal(now)?.let { "${it.basalDescription()}  ·  ${formatAge((now - it.timeMillis) / 60_000)} ago" },
             carbs?.let { "Carbs ${formatAmount(it.carbs, 0)} g  ·  ${formatAge((now - it.timeMillis) / 60_000)} ago" },
         ).joinToString("\n")
         therapy.visibility = if (therapy.text.isEmpty()) View.GONE else View.VISIBLE

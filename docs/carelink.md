@@ -29,10 +29,13 @@ preventing the other source from fetching. Treatment merging keeps basal separat
 and removes matching duplicated boluses/carbs from overlapping uploads.
 
 CareLink data varies by pump and upload. The reader keeps `INSULIN` boluses, `MEAL` carbs and
-`AUTO_BASAL_DELIVERY` pulses where supplied. `basal.basalRate` is shown as **Reported basal** in
-U/h at the pump upload's timestamp. This is a rate setting, not measured delivered insulin or a
-reconstructed historical schedule. The IOB value is taken from `activeInsulin`. No dose is
-calculated from a rate. The pump and uploading phone can have different clock offsets, so pump
+`AUTO_BASAL_DELIVERY` pulses where supplied. A temporary basal (`TEMP_BASAL`,
+`MANUAL_TEMP_BASAL`, `USER_TEMP_BASAL`, or a `tempBasal` object) is kept as a setting: percent
+of the scheduled rate, or U/h, plus how long it was set for. While that duration is still
+running the watch says it is on, the percent or the U/h, and the time left. A duration of 0
+cancels it. `basal.basalRate` is shown as **Reported basal** in U/h at the pump upload's
+timestamp. This is a rate setting, not measured delivered insulin or a reconstructed historical
+schedule. The IOB value is taken from `activeInsulin`. No dose is calculated from a rate. The pump and uploading phone can have different clock offsets, so pump
 events use `medicalDeviceTime` paired with `lastMedicalDeviceDataUpdateServerTime` when present;
 the conduit clock is a fallback for older payloads.
 

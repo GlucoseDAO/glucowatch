@@ -4,6 +4,7 @@ import android.app.Activity
 import android.os.Bundle
 import android.text.format.DateFormat
 import android.view.Gravity
+import android.view.MotionEvent
 import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.ScrollView
@@ -32,6 +33,7 @@ class DiagnosticsActivity : Activity() {
     private lateinit var column: LinearLayout
     private lateinit var output: LinearLayout
     private lateinit var run: Button
+    private lateinit var scroll: ScrollView
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -55,8 +57,17 @@ class DiagnosticsActivity : Activity() {
         column.addView(run)
         column.addView(output)
         history().forEach(column::addView)
-        setContentView(ScrollView(this).apply { addView(column) })
+        scroll = ScrollView(this).apply { addView(column); attachRotary() }
+        setContentView(scroll)
     }
+
+    override fun onResume() {
+        super.onResume()
+        scroll.requestFocus()
+    }
+
+    override fun onGenericMotionEvent(event: MotionEvent): Boolean =
+        if (scroll.onRotaryScroll(event)) true else super.onGenericMotionEvent(event)
 
     override fun onDestroy() {
         scope.cancel()
