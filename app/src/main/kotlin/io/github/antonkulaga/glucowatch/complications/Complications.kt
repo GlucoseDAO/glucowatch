@@ -93,7 +93,7 @@ class GlucoseValueComplicationService : GlucoseComplicationService() {
 
         return when (type) {
             ComplicationType.SMALL_IMAGE -> SmallImageComplicationData.Builder(
-                SmallImage.Builder(pngIcon(glucoseImage(state, text, delta, stale)), SmallImageType.PHOTO).build(),
+                SmallImage.Builder(pngIcon(glucoseImage(state, value, latest.trend.arrow, delta, stale)), SmallImageType.PHOTO).build(),
                 description,
             ).setTapAction(tapAction()).build()
             ComplicationType.SHORT_TEXT -> ShortTextComplicationData.Builder(plain(text), description)
@@ -114,8 +114,12 @@ class GlucoseValueComplicationService : GlucoseComplicationService() {
         }
     }
 
-    /** The default face's value block, drawn as an image so glucose and trend can share a state color. */
-    private fun glucoseImage(state: GlucoseState, text: String, delta: String?, stale: Boolean): Bitmap {
+    /**
+     * The default face's value block. The number is as large as the left side allows.
+     * The trend arrow sits in a narrower box just to its right, drawn a little squashed,
+     * and stops short of the date.
+     */
+    private fun glucoseImage(state: GlucoseState, number: String, arrow: String, delta: String?, stale: Boolean): Bitmap {
         // Matches the face slot (450 x 128). The right side stays empty for the date and clock.
         val width = 540
         val height = 154
@@ -126,12 +130,50 @@ class GlucoseValueComplicationService : GlucoseComplicationService() {
             else ChartRenderer.glanceColorFor(latest.mgdl.toDouble(), state, latest.trend)
         val valuePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             this.color = color
-            textAlign = Paint.Align.RIGHT
+            textAlign = Paint.Align.LEFT
             typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
-            // 64 px here is about 53 px on the 450-wide slot. The right edge is just left of centre.
-            textSize = 64f
         }
-        canvas.drawText(text, 254f, 78f, valuePaint)
+        // Date starts at face x 236, which is bitmap x 283. The arrow ends just before it.
+        val rightLimit = 274f
+        val gap = 6f
+        val squash = 0.62f
+        val arrowPaint = Paint(valuePaint)
+        var size = 108f
+        var valueWidth = 0f
+        var arrowVisual = 0f
+        var rawArrow = 0f
+        var baseline = 108f
+        var leftBound = 72f
+        while (size >= 64f) {
+            valuePaint.textSize = size
+            valueWidth = valuePaint.measureText(number)
+            // Keep the digits in the upper band, level with the date, and stop above the status line.
+            val cap = size * 0.74f
+            baseline = (64f + cap * 0.42f).coerceAtMost(116f)
+            leftBound = circleLeft(baseline - cap)
+            if (arrow.isEmpty()) {
+                arrowVisual = 0f
+                rawArrow = 0f
+            } else {
+                arrowPaint.textSize = size * 0.9f
+                rawArrow = arrowPaint.measureText(arrow)
+                arrowVisual = rawArrow * squash
+            }
+            val used = valueWidth + if (arrow.isEmpty()) 0f else gap + arrowVisual
+            if (leftBound + used <= rightLimit) break
+            size -= 2f
+        }
+        val extras = if (arrow.isEmpty()) 0f else gap + arrowVisual
+        val left = (rightLimit - valueWidth - extras).coerceAtLeast(leftBound)
+        canvas.drawText(number, left, baseline, valuePaint)
+        if (arrow.isNotEmpty()) {
+            val center = left + valueWidth + gap + arrowVisual / 2f
+            val arrowBaseline = baseline - (size - arrowPaint.textSize) * 0.22f
+            canvas.save()
+            canvas.scale(squash, 1f, center, arrowBaseline)
+            canvas.drawText(arrow, center - rawArrow / 2f, arrowBaseline, arrowPaint)
+            canvas.restore()
+        }
         val age = "${state.ageMinutes()}m ago"
         val status = if (stale) "⚠ OLD DATA · 10+ min" else listOfNotNull(delta, age).joinToString("  ·  ")
         val statusPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -142,6 +184,15 @@ class GlucoseValueComplicationService : GlucoseComplicationService() {
         }
         canvas.drawText(status, width / 2f, 140f, statusPaint)
         return bitmap
+    }
+
+    /** Left edge of the round face, in this bitmap's x, at a given bitmap y. Keeps the first digit on screen. */
+    private fun circleLeft(bitmapY: Float): Float {
+        val faceY = 36.0 + bitmapY * 128.0 / 154.0
+        val dy = faceY - 225.0
+        val inside = (225.0 * 225.0 - dy * dy).coerceAtLeast(0.0)
+        val faceLeft = 225.0 - kotlin.math.sqrt(inside) + 4.0
+        return (faceLeft * 540.0 / 450.0).toFloat()
     }
 }
 
