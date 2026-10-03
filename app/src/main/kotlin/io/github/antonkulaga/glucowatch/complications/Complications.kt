@@ -116,8 +116,9 @@ class GlucoseValueComplicationService : GlucoseComplicationService() {
 
     /** The default face's value block, drawn as an image so glucose and trend can share a state color. */
     private fun glucoseImage(state: GlucoseState, text: String, delta: String?, stale: Boolean): Bitmap {
-        val width = 432
-        val height = 132
+        // Matches the face slot (450 x 128). The right side stays empty for the date and clock.
+        val width = 540
+        val height = 154
         val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(bitmap)
         val latest = state.latest ?: return bitmap
@@ -125,21 +126,21 @@ class GlucoseValueComplicationService : GlucoseComplicationService() {
             else ChartRenderer.glanceColorFor(latest.mgdl.toDouble(), state, latest.trend)
         val valuePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             this.color = color
-            textAlign = Paint.Align.CENTER
+            textAlign = Paint.Align.RIGHT
             typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
-            // The 432 px bitmap is shown in a 360 px slot: 62 px renders at the clock's 52 px.
-            textSize = 62f
+            // 64 px here is about 53 px on the 450-wide slot. The right edge is just left of centre.
+            textSize = 64f
         }
-        canvas.drawText(text, width / 2f, 75f, valuePaint)
+        canvas.drawText(text, 254f, 78f, valuePaint)
         val age = "${state.ageMinutes()}m ago"
         val status = if (stale) "⚠ OLD DATA · 10+ min" else listOfNotNull(delta, age).joinToString("  ·  ")
         val statusPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             this.color = if (stale) 0xFFF0B000.toInt() else 0xFF9AA3A8.toInt()
             textAlign = Paint.Align.CENTER
             typeface = Typeface.create(Typeface.DEFAULT, Typeface.NORMAL)
-            textSize = 23f
+            textSize = 26f
         }
-        canvas.drawText(status, width / 2f, 112f, statusPaint)
+        canvas.drawText(status, width / 2f, 140f, statusPaint)
         return bitmap
     }
 }

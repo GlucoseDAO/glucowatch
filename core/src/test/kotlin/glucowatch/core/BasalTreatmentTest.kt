@@ -48,6 +48,25 @@ class BasalTreatmentTest {
     }
 
     @Test
+    fun `an active temp says it is on, the rate or percent, and the time left`() {
+        val start = 1_000_000L
+        val percent = Treatment(start, insulinKind = InsulinKind.BASAL, basalPercent = 130.0,
+            percentOfProfile = true, durationMinutes = 90.0)
+        val now = start + 30 * 60_000L
+        assertEquals(percent, listOf(percent).activeTempBasal(now))
+        assertEquals("Temp basal on · 130% · 1h left", percent.activeTempLabel(now))
+        val units = Treatment(start, insulinKind = InsulinKind.BASAL, basalRate = 1.2, durationMinutes = 40.0)
+        assertEquals("Temp basal on · 1.2 U/h · 10m left", units.activeTempLabel(start + 30 * 60_000))
+        assertEquals("Temp basal on · 1.2 U/h · <1m left", units.activeTempLabel(start + 40 * 60_000 - 1))
+        assertNull(listOf(percent).activeTempBasal(start + 90 * 60_000))
+        val cancel = Treatment(start + 10 * 60_000, insulinKind = InsulinKind.BASAL, durationMinutes = 0.0)
+        assertNull(listOf(percent, cancel).activeTempBasal(start + 20 * 60_000))
+        val reported = Treatment(start + 5 * 60_000, insulinKind = InsulinKind.BASAL, basalRate = 0.8)
+        assertEquals(percent, listOf(percent, reported).activeTempBasal(now))
+        assertEquals(listOf(percent), CacheFormat.decodeTreatments(CacheFormat.encodeTreatments(listOf(percent))))
+    }
+
+    @Test
     fun `basal injections and pump pulses never replace last manual bolus`() {
         val bolus = Treatment(1, insulin = 2.0)
         val basal = Treatment(2, insulin = 10.0, insulinKind = InsulinKind.BASAL)

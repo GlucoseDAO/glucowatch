@@ -15,9 +15,14 @@ data class Treatment(
     val automatic: Boolean = false,
     val insulinKind: InsulinKind = InsulinKind.BOLUS,
     val basalRate: Double? = null,
-    /** Nightscout percentage adjustment: 0 means unchanged, -100 means suspended. */
+    /**
+     * Nightscout percentage adjustment: 0 means unchanged, -100 means suspended.
+     * When [percentOfProfile] is set, this is the pump's own percent of the scheduled basal
+     * (100 means unchanged), which is how MiniMed reports a temporary basal.
+     */
     val basalPercent: Double? = null,
     val durationMinutes: Double? = null,
+    val percentOfProfile: Boolean = false,
 ) {
     val isBasal get() = insulinKind == InsulinKind.BASAL
     val isBolus get() = !isBasal && insulin > 0
@@ -25,8 +30,24 @@ data class Treatment(
     fun basalValue(): String = when {
         durationMinutes == 0.0 -> "ended"
         basalRate != null -> "${formatAmount(basalRate)} U/h"
-        basalPercent != null -> "${if (basalPercent > 0) "+" else ""}${formatAmount(basalPercent)}%"
+        basalPercent != null -> if (percentOfProfile) "${formatAmount(basalPercent)}%"
+            else "${if (basalPercent > 0) "+" else ""}${formatAmount(basalPercent)}%"
         else -> "${formatAmount(insulin)} U"
+    }
+
+    /** Still running: a temp with a rate or a percent whose duration has not finished. */
+    fun tempRunningAt(now: Long): Boolean {
+        val minutes = durationMinutes ?: return false
+        if (minutes <= 0 || (basalRate == null && basalPercent == null)) return false
+        return now < timeMillis + (minutes * 60_000.0).toLong()
+    }
+
+    /** "Temp basal on · 130% · 18m left", or the same with U/h when the pump was set in units. */
+    fun activeTempLabel(now: Long): String {
+        val end = timeMillis + (durationMinutes!! * 60_000.0).toLong()
+        val leftMs = (end - now).coerceAtLeast(0)
+        val left = if (leftMs < 60_000) "<1m" else formatAge(leftMs / 60_000)
+        return "Temp basal on · ${basalValue()} · $left left"
     }
 
     /** Explicit units prevent a pump rate being read as a dose. A zero duration ends a temp. */
@@ -65,6 +86,7 @@ fun mergeTreatments(sources: List<List<Treatment>>): List<Treatment> {
         val twin = kept.any {
             it.insulinKind == t.insulinKind && it.automatic == t.automatic &&
                 it.basalRate == t.basalRate && it.basalPercent == t.basalPercent && it.durationMinutes == t.durationMinutes &&
+                it.percentOfProfile == t.percentOfProfile &&
                 abs(it.timeMillis - t.timeMillis) <= (if (t.isBasal) 0L else 2 * 60_000L) &&
                 abs(it.insulin - t.insulin) < 0.005 && abs(it.carbs - t.carbs) < 0.5
         }
@@ -78,6 +100,16 @@ fun List<Treatment>.lastManualBolus(now: Long = System.currentTimeMillis()): Tre
 
 fun List<Treatment>.lastBasal(now: Long = System.currentTimeMillis()): Treatment? =
     lastOrNull { it.isBasal && it.timeMillis <= now }
+
+/**
+ * The temporary basal still in force at [now]. A later temp replaces an earlier one.
+ * A later event with duration 0 cancels it. A reported rate or a delivered pulse, which
+ * have no duration, does not.
+ */
+fun List<Treatment>.activeTempBasal(now: Long = System.currentTimeMillis()): Treatment? {
+    val last = lastOrNull { it.isBasal && it.durationMinutes != null && it.timeMillis <= now } ?: return null
+    return last.takeIf { it.tempRunningAt(now) }
+}
 
 fun List<Treatment>.lastCarbs(now: Long = System.currentTimeMillis()): Treatment? =
     lastOrNull { it.carbs > 0 && it.timeMillis <= now }

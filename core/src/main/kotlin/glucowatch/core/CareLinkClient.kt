@@ -285,7 +285,7 @@ class CareLinkClient(
             val treatments = (patient["markers"] as? JsonArray).orEmpty().filterIsInstance<JsonObject>().mapNotNull { marker ->
                 val values = ((marker["data"] as? JsonObject)?.get("dataValues") as? JsonObject) ?: marker
                 val time = marker.at("timestamp", "displayTime", "dateTime") ?: return@mapNotNull null
-                when (marker.string("type")?.uppercase()) {
+                when (marker.string("type")?.uppercase()?.replace(' ', '_')?.replace('-', '_')) {
                     "INSULIN" -> {
                         val units = listOfNotNull(values.double("deliveredFastAmount"), values.double("deliveredExtendedAmount")).sum()
                             .takeIf { it > 0 } ?: values.double("insulinUnits") ?: return@mapNotNull null
@@ -297,9 +297,27 @@ class CareLinkClient(
                     "AUTO_BASAL_DELIVERY" -> values.double("bolusAmount")?.takeIf { it.isFinite() && it >= 0 }?.let {
                         Treatment(time, insulin = it, automatic = true, insulinKind = InsulinKind.BASAL)
                     }
+                    "TEMP_BASAL", "MANUAL_TEMP_BASAL", "USER_TEMP_BASAL" -> tempBasal(values, marker, time)
                     else -> null
                 }
             }.toMutableList()
+
+            // A running temp, when the upload carries one, as well as the marker that started it.
+            (patient["tempBasal"] as? JsonObject)?.let { obj ->
+                val start = obj.at("startDateTime", "startTime", "timestamp", "displayTime", "dateTime")
+                val remaining = tempDurationMinutes(obj, obj, "remainingDuration", "durationRemaining")
+                val programmed = tempDurationMinutes(obj, obj)
+                // Remaining is measured at this fetch. With a start and no programmed length,
+                // the stored duration is elapsed time plus what is left, so the end stays put.
+                val timed = when {
+                    start != null && programmed != null -> start to programmed
+                    start != null && remaining != null ->
+                        start to ((now - start) / 60_000.0).coerceAtLeast(0.0) + remaining
+                    remaining != null -> now to remaining
+                    else -> null
+                }
+                timed?.let { (eventTime, minutes) -> tempBasal(obj, obj, eventTime, minutes)?.let { treatments += it } }
+            }
 
             // A reported rate setting is not a delivered basal pulse or a reconstructed schedule.
             // Keep its actual upload time; never fabricate a day of basal delivery from this value.
@@ -314,6 +332,45 @@ class CareLinkClient(
             val iobTime = active?.at("datetime") ?: pumpUpload ?: serverUpload
             val loop = if (iob != null && iobTime != null) LoopStatus(timeMillis = iobTime, iob = iob) else null
             return CareLinkData(withTrend, treatments.sortedBy { it.timeMillis }, loop, pumpUpload ?: serverUpload ?: deviceUpload?.plus(shift))
+        }
+
+        /**
+         * A MiniMed temporary basal. Percent mode is the pump's percent of the scheduled rate
+         * (100 is unchanged). Absolute mode is U/h. The rate is not turned into a delivered dose.
+         * Duration is minutes; a number past 24 hours is milliseconds. Zero duration cancels the temp.
+         */
+        private fun tempBasal(values: JsonObject, marker: JsonObject, time: Long, minutes: Double? = null): Treatment? {
+            val duration = minutes ?: tempDurationMinutes(values, marker) ?: return null
+            val mode = (values.string("basalType") ?: values.string("tempBasalType") ?: marker.string("basalType"))
+                ?.uppercase()
+            val percent = (values.double("percentage") ?: values.double("percent") ?: values.double("basalPercent"))
+                ?.takeIf { it.isFinite() && it in 0.0..500.0 }
+            val rate = (values.double("rate") ?: values.double("tempBasalRate") ?: values.double("basalRate"))
+                ?.takeIf { it.isFinite() && it >= 0 }
+            val percentMode = when (mode) {
+                "PERCENT", "PERCENTAGE" -> true
+                "ABSOLUTE", "RATE", "UNITS" -> false
+                else -> percent != null
+            }
+            if (duration > 0 && percentMode && percent == null) return null
+            if (duration > 0 && !percentMode && rate == null) return null
+            return Treatment(
+                time, insulinKind = InsulinKind.BASAL,
+                basalRate = if (percentMode) null else rate,
+                basalPercent = if (percentMode) percent else null,
+                durationMinutes = duration,
+                percentOfProfile = percentMode && percent != null,
+            )
+        }
+
+        /** Minutes, unless the number is longer than a day, in which case it is milliseconds. */
+        private fun tempDurationMinutes(values: JsonObject, marker: JsonObject, vararg keys: String): Double? {
+            val names = keys.ifEmpty { arrayOf("duration", "programmedDuration", "effectiveDuration", "durationMinutes") }
+            val raw = names.firstNotNullOfOrNull { values.double(it) }
+                ?: names.firstNotNullOfOrNull { marker.double(it) }
+                ?: return null
+            if (!raw.isFinite() || raw < 0) return null
+            return if (raw > 24 * 60) raw / 60_000.0 else raw
         }
 
         /** Medtronic arrows: one per 1 mg/dL/min of change, none when steadier; mapped onto Dexcom's. */

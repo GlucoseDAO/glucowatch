@@ -6,6 +6,7 @@ import java.util.Base64
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
@@ -189,6 +190,41 @@ class CareLinkClientTest {
         val transport = api()
         assertFailsWith<CareLinkException.SignInNeeded> { CareLinkClient(MemoryLogin(null), transport = transport).recent(now) }
         assertTrue(transport.calls.isEmpty())
+    }
+
+    @Test
+    fun `a temporary basal keeps its percent or its units and is not a delivered dose`() {
+        val start = "2026-09-28T20:00:00.000Z"
+        val startMs = NightscoutClient.parseTime(start)!!
+        val patient = Json.parseToJsonElement("""{
+            "markers":[
+              {"type":"TEMP_BASAL","timestamp":"$start",
+                "data":{"dataValues":{"percentage":130,"duration":90,"basalType":"PERCENT"}}},
+              {"type":"MANUAL_TEMP_BASAL","timestamp":"2026-09-28T18:00:00.000Z","programmedDuration":3600000,
+                "data":{"dataValues":{"rate":1.25,"basalType":"ABSOLUTE"}}},
+              {"type":"AUTO_BASAL_DELIVERY","timestamp":"2026-09-28T20:30:00.000Z",
+                "data":{"dataValues":{"bolusAmount":0.05}}}
+            ],
+            "tempBasal":{"percentage":150,"remainingDuration":12,"startDateTime":"2026-09-28T21:00:00.000Z"}
+        }""") as JsonObject
+        val fetchedAt = NightscoutClient.parseTime("2026-09-28T21:40:00.000Z")!!
+        val data = CareLinkClient.parse(patient, fetchedAt)
+        val percent = data.treatments.single { it.basalPercent == 130.0 }
+        assertEquals(90.0, percent.durationMinutes)
+        assertTrue(percent.percentOfProfile)
+        assertNull(percent.basalRate)
+        assertEquals(0.0, percent.insulin)
+        assertEquals("Temp basal 130% for 90 min", percent.basalDescription())
+        val units = data.treatments.single { it.basalRate == 1.25 }
+        assertEquals(60.0, units.durationMinutes)
+        assertFalse(units.percentOfProfile)
+        assertEquals(0.0, units.insulin)
+        val running = data.treatments.single { it.basalPercent == 150.0 }
+        assertEquals(52.0, running.durationMinutes)
+        assertEquals(NightscoutClient.parseTime("2026-09-28T21:00:00.000Z"), running.timeMillis)
+        assertEquals("Temp basal on · 150% · 12m left", listOf(running).activeTempBasal(fetchedAt)!!.activeTempLabel(fetchedAt))
+        val now = startMs + 70 * 60_000L
+        assertEquals("Temp basal on · 130% · 20m left", listOf(percent).activeTempBasal(now)!!.activeTempLabel(now))
     }
 
     @Test

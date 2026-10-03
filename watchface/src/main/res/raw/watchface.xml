@@ -1,8 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
   GlucoWatch face (Watch Face Format v1, 450x450 design canvas, laid out for a round screen).
-  The default layout follows the Glucose-all tile: time, a state-coloured glucose value and
-  trend, a rim-to-rim range chart, then heart rate and battery.
+  The header is three compartments: glucose and trend on the left, the date (dd.MM) on the
+  upper right, and a 24-hour clock under the date. Below that, the delta line, a rim-to-rim
+  chart, then heart rate and battery.
   All glucose data comes from the GlucoWatch app through complications:
     slot 0  value + trend      (GlucoseValueComplicationService, SMALL_IMAGE)
     slot 1  glucose chart      (GlucoseChartComplicationService, SMALL_IMAGE or PHOTO_IMAGE)
@@ -22,52 +23,48 @@
 
     <Scene backgroundColor="#FF000000">
 
-        <DigitalClock x="0" y="51" width="450" height="65">
-            <TimeText format="hh:mm" hourFormat="SYNC_TO_DEVICE" align="CENTER" x="0" y="0" width="450" height="65">
-                <Font family="SYNC_TO_DEVICE" size="52" weight="BOLD" color="#FFFFFFFF" />
-            </TimeText>
-        </DigitalClock>
-
-        <ComplicationSlot slotId="0" displayName="Glucose" x="45" y="112" width="360" height="132"
+        <!-- Full width so the delta line stays centred above the chart. The right side of the
+             image is empty; the date and clock are drawn there, on top. -->
+        <ComplicationSlot slotId="0" displayName="Glucose" x="0" y="36" width="450" height="128"
             supportedTypes="SMALL_IMAGE SHORT_TEXT RANGED_VALUE" isCustomizable="TRUE">
             <DefaultProviderPolicy
                 defaultSystemProvider="EMPTY" defaultSystemProviderType="SMALL_IMAGE"
                 primaryProvider="io.github.antonkulaga.glucowatch/io.github.antonkulaga.glucowatch.complications.GlucoseValueComplicationService"
                 primaryProviderType="SMALL_IMAGE" />
-            <BoundingBox x="0" y="0" width="360" height="132" />
+            <BoundingBox x="0" y="0" width="450" height="128" />
             <Complication type="SMALL_IMAGE">
-                <PartImage x="0" y="0" width="360" height="132">
+                <PartImage x="0" y="0" width="450" height="128">
                     <Variant mode="AMBIENT" target="alpha" value="190" />
                     <Image resource="[COMPLICATION.SMALL_IMAGE]" />
                 </PartImage>
             </Complication>
             <Complication type="SHORT_TEXT">
-                <PartText x="0" y="0" width="360" height="98">
-                    <Text align="CENTER" ellipsis="TRUE">
-                        <Font family="SYNC_TO_DEVICE" size="88" weight="BOLD" color="#FFFFFFFF">
+                <PartText x="52" y="8" width="180" height="72">
+                    <Text align="START" ellipsis="TRUE">
+                        <Font family="SYNC_TO_DEVICE" size="48" weight="BOLD" color="#FFFFFFFF">
                             <Template>%s<Parameter expression="[COMPLICATION.TEXT]" /></Template>
                         </Font>
                     </Text>
                 </PartText>
-                <PartText x="0" y="100" width="360" height="32">
+                <PartText x="0" y="96" width="450" height="28">
                     <Text align="CENTER" ellipsis="TRUE">
-                        <Font family="SYNC_TO_DEVICE" size="23" color="#FF9AA3A8">
+                        <Font family="SYNC_TO_DEVICE" size="20" color="#FF9AA3A8">
                             <Template>%s<Parameter expression="[COMPLICATION.TITLE]" /></Template>
                         </Font>
                     </Text>
                 </PartText>
             </Complication>
             <Complication type="RANGED_VALUE">
-                <PartText x="0" y="0" width="360" height="98">
-                    <Text align="CENTER" ellipsis="TRUE">
-                        <Font family="SYNC_TO_DEVICE" size="88" weight="BOLD" color="#FFFFFFFF">
+                <PartText x="52" y="8" width="180" height="72">
+                    <Text align="START" ellipsis="TRUE">
+                        <Font family="SYNC_TO_DEVICE" size="48" weight="BOLD" color="#FFFFFFFF">
                             <Template>%s<Parameter expression="[COMPLICATION.TEXT]" /></Template>
                         </Font>
                     </Text>
                 </PartText>
-                <PartText x="0" y="100" width="360" height="32">
+                <PartText x="0" y="96" width="450" height="28">
                     <Text align="CENTER" ellipsis="TRUE">
-                        <Font family="SYNC_TO_DEVICE" size="23" color="#FF9AA3A8">
+                        <Font family="SYNC_TO_DEVICE" size="20" color="#FF9AA3A8">
                             <Template>%s<Parameter expression="[COMPLICATION.TITLE]" /></Template>
                         </Font>
                     </Text>
@@ -75,6 +72,23 @@
             </Complication>
             <Complication type="EMPTY" />
         </ComplicationSlot>
+
+        <!-- Date and time share a left edge just right of centre. Heights are 1/3 and 2/3,
+             from the font size itself, so the letters are not stretched. -->
+        <PartText x="236" y="42" width="160" height="36">
+            <Text align="START">
+                <Font family="SYNC_TO_DEVICE" size="24" weight="BOLD" color="#FFFFFFFF">
+                    <Template><![CDATA[%02d.%02d]]><Parameter expression="[DAY]" /><Parameter expression="[MONTH]" /></Template>
+                </Font>
+            </Text>
+        </PartText>
+        <PartText x="236" y="76" width="175" height="58">
+            <Text align="START">
+                <Font family="SYNC_TO_DEVICE" size="48" weight="BOLD" color="#FFFFFFFF">
+                    <Template><![CDATA[%02d:%02d]]><Parameter expression="[HOUR_0_23]" /><Parameter expression="[MINUTE]" /></Template>
+                </Font>
+            </Text>
+        </PartText>
 
         <ComplicationSlot slotId="1" displayName="Chart" x="0" y="180" width="450" height="200"
             supportedTypes="SMALL_IMAGE PHOTO_IMAGE" isCustomizable="TRUE">

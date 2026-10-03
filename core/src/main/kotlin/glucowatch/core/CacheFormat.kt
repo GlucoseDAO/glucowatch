@@ -17,16 +17,18 @@ object CacheFormat {
 
     fun encodeTreatments(list: List<Treatment>): String =
         list.joinToString(";") {
-            listOf(it.timeMillis, it.insulin, it.carbs, if (it.automatic) 1 else 0,
+            val fields = mutableListOf<Any?>(it.timeMillis, it.insulin, it.carbs, if (it.automatic) 1 else 0,
                 it.insulinKind.name, it.basalRate, it.basalPercent, it.durationMinutes)
-                .joinToString(",") { field -> field?.toString().orEmpty() }
+            // Only a pump percent-of-profile adds a field, so older caches and older phones still read the rest.
+            if (it.percentOfProfile) fields += 1
+            fields.joinToString(",") { field -> field?.toString().orEmpty() }
         }
 
     fun decodeTreatments(text: String): List<Treatment> =
         text.split(';').mapNotNull { row ->
             val p = row.split(',')
             // Pre-basal caches contain four fields; those entries were all boluses/carbs.
-            if (p.size != 4 && p.size != 8) return@mapNotNull null
+            if (p.size != 4 && p.size != 8 && p.size != 9) return@mapNotNull null
             Treatment(
                 timeMillis = p[0].toLongOrNull() ?: return@mapNotNull null,
                 insulin = p[1].toDoubleOrNull() ?: return@mapNotNull null,
@@ -37,6 +39,7 @@ object CacheFormat {
                 basalRate = p.getOrNull(5)?.toDoubleOrNull(),
                 basalPercent = p.getOrNull(6)?.toDoubleOrNull(),
                 durationMinutes = p.getOrNull(7)?.toDoubleOrNull(),
+                percentOfProfile = p.size == 9 && p[8] == "1",
             )
         }
 

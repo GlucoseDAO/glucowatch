@@ -10,6 +10,7 @@ import android.os.Bundle
 import android.text.InputType
 import android.util.TypedValue
 import android.view.Gravity
+import android.view.MotionEvent
 import android.view.View
 import android.widget.Button
 import android.widget.CheckBox
@@ -68,6 +69,7 @@ class SettingsActivity : Activity() {
     private val pairings by lazy { PhonePairingStore(this) }
     private val carelinkTokens by lazy { CareLinkTokenStore(this) }
 
+    private lateinit var scroll: ScrollView
     private lateinit var source: RadioGroup
     private lateinit var username: EditText
     private lateinit var password: EditText
@@ -272,7 +274,8 @@ class SettingsActivity : Activity() {
         updateAlertPermission()
         updatePhone()
         updateCareLink()
-        setContentView(ScrollView(this).apply { addView(column) })
+        scroll = ScrollView(this).apply { addView(column); attachRotary() }
+        setContentView(scroll)
 
         source.setOnCheckedChangeListener { _, _ -> updateVisibility() }
         prediction.setOnCheckedChangeListener { _, _ -> updateVisibility() }
@@ -467,6 +470,14 @@ class SettingsActivity : Activity() {
     private fun updateAlertPermission() {
         alertPermission.visibility = if (checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) View.GONE else View.VISIBLE
     }
+
+    override fun onResume() {
+        super.onResume()
+        scroll.requestFocus()
+    }
+
+    override fun onGenericMotionEvent(event: MotionEvent): Boolean =
+        if (scroll.onRotaryScroll(event)) true else super.onGenericMotionEvent(event)
 
     override fun onDestroy() {
         cancelPairing()
