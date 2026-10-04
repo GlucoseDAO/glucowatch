@@ -29,8 +29,8 @@ android {
         applicationId = "io.github.antonkulaga.glucowatch.phone"
         minSdk = 29
         targetSdk = 36
-        versionCode = 12
-        versionName = "0.1.11"
+        versionCode = 13
+        versionName = "0.1.12"
     }
 
     buildFeatures { buildConfig = true }

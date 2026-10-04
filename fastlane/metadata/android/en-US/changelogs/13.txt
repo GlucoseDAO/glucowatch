@@ -1,0 +1,1 @@
+Clarified optional Medtronic CareLink setup through GlucoPhone and separate watch-app/watch-face downloads. Settings can be opened externally only in development builds.

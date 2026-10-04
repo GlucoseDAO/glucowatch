@@ -1,0 +1,11 @@
+A round Wear OS watch face with the current glucose value, trend arrow and glucose chart. It can also show a forecast, the last bolus, time, date, battery and optional heart rate from the watch sensor. The screen uses GlucoseDAO colours and has an ambient mode.
+
+This package contains the watch face only. Install the separate GlucoWatch app on the same watch for glucose data: the face uses that app's Glucose and Glucose chart complication providers. It contains no executable code, reads no accounts itself and cannot access the network. GlucoWatch can read Dexcom Share, your own Nightscout or optional Medtronic CareLink, receive data from GlucoPhone, or display demo readings without an account or network.
+
+Requires Wear OS 4 or later. Heart rate is optional: grant the watch face permission when prompted if you want it displayed. The face can still be used without that permission.
+
+Download this watch-face APK and the GlucoWatch app from their separate F-Droid pages when available, or from https://github.com/GlucoseDAO/glucowatch/releases. The two packages are reviewed and published separately. Install both on the watch using Android platform-tools or a compatible Wear OS installer; installing an APK on the phone does not copy it to the watch.
+
+After installing, long-press the watch face, choose Add watch face, and select GlucoWatch face. To set an empty glucose slot, open Customize, tap the slot, and choose Glucose or Glucose chart from GlucoWatch.
+
+This is not a medical device. Do not make treatment decisions from it. Keep using your CGM's official app and alarms.

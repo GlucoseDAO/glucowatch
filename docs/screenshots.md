@@ -88,6 +88,10 @@ Store images and the face and tile previews come only from the default watch
 (`scripts/store_images.py` reads `watch6-classic-43/raw/`). Checked on 2026-09-25 with demo data:
 the face, the three tiles and the app fit all three sizes; on 480 px everything has more room.
 
+`uv run scripts/store_images.py` also writes the face's own 512 px icon and two store
+screenshots (interactive and ambient) under `watchface/fastlane/metadata/android/en-US/images/`.
+These use only the default watch's `demo` captures, including the icon.
+
 The emulator returns a square framebuffer even for a round AVD. The script clips each capture to
 the circle and adds a bezel, so what you see is what the watch shows. The unclipped captures are
 kept in `raw/`. The face is drawn on a 450 px canvas that Wear OS scales to the screen. The app

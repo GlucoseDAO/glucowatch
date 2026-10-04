@@ -1,0 +1,1 @@
+Added the watch face’s own store title, description, icon and demo screenshots. The face uses GlucoWatch complications for glucose data.
