@@ -1,547 +1,340 @@
-# glucowatch
+# GlucoWatch & GlucoPhone
 
-Shows your glucose on a Wear OS watch (Galaxy Watch and others): current value with trend
-arrow, a glucose chart from rim to rim, and an optional forecast, on a watch face, three tiles and
-in the app, in GlucoseDAO colours. The face and one tile also show your heart rate from the
-watch's own sensor, smaller than glucose. With Nightscout it also shows insulin and carbs
-on board, boluses and carbs on the chart, and your loop's own forecast (AAPS, Trio, iAPS, Loop).
+Your glucose on your wrist and your Android phone: current readings, trends, history,
+insulin and carbs, and optional forecasts. **GlucoWatch** is a Wear OS app with a watch face
+and three tiles. **GlucoPhone** is a phone dashboard you can use on its own or connect to your watch.
 
-The watch talks to **Dexcom Share** or to **your Nightscout** directly: no phone app needed, no
-third-party server, no Google Play Services (so it can go to F-Droid). An optional phone app can
-fetch for the watch over Bluetooth, or hand the watch its login so you do not type it on the
-watch. See [Phone app](#phone-app-optional).
+Use Dexcom Share or your own Nightscout, or try everything with built-in demo data before
+connecting an account. The watch can fetch directly, so the phone app is optional.
+There is no GlucoWatch server and no Google Play Services dependency.
 
-> Not a medical device. Do not make treatment decisions based on this app; keep using the
-> official Dexcom app and its alarms.
+[Install and try it](#install-and-test-from-your-phone) ·
+[Connect your data](#connect-your-data) ·
+[Pair your watch](#connect-your-phone-and-watch) ·
+[Developer guide](#for-developers)
 
-## Run it on a computer
+## On your watch
 
-This is the setup for someone who cloned the repository and wants the watch face on screen.
-The [F-Droid install](#install-from-f-droid) below is for a watch you already wear. You do not
-need Android Studio to use a released APK.
+![GlucoWatch watch face and its three tiles: glucose, glucose with time and heart rate, and the light tile](docs/images/screenshots/watch-overview.png)
 
-Three programs are involved, and they do different jobs:
+- **Glucose at a glance:** a large reading, trend arrow and reading age, with a chart from rim to rim.
+- **A watch face and three tiles:** glucose only, glucose with time and heart rate, and a light theme.
+  Tap the glucose value to open the app for more detail.
+- **Complications for other faces:** glucose, chart, forecast, insulin/carbs on board,
+  and the last bolus/carbs, where your data source supplies them.
+- **Treatment context:** Nightscout or the phone's connected pump source can add boluses,
+  carbs, basal events, and insulin/carbs on board.
+- **Optional forecasts:** a glucose trend, your Nightscout loop's forecast, or a model running on the phone.
+- **Freshness you can see:** old readings are marked **OLD DATA**. An optional notification
+  tells you when readings are more than ten minutes old; Android can delay background refreshes and alerts.
 
-- **Android Studio** installs the Android SDK and can start a virtual watch, which is an emulator: a watch in a window on the computer. You can keep editing the code in Cursor. Studio is only there for the SDK and the emulator.
-- **JDK 21** is the Java compiler. Gradle uses it to build the app. Android Studio's own Java is newer than 21, and an old Java 8 on your PATH is not the compiler this project uses.
-- **The system image** is the Wear OS version inside the emulator. Pick the one that matches the watch you are copying. The app itself runs on Wear OS 4 and later.
+<details>
+<summary>See the watch app and individual tiles</summary>
 
-### 1. Install Android Studio
+![GlucoWatch app, scrolled from the current reading through treatment details to settings](docs/images/screenshots/watch-app.png)
 
-Download [Android Studio](https://developer.android.com/studio) and finish the first-run wizard.
-That downloads the SDK. On Windows the SDK is usually
-`%LOCALAPPDATA%\Android\Sdk`. On macOS and Linux it is usually `~/Android/Sdk` or
-`~/Library/Android/sdk`.
+<table>
+  <tr>
+    <th>Glucose</th>
+    <th>Glucose, time and heart</th>
+    <th>Glucose (light)</th>
+  </tr>
+  <tr>
+    <td><img src="docs/images/screenshots/watch-tile-glucose.png" width="230" alt="Glucose tile with a current reading, history and forecast"></td>
+    <td><img src="docs/images/screenshots/watch-tile-time-heart.png" width="230" alt="Tile showing time, glucose history, heart rate and battery"></td>
+    <td><img src="docs/images/screenshots/watch-tile-light.png" width="230" alt="Light glucose tile with time, history, heart rate and battery"></td>
+  </tr>
+</table>
 
-### 2. Install JDK 21
+[Watch face screenshot](docs/images/screenshots/watch-face.png)
 
-Install [Eclipse Temurin 21](https://adoptium.net/temurin/releases/?version=21). On Windows:
+</details>
 
-```powershell
-winget install --id EclipseAdoptium.Temurin.21.JDK -e
-```
+## On your phone
 
-Open a new terminal after the installer finishes, so the new Java is visible. Gradle looks for a
-JDK 21 on the machine. The wrapper that runs the build can itself be Java 17 through 25.
+<table>
+  <tr>
+    <th>Glucose and history</th>
+    <th>Meals, insulin and heart rate</th>
+  </tr>
+  <tr>
+    <td><img src="docs/images/screenshots/phone-today.png" width="300" alt="GlucoPhone Today dashboard showing demo glucose, a chart, insulin, time in range and a forecast"></td>
+    <td><img src="docs/images/screenshots/phone-log.png" width="300" alt="GlucoPhone dashboard with food photography, insulin logging and the optional heart rate track"></td>
+  </tr>
+</table>
 
-### 3. Create a virtual watch
+- **A glucose dashboard:** current value and trend, reading age, time in range, the
+  30-minute change, and an optional forecast, in mmol/L or mg/dL.
+- **Draggable history:** switch between 3, 6, 12 and 24 hours and drag back through up to
+  two weeks of locally retained readings. Longer history builds up as the app collects data.
+- **Meals and insulin:** photograph food, record carbs, and log bolus or basal doses on the chart.
+  These personal logs and photos stay on the phone.
+- **Pump and loop data:** combine your CGM with your own Nightscout or CareLink insulin data.
+- **Heart rate:** an optional Health Connect track on Android 14 or later, when your phone
+  has samples and you grant access.
+- **Local prediction:** choose a built-in forecast or import a compatible ONNX model from
+  a file or Hugging Face. Inference runs on the phone. See the [prediction guide](docs/prediction.md).
+- **Easier watch setup:** relay readings and forecasts over Bluetooth, or copy your Dexcom
+  or Nightscout login to the watch so you can avoid its keyboard.
 
-On Android Studio's welcome screen: **More Actions → Virtual Device Manager → Create Virtual Device**.
+All screenshots above use **synthetic demo data**, captured on Galaxy Watch6 Classic
+43 mm and Galaxy S22-sized emulators. Demo heart rates and forecasts are illustrative.
 
-Choose **Wear OS**, then **Wear OS Large Round**. That is the round profile used here for a
-Galaxy Watch6 Classic 43 mm (SM-R950) and the other 432 px Galaxy watches. **Small Round** is a
-384 px screen, smaller than that watch. **XL** is the 480 px size (Watch6 Classic 47 mm and the
-Ultra).
+> GlucoWatch and GlucoPhone are not medical devices. Do not use them for treatment decisions.
+> Keep using your CGM's official app and alarms.
 
-Then choose the system image. The app's minimum is Wear OS 4, so a newer image still runs it.
-Use whichever Wear OS image the wizard will actually download. A current Android Studio often
-offers Wear OS 7.0 (API 37) and refuses older images. That is a fine emulator for this repo.
+## Install and test from your phone
 
-If you do get a choice and you want the image to match a watch, the rows are:
+You need **Android 10 or later** for GlucoPhone. To use GlucoWatch, add a watch running
+**Wear OS 4 or later**. You can try the phone app without owning a watch.
 
-| On the real watch | Row in the wizard |
+The [latest GitHub release](https://github.com/GlucoseDAO/glucowatch/releases/latest) has
+three separate APKs (Android installer files):
+
+| App | File in the release | Install on |
+|---|---|---|
+| GlucoPhone | `glucowatch-phone-<version>.apk` | Your Android phone |
+| GlucoWatch | `glucowatch-<version>.apk` | Your Wear OS watch |
+| GlucoWatch face | `glucowatch-watchface-<version>.apk` | Your Wear OS watch, alongside GlucoWatch |
+
+### 1. Install GlucoPhone through Obtainium
+
+[Obtainium](https://obtainium.imranr.dev/) installs Android apps from their release pages
+and checks for updates. On your phone:
+
+1. Install Obtainium from its [official releases](https://github.com/ImranR98/Obtainium/releases/latest).
+   Most current phones use its `app-arm64-v8a-release.apk`; use `app-release.apk` if you
+   need the universal APK. Android may ask you to allow your browser to **Install unknown apps**.
+2. Open Obtainium → **Add App** and paste this repository URL:
+
+   ```text
+   https://github.com/GlucoseDAO/glucowatch
+   ```
+
+3. Open the additional options and set **Filter APKs by Regular Expression** to:
+
+   ```text
+   ^glucowatch-phone-.*\.apk$
+   ```
+
+4. Add the app, then tap **Install**. If Android asks, allow Obtainium to **Install unknown apps**
+   and finish the installation. If you see an APK chooser, select `glucowatch-phone-<version>.apk`.
+5. Open **GlucoPhone**. The release starts with **Demo data**, so you can explore **Today**,
+   scroll the dashboard, drag the chart and try the logging controls without an account or network.
+   Use **Connect** when you are ready for your own data.
+
+The APK filter selects the phone app from a release that also contains two watch packages.
+See Obtainium's [APK filter documentation](https://wiki.obtainium.imranr.dev/sources/).
+Keep this entry in Obtainium to receive future phone updates.
+
+### 2. Install the watch app and face from your phone
+
+**Obtainium on your phone installs apps on the phone. It does not install them on your watch.**
+Use **Wear Installer 2** to send the two watch APKs to the watch. You can do this without a computer.
+
+1. In your phone's browser, open the
+   [latest release](https://github.com/GlucoseDAO/glucowatch/releases/latest), expand **Assets**,
+   and download `glucowatch-<version>.apk` and `glucowatch-watchface-<version>.apk` to **Downloads**.
+   Choose the same version as GlucoPhone.
+2. Install [Wear Installer 2](https://play.google.com/store/apps/details?id=org.freepoc.wearinstaller2)
+   on your phone. Connect the phone and watch to the same Wi-Fi network.
+3. On a Galaxy Watch, open **Settings → About watch → Software information** and tap
+   **Software version** repeatedly until Developer options are enabled. On other watches,
+   tap **Build number** under **Settings → System → About → Versions**.
+4. In the watch's **Developer options**, turn on **ADB debugging** and **Wireless debugging**.
+   Open Wireless debugging and note the watch's IP address.
+5. In Wear Installer 2, enter the IP address → **Done**, then menu → **Pair with watch** → **Enable**.
+   On the watch, tap **Pair new device**. Enter its six-digit code, a space, and its pairing port
+   in Wear Installer 2 → **Done**.
+6. Return to the watch's main **Wireless debugging** screen. Enter its **connection port**
+   in Wear Installer 2's port field. This is different from the pairing port in the previous step.
+7. In Wear Installer 2, choose **Custom APK**, select `glucowatch-<version>.apk` from Downloads,
+   and tap **Install**. Repeat for `glucowatch-watchface-<version>.apk`.
+8. Open **GlucoWatch** on the watch to see demo data. Turn off **Wireless debugging** and
+   **ADB debugging** when finished to save battery.
+
+If pairing or installation fails, follow the installer's
+[Wear OS 4+ help](https://freepoc.org/wear-installer-2-help-page/).
+This Wi-Fi pairing is for installation; the Bluetooth pairing inside GlucoPhone is a separate step below.
+
+### 3. Add the face and tiles
+
+Long-press the current watch face → **Add watch face** → **GlucoWatch face**.
+If a complication is empty, long-press → **Customize** → tap the slot → choose a GlucoWatch
+provider such as **Glucose** or **Glucose chart**. The face needs the GlucoWatch app on the same watch.
+
+Swipe through the watch's tiles → **Add tiles** and choose **Glucose**, **Glucose, time and heart**,
+or **Glucose (light)**. For heart rate, grant access when the face asks, and tap
+**Allow heart rate** in GlucoWatch → Settings for the tiles.
+
+### Updating later
+
+Obtainium checks for GlucoPhone updates; open its entry to install an available update.
+For the watch, download the newer app and face APKs from the same release and repeat
+**Custom APK → Install** in Wear Installer 2. This updates the installed copies.
+Update all three packages together so the phone and watch use compatible versions.
+The watch's Wi-Fi address and connection port can change when you enable debugging again.
+
+If you prefer a computer, use the [adb installation instructions](#install-the-watch-from-a-computer).
+The phone app has not been submitted to F-Droid. Links to the watch and face submissions
+are in the [release notes for developers](#build-and-test) below.
+
+## Connect your data
+
+On GlucoPhone, open **Connect**. On GlucoWatch, open **Settings**. Choose a source,
+set your display units and tap **Save & test**.
+
+| Source | What you need | What it provides |
+|---|---|---|
+| Demo data | Nothing | Sample glucose, treatments and a forecast; works offline |
+| Dexcom Share | Dexcom username, password and account region | Glucose and trend; enable Share in the official Dexcom app with at least one follower |
+| Nightscout | Your site's URL and, for a private site, a read token | Glucose, uploaded treatments, insulin/carbs on board and loop forecasts when available |
+| Dexcom G6 notifications (phone only) | Official G6 app on the same phone, Quick Glance on, notification access | New glucose readings collected locally; no Share login or glucose backfill |
+| CareLink (MiniMed) | A care partner account and the account's country | Pump data where uploaded; can also supply glucose, depending on the device |
+
+**Dexcom Share:** choose **Outside US (EU)**, **US**, or **Japan** for your account.
+A wrong region can look like a failed login. Share does not supply insulin or carbs.
+
+**Nightscout:** enter your site's address. Use API v1 unless you specifically need v3;
+API v3 requires a token. For a private site, create a token with the `readable` role under
+**Admin tools → Subjects**. The app reads your site; it does not write treatments back.
+Loop data is displayed only while fresh. See [Nightscout support](docs/nightscout.md).
+
+**G6 notifications:** on the phone's Connect tab, choose Dexcom and enable
+**Use G6 notifications instead of Dexcom Share**. Turn on Quick Glance in G6, tap
+**Allow notification access**, grant access in Android settings, return and tap **Save & test**.
+New readings can take five minutes to arrive. History starts when collection begins;
+notification timestamps may differ from sensor timestamps. For the watch, use **Phone app** as its source.
+
+**Additional insulin sources:** use your own Nightscout or CareLink alongside your CGM to
+show therapy data. Only combine sources belonging to the same person.
+[CareLink setup](docs/carelink.md) explains browser sign-in and the pump data available.
+
+You can also import an existing configuration with **Connect → Upload .env / YAML** or
+**Import from URL**. See [configuration import](docs/configuration-import.md) and the
+[YAML example](config.example.yaml). A filled configuration contains credentials; keep it private.
+
+## Connect your phone and watch
+
+First pair your watch with your phone through its usual Wear OS or Galaxy Wearable setup.
+Then pair the two GlucoWatch apps:
+
+1. On the phone, open **GlucoPhone → Watch → Pair a watch**.
+2. On the watch, open **GlucoWatch → Settings → Pair with phone**.
+   Allow **Nearby devices** on both devices and keep the pairing screens open.
+3. Compare the six-digit codes and tap **Codes match** on both devices.
+4. Choose how the watch gets its readings:
+
+   | Mode | Watch setting | When to use it |
+   |---|---|---|
+   | The phone fetches and relays | Source **Phone app** → **Save & test** | Use the phone's CGM/pump data or G6 notifications; the watch needs Bluetooth range, but no internet or login |
+   | The watch fetches directly | Source **Dexcom Share** or **Nightscout** → **Copy login from phone** → **Save & test** | Enter the login on the phone once, then let the watch use its own network connection |
+
+With **Phone app** as the watch source, choose **Phone app model** under Forecast to
+show the forecast computed by GlucoPhone. The model stays on the phone.
+
+The Bluetooth relay is still being tested: **pairing, syncing and copying a login between a
+real phone and watch have not yet been verified**. The standalone watch and phone apps can be
+tried independently. See [phone link status and limits](docs/phone-link.md#what-is-verified).
+If you report a test result, include device models, OS versions and app versions, and remove
+credentials and personal health data from anything you post publicly.
+
+## Privacy and troubleshooting
+
+Credentials and caches stay in each app's private storage. Source requests go to the services
+you select; there is no project server. The phone–watch exchange is encrypted after you confirm
+pairing. Meal photos, manually logged meals/insulin and phone heart-rate data stay on the phone.
+An imported model runs locally; selecting a Hugging Face model downloads its files without
+uploading your glucose. See the [phone link guide](docs/phone-link.md).
+
+- **No reading:** check the selected source, Dexcom Share/follower setup or Nightscout token,
+  and the status returned by **Save & test**.
+- **Old readings:** check your upstream CGM and internet connection. A successful connection
+  does not make an old reading fresh. In phone relay mode, also check Bluetooth range.
+- **Dexcom works on Wi-Fi but fails on mobile:** use watch Settings → **Connection check**.
+  [Carrier blocking](docs/carrier-blocking.md) explains the errors and available routes.
+  **Resolve over HTTPS** is off by default; use it only for a diagnosed DNS failure.
+- **Phone sync stops:** check Nearby devices permission and the phone's battery restrictions.
+  Some manufacturers stop background services; see [known limits](docs/phone-link.md#known-limits).
+- **Empty face:** install both the watch app and face, open the app once, then check complication providers.
+
+## For developers
+
+For Android Studio, JDK 21, a virtual watch, debug defaults and desktop source checks,
+see [Developing GlucoWatch](docs/development.md). Released APKs need none of that setup.
+Project rules are in [AGENTS.md](AGENTS.md). The license is [Apache-2.0](LICENSE).
+
+### Modules
+
+| Module | Role |
 |---|---|
-| Wear OS 6.0, system version 16 (Galaxy Watch6 Classic on the current stable software, for example `R950XXS2CZF5`) | API 36, Wear OS 6.0, Android 16 |
-| Wear OS 6.1 | API 36.1 |
-| Wear OS 7.0 | API 37 |
+| `core/` | JVM clients, source sync, models, predictors, demo data, encrypted phone link and desktop CLI |
+| `app/` | Wear OS app, cached readings, settings, five complications and three tiles |
+| `watchface/` | Watch Face Format XML; shows the app's complications |
+| `phone/` | GlucoPhone dashboard, source setup, local model imports and Bluetooth relay |
+| `onnx-inference/` | Shared adapter for the phone's local ONNX Runtime inference |
 
-Download the image and press **Finish**.
+### Build and test
 
-Press the play button next to the device. The first boot takes a few minutes. Leave the window open.
-
-The stock Large Round screen is 454 × 454 px at density 320. A real SM-R950 is 432 × 432 px at
-density 340. Large Round is close enough to look at the face. For a capture at the real size,
-`uv run scripts/screenshots.py` builds an emulator at 432 px. See
-[docs/screenshots.md](docs/screenshots.md). That script needs [uv](https://docs.astral.sh/uv/) and
-is optional if you only want the emulator window.
-
-### 4. Point Gradle at the SDK
-
-A terminal build needs the SDK path. Opening the project in Android Studio writes
-`local.properties` for you. If you never open it there, create that file in the repository root.
-It is gitignored.
-
-Windows:
-
-```
-sdk.dir=C:\\Users\\you\\AppData\\Local\\Android\\Sdk
-```
-
-macOS:
-
-```
-sdk.dir=/Users/you/Library/Android/sdk
-```
-
-Linux:
-
-```
-sdk.dir=/home/you/Android/Sdk
-```
-
-`ANDROID_HOME` set to the same folder works instead of the file.
-
-### 5. Optional login in `.env`
+Requirements: Android SDK (`ANDROID_HOME` or `sdk.dir` in `local.properties`) and an installed
+JDK 21 compiler. Gradle 9.1.0's wrapper runs on Java 17–25.
 
 ```bash
-cp .env.example .env
-```
-
-On Windows, copy the file in Explorer or with `copy .env.example .env`, then edit it.
-
-A **debug** build of the watch app and the phone app compiles the Dexcom lines in, so a fresh
-install starts logged in to Share. A **release** build leaves those fields empty. `.env` is
-gitignored. The debug APK contains the password in plain text: keep it on your machine.
-
-Leave `GLUCOWATCH_SOURCE` empty. With a Dexcom username and password filled in, the debug app
-uses Dexcom Share. `DEXCOM_REGION` is `eu` (outside the US), `us`, or `jp`.
-
-CareLink (Medtronic) username and password in `.env` are read by the desktop sign-in script only.
-They are not written into an APK. See [docs/carelink.md](docs/carelink.md).
-
-### 6. Build the watch app and the face
-
-From the repository root. This compiles two packages. `app` is the program that fetches glucose
-and draws the chart. `watchface` is the face you select on the watch; it has no Kotlin of its
-own and shows the app's complications. Both have to be installed, or the face has nothing to show.
-
-Windows, in PowerShell:
-
-```powershell
-.\gradlew.bat :app:assembleDebug :watchface:assembleDebug
-```
-
-macOS and Linux:
-
-```bash
-./gradlew :app:assembleDebug :watchface:assembleDebug
-```
-
-You get `app/build/outputs/apk/debug/app-debug.apk` and
-`watchface/build/outputs/apk/debug/watchface-debug.apk`.
-
-### 7. Install them on the virtual watch
-
-With the emulator window still open:
-
-```powershell
-adb install -r app\build\outputs\apk\debug\app-debug.apk
-adb install -r watchface\build\outputs\apk\debug\watchface-debug.apk
-```
-
-On macOS and Linux use the same commands with forward slashes. `adb` comes with the SDK, in
-`platform-tools`. If the shell cannot find it, use the full path, or add `platform-tools` to PATH.
-
-On the emulator, long-press the current face, swipe to **GlucoWatch face**, and tap it. Open
-**GlucoWatch** once. With a Dexcom login in `.env`, the status line shows Share and a reading, or
-Dexcom's error. With no login, the face still draws, using demo data.
-
-The phone app is a third APK, `phone/build/outputs/apk/debug/phone-debug.apk`. It goes on a phone
-or a phone emulator, not on this watch. The watch fetches Dexcom or Nightscout by itself. See
-[Phone app](#phone-app-optional).
-
-### Each time you want to see a change
-
-Start the virtual watch yourself and leave its window open. In Android Studio that is
-**Device Manager**, the play button on **Wear OS Large Round**. Wait until a watch face is on
-the screen. A window that is still booting answers `offline` and will refuse the install.
-
-Then, from the repository root in PowerShell:
-
-```powershell
-.\gradlew.bat :app:assembleDebug :watchface:assembleDebug
-$adb = "$env:LOCALAPPDATA\Android\Sdk\platform-tools\adb.exe"
-& $adb install -r app\build\outputs\apk\debug\app-debug.apk
-& $adb install -r watchface\build\outputs\apk\debug\watchface-debug.apk
-& $adb shell am broadcast -a com.google.android.wearable.app.DEBUG_SURFACE --es operation set-watchface --es watchFaceId io.github.antonkulaga.glucowatch.watchface
-& $adb shell am start -n io.github.antonkulaga.glucowatch/.ui.MainActivity
-```
-
-The two `install` lines put the new app and the new face on the watch that is already running.
-`-r` replaces the copy already there. The broadcast selects **GlucoWatch face**. The last line
-opens the app, which is the same screen as tapping the face. If `adb` is already on your PATH,
-you can type `adb` instead of `& $adb`.
-
-On macOS and Linux, from the repository root, with the emulator window open:
-
-```bash
-./gradlew :app:assembleDebug :watchface:assembleDebug
-adb install -r app/build/outputs/apk/debug/app-debug.apk
-adb install -r watchface/build/outputs/apk/debug/watchface-debug.apk
-adb shell am broadcast -a com.google.android.wearable.app.DEBUG_SURFACE --es operation set-watchface --es watchFaceId io.github.antonkulaga.glucowatch.watchface
-adb shell am start -n io.github.antonkulaga.glucowatch/.ui.MainActivity
-```
-
-Run the whole block again after the next code change. You do not create a new virtual watch.
-
-## Install from F-Droid
-
-F-Droid is a catalog of free Android apps. You do not need a Google account. GlucoWatch is two
-packages, and both go on the watch:
-
-- the app, [GlucoWatch](https://f-droid.org/packages/io.github.antonkulaga.glucowatch/)
-- the watch face, [GlucoWatch face](https://f-droid.org/packages/io.github.antonkulaga.glucowatch.watchface/)
-
-The watch has no F-Droid app of its own, and installing F-Droid on a phone does not install these
-packages onto the watch. Download both APKs from those pages (open the latest version, then
-**Download APK**), then send them to the watch.
-
-On the watch:
-
-1. Settings → About watch → Software information → tap **Software version** 5 times, until Developer options appear.
-2. Settings → Developer options → turn on **ADB debugging** and **Wireless debugging**. The watch and the computer must be on the same Wi-Fi.
-3. Open **Wireless debugging** and tap **Pair new device**. Leave that screen open. It shows an IP address, a pairing port, and a 6-digit code.
-4. Go back to the main Wireless debugging screen. The port shown there is the connection port. It is a different number from the pairing port.
-
-On a computer, install [Android platform-tools](https://developer.android.com/tools/releases/platform-tools) so you have the `adb` command. Then, with the APKs in the current directory:
-
-```bash
-adb pair <watch-ip>:<pair-port>          # type the 6-digit code
-adb connect <watch-ip>:<connect-port>
-adb install -r io.github.antonkulaga.glucowatch_<version>.apk
-adb install -r io.github.antonkulaga.glucowatch.watchface_<version>.apk
-```
-
-On the watch, open **GlucoWatch** → **Settings** and pick a data source: **Dexcom Share** (username, password, region) or **Nightscout** (your site's address and an access token, see [Nightscout](#nightscout)). Tap **Save & test**. Then long-press the current watch face, swipe to the end, tap **+ Add watch face** and pick **GlucoWatch face**. If a slot is empty, long-press the face → **Customize** → tap the slot → **Glucose** or **Glucose chart**. For a tile, swipe left from the face to the end of the tiles, tap **+ Add tiles** and pick one of the three: **Glucose** (glucose-only), **Glucose, time and heart** (clock, glucose, heart rate and battery), or **Glucose (light)** (the same glucose-first layout on a light background). The face asks for heart-rate access when you choose it; for heart rate on the tile, tap **Allow heart rate** in GlucoWatch → Settings.
-
-Turn **Wireless debugging** off when you are done. It uses extra battery.
-
-A later version is installed the same way. `adb install -r` replaces the copy already on the watch.
-
-From a phone, without a computer: download both APKs in the phone's browser, install **Wear Installer 2**, pair it with the watch from the Wireless debugging screen, and install each file with **Custom APK**.
-
-## Modules
-
-| Module | What it is |
-|---|---|
-| `core/` | Pure Kotlin: Dexcom Share and Nightscout clients, models, `GlucosePredictor` interface, demo data, desktop CLI. Unit-tested on the JVM. |
-| `app/` | Wear OS app: aims to fetch about every 5 min, caches 24 h, provides 5 complications (value, chart, forecast, IOB/COB, last bolus and carbs), 3 tiles, app screen + settings. |
-| `watchface/` | Watch Face Format (XML, no code) face that shows the five complications. |
-| `phone/` | Optional phone app (GlucoPhone): a glucose-first dashboard with two weeks of draggable history, meal photos, insulin, heart rate and a forecast model you can import from Hugging Face or a file. It also relays glucose to the watch over Bluetooth, or gives the watch its login. |
-
-The icon is GlucoseDAO's glucose molecule, and the charts draw in the same ball-and-stick style.
-Everything that is not glucose is black, grey and white; glucose is a colour code, green in range,
-then yellow, orange and red toward either extreme. The values live in one place,
-`core/…/GlucosePalette.kt`, shared by the watch face, tiles, watch app and phone app. On the watch,
-insulin stays orange, carbs green and the forecast purple, as on GlucoseDAO's posters.
-The light tile uses a restrained off-white version of the glucose-first layout, with darker
-green, amber and red state colours. `uv run scripts/make_icon.py` draws the launcher
-vector and the store icon from one geometry. `uv run scripts/store_images.py` makes the store
-screenshots and the face and tile previews from a `demo` run of the screenshot script.
-
-## Build
-
-First-time setup, including the emulator that matches a Watch6 Classic, is in
-[Run it on a computer](#run-it-on-a-computer).
-
-Requirements: Android SDK (`ANDROID_HOME`, or `sdk.dir` in `local.properties`) and a JDK 21
-compiler on the machine that runs Gradle. The wrapper itself runs on Java 17 through 25. Release
-builds (`assembleRelease`) leave the Dexcom fields empty, so they are safe to publish.
-
-```bash
-./gradlew :core:test                 # unit tests
+./gradlew :core:test
 ./gradlew :app:assembleDebug :watchface:assembleDebug :phone:assembleDebug
 ```
 
-APKs: `app/build/outputs/apk/debug/app-debug.apk`, `watchface/build/outputs/apk/debug/watchface-debug.apk`,
-`phone/build/outputs/apk/debug/phone-debug.apk` (this one goes on the phone).
+Debug APKs are in each module's `build/outputs/apk/debug/` directory. Debug builds can compile
+private `.env` defaults into the APK; keep those APKs private. Release builds leave credential
+fields empty. See the [debug setup guide](docs/development.md#debug-defaults-in-env).
 
-## 0. Your settings in `.env` (optional)
-
-Instead of typing your login on the watch, put it in a git-ignored `.env` in the project root:
-
-```bash
-cp .env.example .env     # then edit it
-```
-
-```ini
-DEXCOM_USERNAME=you@example.com
-DEXCOM_PASSWORD="your password"
-DEXCOM_REGION=eu          # eu (= outside US), us or jp
-NIGHTSCOUT_URL=https://your-site.example
-NIGHTSCOUT_TOKEN=         # access token, empty for a public site
-NIGHTSCOUT_API=v1         # v1 or v3 (v3 needs a token)
-GLUCOWATCH_SOURCE=        # demo, share or nightscout; empty picks share if the Dexcom login is set
-GLUCOWATCH_UNIT=mmol      # mmol or mgdl
-GLUCOWATCH_PREDICTION=false
-```
-
-- The desktop check (`:core:run`) uses it and stops asking.
-- **Debug builds** compile the values in as initial settings, so a freshly installed debug APK is
-  already logged in. Changed values are applied again on the next start after a rebuild and
-  reinstall; edits made in the app's Settings are kept until `.env` changes.
-- **Release builds never contain these values** (Gradle writes empty strings), so a release APK
-  is safe to give to friends or publish. The debug APK does contain your password in plain text:
-  keep it to yourself.
-- Environment variables with the same names override the file. A typo in `DEXCOM_REGION`,
-  `NIGHTSCOUT_API`, `GLUCOWATCH_SOURCE`, `GLUCOWATCH_UNIT` or `GLUCOWATCH_PREDICTION` fails the
-  build with a clear message.
-
-## 1. Check your Share account from the PC (no watch needed)
-
-Share must be **on** in the Dexcom app with at least one follower (you can invite yourself and
-accept in the Dexcom Follow app). Then:
+Before a release tag, test and build inside each module, as F-Droid does:
 
 ```bash
-./gradlew -q --console=plain :core:run --args="--hours 1 --predict"
-# uses .env; without it asks for username and password (not echoed).
-# Override with --region eu|us|jp and --unit mmol|mgdl
-```
-
-Expected: `Login OK (Outside US (EU)), 12 readings in the last 1 h` and the last values.
-
-For Nightscout, the same check also lists boluses, carbs and the loop's status:
-
-```bash
-./gradlew -q --console=plain :core:run --args="--source nightscout --url https://your-site.example --hours 3 --predict"
-# --token <access token>, --api v1|v3; or NIGHTSCOUT_URL / NIGHTSCOUT_TOKEN / NIGHTSCOUT_API in .env
-```
-
-## 2. Emulator
-
-```bash
-~/Android/Sdk/emulator/emulator -avd glucowatch_wear6 &
-adb -e install -r app/build/outputs/apk/debug/app-debug.apk
-adb -e install -r watchface/build/outputs/apk/debug/watchface-debug.apk
-```
-
-Long-press the watch face → swipe to **GlucoWatch** → tap it. The face starts with demo data, so
-the chart shows up immediately. Tap the glucose value to open the app → **Settings**.
-
-## 3. Connect real Share data
-
-### With `.env` (easiest)
-
-Fill in `.env` (section 0), rebuild and install the debug APK: the app starts in Share mode with
-your account. Open it once and check the status line (`Share · EU`, value, or the error).
-
-### In the emulator or on the watch, by hand
-
-App → **Settings** → *Dexcom Share* → username, password, region *Outside US (EU)* → **Save & test**.
-It shows `OK: 6.8 mmol/L, 2 min ago` or the error (wrong password, wrong region, no readings).
-In the emulator you can type with the PC keyboard.
-
-### From the PC over adb (debug builds only)
-
-Typing an email on a watch keyboard is tedious; debug builds accept the settings from adb.
-The password is read without echo and does not end up in your shell history:
-
-```bash
-read -r -p "Dexcom user: " DXU; read -r -s -p "Password: " DXP; echo
-adb shell am start -n io.github.antonkulaga.glucowatch/.ui.SettingsActivity \
-  --es source SHARE --es region eu --es unit mmol \
-  --es username "'$DXU'" --es password "'$DXP'" --ez save true
-unset DXP
-```
-
-Nightscout works the same way:
-
-```bash
-adb shell am start -n io.github.antonkulaga.glucowatch/.ui.SettingsActivity \
-  --es source NIGHTSCOUT --es nightscoutUrl https://your-site.example --es nightscoutApi v1 \
-  --es nightscoutToken "'$NS_TOKEN'" --ez prediction true --es predictor loop --ez save true
-```
-
-(Use `adb -e` for the emulator, `adb -s <ip:port>` for a specific watch.) Release builds ignore these extras.
-
-## 4. Install on a Galaxy Watch
-
-1. Watch: *Settings → About watch → Software information* → tap **Software version** 5× → Developer options on.
-2. *Settings → Developer options* → **ADB debugging** on, **Wireless debugging** on (watch and PC on the same Wi-Fi).
-3. In *Wireless debugging* tap **Pair new device** and pair from the PC:
-   ```bash
-   adb pair <watch-ip>:<pair-port>      # enter the 6-digit code shown on the watch
-   adb connect <watch-ip>:<port>        # the port shown on the main Wireless debugging screen
-   adb devices                          # the watch should be listed
-   ```
-4. Install both APKs:
-   ```bash
-   adb -s <watch-ip>:<port> install -r app/build/outputs/apk/debug/app-debug.apk
-   adb -s <watch-ip>:<port> install -r watchface/build/outputs/apk/debug/watchface-debug.apk
-   ```
-5. Enter credentials (section 3), then long-press the face → pick **GlucoWatch**. If a slot shows
-   nothing: long-press → *Customize* → tap the slot → pick GlucoWatch *Glucose* / *Glucose chart*.
-
-You can also use the three complications on any other watch face that has matching slots.
-
-Tip: turn Wireless debugging off again when you are done; it drains the battery.
-
-## Phone app (optional)
-
-Install `phone/` on the phone that the watch is paired with. It needs Bluetooth and no Google
-Play Services. The watch keeps working without it.
-
-For faster setup, the phone's **Connect** tab imports a filled `.env` or YAML file, or its
-HTTPS URL. A supplied Hugging Face model is downloaded, checked and selected automatically.
-See [configuration import](docs/configuration-import.md) and [the YAML example](config.example.yaml).
-
-1. On the phone, open **GlucoWatch**, pick a source (Demo data, Dexcom Share or Nightscout), enter
-   the login and tap **Save & test**. Allow **Nearby devices** when asked.
-2. Tap **Pair a watch**. On the watch, open GlucoWatch → Settings → **Pair with phone**.
-3. Both screens show the same six-digit code. Tap **Codes match** on both.
-4. On the watch, either pick the source **Phone app** (the phone fetches, the watch needs no
-   login and no internet), or keep **Dexcom Share** / **Nightscout** and tap **Copy login from
-   phone**. Then tap **Save & test**.
-
-With the source **Phone app**, the watch's forecast can also be **Phone app model**: the phone
-runs the model picked in its own settings. How the link works, and why it is not the Wearable
-Data Layer, is in [docs/phone-link.md](docs/phone-link.md). The link has passed its unit tests but
-has not yet been tried between a real watch and phone.
-
-## Nightscout
-
-Pick **Nightscout** in Settings and enter your site's address (`https://` is added if you leave
-it out). A public site needs nothing else. For a private one, create an access token in Nightscout
-under *Admin tools → Subjects* with the `readable` role and enter it. The API secret works with
-API v1 too, but it grants full write access, so a token is the better choice.
-
-**API v1 (classic)** works with every Nightscout. **API v3** is the newer API of Nightscout 14 and
-later and always needs a token. Pick v1 unless you have a reason not to.
-
-With Nightscout the watch also shows:
-
-- **Insulin and carbs on board** from your loop (AAPS, Trio, iAPS, OpenAPS, Loop), as a
-  complication and in the app. They disappear when the loop has not reported for 30 minutes, and
-  the app then says how long it has been quiet.
-- **Boluses and carbs** on the chart (automatic boluses as small ticks), and the last bolus and
-  carbs with how long ago, as a complication.
-- **The loop's forecast**: choose *Loop (Nightscout)* under Forecast. It is shown only while it is
-  less than 15 minutes old.
-
-Details, including how each uploader writes its data: [docs/nightscout.md](docs/nightscout.md).
-
-## When the network will not reach Dexcom
-
-Some mobile networks stop answering for `shareous1.dexcom.com` while Wi-Fi keeps working. Settings →
-**Connection check** walks the connection one layer at a time — resolve, connect, handshake,
-request — and names the one that failed, next to what the network looks like (whether the link has
-IPv4 at all, which resolvers it uses, whether Private DNS is on, whether it uses NAT64) and the
-failures the last fetches ran into.
-
-If the name is what fails, Settings → *If DNS fails* → **Resolve over HTTPS** asks Cloudflare or
-Google over DoH instead and connects straight to the address, with Dexcom's certificate still
-checked in full. It is off by default, because turning it on tells that resolver this device looks
-up Dexcom, and it cannot help when a network blocks the address itself rather than the name.
-
-What each failure means, what to try from a shell, and what no app code can fix:
-[docs/carrier-blocking.md](docs/carrier-blocking.md).
-
-## Forecast (optional, off by default)
-
-Enable in Settings → *Show forecast*. It adds a dashed line with an uncertainty band to the chart
-and fills the bottom slot of the face (`30m 7.9`).
-
-To plug in your own model, implement `GlucosePredictor` in `core/` and register it:
-
-```kotlin
-class MyModel : GlucosePredictor {
-    override val id = "my-model"
-    override val displayName = "My model"
-    override fun predict(history: List<GlucoseReading>, horizonMinutes: Int): Prediction? {
-        // history: oldest first, up to 24 h, mg/dL. Return points every 5 min up to the horizon.
-    }
-}
-
-object Predictors { val all = listOf(LinearTrendPredictor(), MyModel()) }
-```
-
-It then appears as a choice in Settings. `LinearTrendPredictor` is the reference example. You can
-test models on the PC with `:core:run --args="--predict"` against your real Share or Nightscout data.
-With Nightscout there is one more choice, *Loop (Nightscout)*, which shows your loop's own forecast
-instead of running a model on the watch.
-
-The phone's Model tab also saves a Hugging Face address and optional download token. The
-[prediction guide](docs/prediction.md) describes local ONNX inference in the normal GlucoPhone release,
-full forecast horizons and the GlucoseDao comparison with Nightscout and Dexcom Share data.
-
-## Screenshots
-
-`uv run scripts/screenshots.py` builds the debug APKs, boots an emulator shaped like a Galaxy
-Watch6 Classic 43 mm (round, 432 px, density 340) and saves round screenshots of the face, the
-three tiles and the app for demo data, Dexcom Share and Nightscout into `data/output/screenshots/`.
-`--watch all` adds the other round Galaxy sizes since the Watch6 (438 px Watch8 Classic, 480 px
-Watch6 Classic 47 mm and Ultra). GlucoWatch needs Wear OS 4 or later. See
-[docs/screenshots.md](docs/screenshots.md).
-
-## How it works
-
-- Dexcom Share login: `AuthenticatePublisherAccount` → accountId, `LoginPublisherAccountById` →
-  sessionId, `ReadPublisherLatestGlucoseValues`. The session id is cached and renewed on expiry.
-  Servers: `shareous1.dexcom.com` (outside US), `share2.dexcom.com` (US), `share.dexcom.jp`.
-- Nightscout: `entries`, `treatments` and `devicestatus`, read-only, through API v1 or v3. Only
-  new readings are fetched after the first run. See [docs/nightscout.md](docs/nightscout.md).
-- Refresh: alarm ~20 s after the next expected reading, polling sooner if the reading is late;
-  Android may delay alarms while the watch is idle. After a fetch all complications and tiles are
-  asked to update. The face marks the value **OLD DATA** when the newest reading is more than
-  10 minutes old, even when a fetch succeeded but returned no newer value. A separate alarm also
-  requests a face update at that threshold. Settings offers an old-reading notification: Off,
-  Vibrate (default), or Sound and vibrate. Android notification permission is needed for the
-  vibration or sound, and idle mode can delay the notification.
-- Share fallback: after a failed request or once the newest reading is 7 minutes old, the watch
-  makes a second request. It uses another connected Wi-Fi or cellular network if Wear OS exposes
-  one. You can enter an HTTP CONNECT proxy (`host:port`) in the watch's Share settings as another
-  route and test its tunnel without sending your login. There is no public proxy preset; the
-  field is empty by default. If no other route is available, it retries through the watch's
-  default connection. It tries at most once every 2 minutes.
-  This runs on the watch without the optional phone app. It cannot create a second network when
-  the watch has only one, or recover readings Dexcom has not uploaded. Use only a proxy you trust;
-  the Dexcom request stays inside HTTPS, while the proxy can see the destination and timing. An
-  HTTP CONNECT proxy can help with DNS or destination-IP trouble, but it does not hide the
-  Dexcom TLS server name from a carrier inspecting traffic to the proxy.
-- Heart rate is not fetched: the face reads it through Watch Face Format (`[HEART_RATE]`), and
-  the glucose-all tile through the tile renderer (`PlatformHealthSources`). Both come from the
-  watch's own sensor, with the heart-rate permission the watch asks for. No library is added.
-- Credentials are stored only in the app's private storage on the watch (and on the phone, if you
-  use the phone app) and sent only to Dexcom, to your Nightscout, or to your paired watch, with
-  every message encrypted with the key from pairing ([docs/phone-link.md](docs/phone-link.md)).
-
-## Publish on F-Droid
-
-F-Droid builds the tag you push. It does not publish whatever happens to be on `main`. The request
-goes to [fdroiddata](https://gitlab.com/fdroid/fdroiddata), as a merge request, following their
-[quick start](https://f-droid.org/docs/Submitting_to_F-Droid_Quick_Start_Guide/) and
-[inclusion policy](https://f-droid.org/docs/Inclusion_Policy/).
-
-1. The license is Apache-2.0, in `LICENSE`. Use that same identifier in the metadata.
-2. Tag the commit that matches `versionName`, for example `v0.1.0`, and push the tag. `versionCode` in both `app/build.gradle.kts` and `watchface/build.gradle.kts` has to go up for every later release, followed by a new tag.
-3. Fork fdroiddata and open one merge request per package. The recipes are `metadata/io.github.antonkulaga.glucowatch.yml` and `metadata/io.github.antonkulaga.glucowatch.watchface.yml`.
-4. Each recipe uses this git repository, `RepoType: git`, and `gradle: [yes]`. Set `subdir` to the module (`app` or `watchface`), so F-Droid runs Gradle there and finds the APK in its `build/` directory. Leave out `output` and `prebuild`. The `commit` field is the full hash of the tag, not the tag name. Publish a signed APK in the GitHub release for that version and set `Binaries` plus `AllowedAPKSigningKeys` so the build is reproducible.
-5. Set `UpdateCheckMode: Tags` and `AutoUpdateMode: Version`, so a later tag is picked up without a new request.
-6. Declare the `NonFreeNet` anti-feature. Live readings can come from Dexcom Share, which is a proprietary service. Nightscout is free software, and demo data works with no account.
-7. Open the merge request and answer the review. The store text is taken from `fastlane/metadata/android/en-US/` in this repository.
-
-Check the release build locally before tagging. F-Droid runs Gradle inside each module, so do
-the same. The APKs you sign for the GitHub release must come from these builds:
-
-```bash
+./gradlew :core:test
 (cd app && ../gradlew assembleRelease)
 (cd watchface && ../gradlew assembleRelease)
+(cd phone && ../gradlew assembleRelease)
 ```
 
-## Other stores
+Keep all three app version codes/names together. Signing, reproducibility, store requirements
+and metadata are covered in [store publishing](docs/store-publishing.md).
+F-Droid submissions: [watch app](https://gitlab.com/fdroid/fdroiddata/-/merge_requests/49882)
+and [watch face](https://gitlab.com/fdroid/fdroiddata/-/merge_requests/49898).
 
-Google Play is the only store that installs straight onto the watch. The app does not pass Play's
-Wear OS review yet, because it asks for the Dexcom password on the watch. IzzyOnDroid and
-Obtainium use the APKs from the GitHub release. Galaxy Store takes watch apps only in China.
-[docs/store-publishing.md](docs/store-publishing.md) covers what each store needs, and what can go
-into a tagged commit without breaking the F-Droid build.
+### Install the watch from a computer
+
+Enable watch ADB/Wireless debugging and use the pairing and connection ports described
+[above](#2-install-the-watch-app-and-face-from-your-phone). Install
+[Android platform-tools](https://developer.android.com/tools/releases/platform-tools), download
+the app and face APKs from the same release, and replace the placeholders:
+
+```bash
+adb pair <watch-ip>:<pair-port>     # enter the six-digit pairing code
+adb connect <watch-ip>:<connect-port>
+adb -s <watch-ip>:<connect-port> install -r glucowatch-<version>.apk
+adb -s <watch-ip>:<connect-port> install -r glucowatch-watchface-<version>.apk
+```
+
+Turn debugging off afterwards. For debug builds, substitute the local APK paths from the
+[developer guide](docs/development.md#7-install-them-on-the-virtual-watch).
+
+### Screenshots and implementation guides
+
+```bash
+uv run scripts/screenshots.py demo              # default 432 px round watch
+uv run scripts/screenshots.py demo --watch all  # all three Galaxy watch sizes
+uv run scripts/phone_screenshots.py demo         # 1080 × 2340 phone emulator
+```
+
+Generated captures stay in gitignored `data/output/screenshots/`. The reviewed demo images
+used above are checked in under `docs/images/screenshots/`; their provenance and refresh commands
+are in [the screenshot guide](docs/screenshots.md#readme-screenshots).
+Never publish real-data captures. Store assets come only from demo captures using
+`uv run scripts/store_images.py`; the icon comes from `uv run scripts/make_icon.py`.
+
+Further details: [Nightscout APIs and freshness](docs/nightscout.md),
+[Bluetooth pairing and encryption](docs/phone-link.md),
+[network diagnostics](docs/carrier-blocking.md),
+[local prediction](docs/prediction.md), and
+[configuration import](docs/configuration-import.md).
