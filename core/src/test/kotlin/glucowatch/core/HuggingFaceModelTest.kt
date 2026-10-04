@@ -5,6 +5,49 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 
 class HuggingFaceModelTest {
+    @Test fun `short names search while repo ids and URLs resolve directly`() {
+        assertEquals(true, HuggingFaceModel.isSearch("  citras  "))
+        assertEquals(false, HuggingFaceModel.isSearch("owner/model"))
+        assertEquals(false, HuggingFaceModel.isSearch("owner/model@v1"))
+        assertEquals(false, HuggingFaceModel.isSearch("https://huggingface.co/owner/model"))
+        assertEquals(false, HuggingFaceModel.isSearch(""))
+        assertEquals("https://huggingface.co/api/models?search=citras+%26+glucose&limit=20",
+            HuggingFaceModel.searchUrl("citras & glucose"))
+        assertFailsWith<IllegalArgumentException> { HuggingFaceModel.searchUrl(" ") }
+    }
+
+    @Test fun `search result ids cannot introduce other hosts or path tricks`() {
+        val response = """[
+            {"id":"GlucoseDao/CITRAS"}, {"id":"GlucoseDao/CITRAS"},
+            {"id":"other/CITRAS"}, {"id":"https://example.com/model"},
+            {"id":"owner/../model"}, {"id":"owner/model@revision"},
+            {"id":"not a repo"}, {"other":"owner/model"}, null
+        ]"""
+        assertEquals(listOf(HuggingFaceModel("GlucoseDao/CITRAS"), HuggingFaceModel("other/CITRAS")),
+            HuggingFaceModel.parseSearchResults(response))
+        assertEquals(emptyList(), HuggingFaceModel.parseSearchResults("[]"))
+        assertFailsWith<IllegalArgumentException> { HuggingFaceModel.parseSearchResults("{}") }
+    }
+
+    @Test fun `tree directory limits the file chooser`() {
+        val model = HuggingFaceModel.parse("https://huggingface.co/owner/model/tree/main/onnx")
+        assertEquals("onnx", model.directory)
+        assertEquals(listOf("onnx/model.onnx"), model.filesInDirectory(listOf("model.onnx", "onnx/model.onnx", "onnx-other/model.onnx")))
+        assertFailsWith<IllegalArgumentException> { HuggingFaceModel.parse("https://huggingface.co/owner/model/tree/main/../other") }
+    }
+
+    @Test fun `token is scoped to the Hub HTTPS origin and never a redirect host`() {
+        val token = "hf_test"
+        assertEquals("Bearer $token", HuggingFaceAuth.authorization("https://huggingface.co/owner/model", token))
+        assertEquals(null, HuggingFaceAuth.authorization("https://cdn-lfs.huggingface.co/model", token))
+        assertEquals(null, HuggingFaceAuth.authorization("https://huggingface.co.evil.example/model", token))
+        assertEquals(null, HuggingFaceAuth.authorization("http://huggingface.co/model", token))
+        assertEquals(null, HuggingFaceAuth.authorization("https://huggingface.co:8443/model", token))
+        assertEquals(null, HuggingFaceAuth.authorization("https://user@huggingface.co/model", token))
+        assertEquals(null, HuggingFaceAuth.authorization("https://huggingface.co/model", ""))
+        assertFailsWith<IllegalArgumentException> { HuggingFaceAuth.authorization("https://huggingface.co", "hf_test\r\nHeader: value") }
+    }
+
     @Test fun `accepts a bare repo id and points at its file list`() {
         val model = HuggingFaceModel.parse("  glucosedao/gluformer  ")
         assertEquals("glucosedao/gluformer", model.repo)

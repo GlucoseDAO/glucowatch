@@ -18,7 +18,7 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont
 
-from screenshots import dotenv, sdk_dir
+from screenshots import dotenv, sdk_dir, install_model_bundle
 
 ROOT = Path(__file__).resolve().parent.parent
 SDK = sdk_dir()
@@ -92,7 +92,7 @@ def boot():
     adb('shell', 'dumpsys', 'battery', 'set', 'level', '80', check=False)
 
 
-def install(build):
+def install(build, reset=True):
     if build:
         subprocess.run([str(ROOT / 'gradlew'), '-q', '--console=plain', ':phone:assembleDebug'],
                        cwd=ROOT, check=True)
@@ -102,7 +102,7 @@ def install(build):
     if not apk.is_file():
         sys.exit(f'Missing {apk}; build the debug APK first')
     adb('install', '-r', str(apk))
-    adb('shell', 'pm', 'clear', PKG)
+    if reset: adb('shell', 'pm', 'clear', PKG)
 
 
 def fetched_at():
@@ -111,15 +111,30 @@ def fetched_at():
     return int(match.group(1)) if match else 0
 
 
-def start_source(scenario):
+def start_source(scenario, model_bundle=None, also=None):
     source = {'demo': 'DEMO', 'dexcom': 'SHARE', 'nightscout': 'NIGHTSCOUT'}[scenario]
     before = fetched_at()
-    adb('shell', 'am', 'start', '-S', '-W', '-n', f'{PKG}/.MainActivity', '--es', 'source', source)
-    if scenario != 'demo':
-        deadline = time.time() + 50
+    args=['shell', 'am', 'start', '-S', '-W', '-n', f'{PKG}/.MainActivity', '--es', 'source', source]
+    if scenario == 'dexcom': args+=['--ez','dexcomNotifications','false']
+    if model_bundle and scenario != 'demo': args+=['--ez','importDebugModel','true','--ez','exportDebugSnapshot','true']
+    if also: args+=['--es','also',also]
+    adb(*args)
+    if scenario != 'demo' and not model_bundle:
+        deadline = time.time() + 150
         while time.time() < deadline and fetched_at() <= before:
             time.sleep(1)
     time.sleep(3)
+    if model_bundle and scenario != 'demo':
+        deadline=time.time()+120
+        while time.time()<deadline:
+            adb('shell','uiautomator','dump','/sdcard/window.xml')
+            tree=ET.fromstring(adb('shell','cat','/sdcard/window.xml'))
+            labels=[n.attrib.get('text','') for n in tree.iter('node') if n.attrib.get('text') and n.attrib.get('password')!='true']
+            if 'Forecast' in labels:
+                i=labels.index('Forecast')
+                if any(re.fullmatch(r'\d+(?:[.,]\d+)?',x) for x in labels[i+1:i+4]): return
+            time.sleep(2)
+        raise RuntimeError('No live forecast appeared: check glucose freshness and model compatibility. No prediction screenshot was accepted.')
 
 
 def select_tab(name):
@@ -147,7 +162,7 @@ def overview(names):
     width = 330
     height = round(2340 * width / 1080)
     gap = 24
-    canvas = Image.new('RGB', (gap + len(names) * (width + gap), height + 100), (8, 20, 31))
+    canvas = Image.new('RGB', (gap + len(names) * (width + gap), height + 100), (0, 0, 0))
     draw = ImageDraw.Draw(canvas)
     font_path = '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf'
     font = ImageFont.truetype(font_path, 22)
@@ -164,6 +179,10 @@ def main():
     parser.add_argument('scenarios', nargs='*', choices=SCENARIOS)
     parser.add_argument('--no-build', action='store_true')
     parser.add_argument('--keep', action='store_true')
+    parser.add_argument('--model-bundle',type=Path,help='Private debug ONNX bundle for real local inference')
+    parser.add_argument('--also',choices=['CARELINK','NIGHTSCOUT'],help='The same person’s pump')
+    parser.add_argument('--snapshot-out',type=Path,help='Save the actual phone forecast for Wear screenshot transport')
+    parser.add_argument('--preserve-settings',action='store_true',help='Keep existing CareLink login and cached history')
     args = parser.parse_args()
     env = dotenv()
     scenarios = args.scenarios or ['demo', 'dexcom', 'nightscout']
@@ -178,12 +197,15 @@ def main():
     OUT.mkdir(parents=True, exist_ok=True)
     boot()
     try:
-        install(not args.no_build)
+        install(not args.no_build, reset=not args.preserve_settings)
+        if args.model_bundle: install_model_bundle(args.model_bundle, PKG, SERIAL)
         captured = []
         for scenario in available:
-            start_source(scenario)
+            start_source(scenario, args.model_bundle, args.also)
             shot(f'{scenario}-today')
             captured.append(f'{scenario}-today')
+            if args.model_bundle:
+                select_tab('Model'); shot(f'{scenario}-model'); captured.append(f'{scenario}-model'); select_tab('Today')
             if scenario == 'demo':
                 adb('shell', 'input', 'swipe', '540', '1910', '540', '900', '450')
                 time.sleep(1)
@@ -195,6 +217,13 @@ def main():
                     select_tab(tab)
                     shot(f'demo-{tab.lower()}')
         overview(captured)
+        if args.snapshot_out:
+            payload=adb('exec-out','run-as',PKG,'cat','files/debug-phone-snapshot.json',binary=True)
+            import json
+            content=json.loads(payload)
+            if not content.get('forecast'): raise RuntimeError('No real phone forecast to export')
+            args.snapshot_out.parent.mkdir(parents=True,exist_ok=True)
+            args.snapshot_out.write_bytes(payload);args.snapshot_out.chmod(0o600)
     finally:
         if not args.keep:
             adb('emu', 'kill', check=False)

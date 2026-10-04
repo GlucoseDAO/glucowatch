@@ -17,6 +17,7 @@ kotlin {
 
 dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.9.0")
+    implementation("org.yaml:snakeyaml:2.7")
     testImplementation(kotlin("test"))
 }
 

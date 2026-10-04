@@ -391,6 +391,10 @@ Tip: turn Wireless debugging off again when you are done; it drains the battery.
 Install `phone/` on the phone that the watch is paired with. It needs Bluetooth and no Google
 Play Services. The watch keeps working without it.
 
+For faster setup, the phone's **Connect** tab imports a filled `.env` or YAML file, or its
+HTTPS URL. A supplied Hugging Face model is downloaded, checked and selected automatically.
+See [configuration import](docs/configuration-import.md) and [the YAML example](config.example.yaml).
+
 1. On the phone, open **GlucoWatch**, pick a source (Demo data, Dexcom Share or Nightscout), enter
    the login and tap **Save & test**. Allow **Nearby devices** when asked.
 2. Tap **Pair a watch**. On the watch, open GlucoWatch → Settings → **Pair with phone**.
@@ -465,6 +469,10 @@ It then appears as a choice in Settings. `LinearTrendPredictor` is the reference
 test models on the PC with `:core:run --args="--predict"` against your real Share or Nightscout data.
 With Nightscout there is one more choice, *Loop (Nightscout)*, which shows your loop's own forecast
 instead of running a model on the watch.
+
+The phone's Model tab also saves a Hugging Face address and optional download token. The
+[prediction guide](docs/prediction.md) describes the source interpreter's supported ONNX models
+and the local GlucoseDao inference comparison, including the separate Dexcom Share experiment.
 
 ## Screenshots
 

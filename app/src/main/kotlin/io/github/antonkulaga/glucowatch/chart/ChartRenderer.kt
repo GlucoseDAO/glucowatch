@@ -28,7 +28,7 @@ import kotlin.math.sqrt
 
 /**
  * The glucose chart for the face, the tile and the app: a smooth line coloured by range over a
- * faint target band, the forecast as a dashed continuation, boluses as dose-sized dots on the
+ * faint target band, the forecast as a continuous continuation, boluses as dose-sized dots on the
  * glucose curve and carbs as dots above it, all in GlucoseDAO colours (see [Brand]). The background is
  * transparent, so it sits on any face.
  */
@@ -119,7 +119,7 @@ object ChartRenderer {
         val inset = if (edge) width * 0.07f else 0f
 
         val start = now - s.chartHours * 3_600_000L
-        val end = now + if (forecast.isNotEmpty()) s.horizonMinutes * 60_000L else 10 * 60_000L
+        val end = maxOf(now + 10 * 60_000L, forecast.lastOrNull()?.timeMillis ?: now)
         val visible = state.readings.filter { it.timeMillis in start..end }
         // The glucose-first tiles reserve this short chart for the trajectory and target band.
         val marks = if (glanceStyle) emptyList() else state.treatments.filter { it.timeMillis in start..end }
@@ -191,7 +191,7 @@ object ChartRenderer {
             }
         }
 
-        // Forecast: a soft cone if the model gives one, then a dashed line from the latest reading.
+        // Forecast: a soft cone if the model gives one, then a continuous line from the latest reading.
         val last = visible.lastOrNull()
         if (forecast.isNotEmpty() && last != null) {
             val from = PointF(x(last.timeMillis), y(last.mgdl.toDouble()))
@@ -208,7 +208,7 @@ object ChartRenderer {
             val line = smooth(listOf(from) + forecast.map { PointF(x(it.timeMillis), y(it.mgdl)) })
             c.drawPath(line, Paint(Paint.ANTI_ALIAS_FLAG).apply {
                 style = Paint.Style.STROKE; color = palette.forecast; strokeWidth = stroke * 0.85f; strokeCap = Paint.Cap.ROUND
-                pathEffect = DashPathEffect(floatArrayOf(stroke * 2.2f, stroke * 1.8f), 0f)
+                strokeJoin = Paint.Join.ROUND
             })
         }
 

@@ -250,6 +250,20 @@ class GlucoseChartView(context: Context) : View(context) {
         canvas.save()
         canvas.clipRect(0f, 0f, width.toFloat(), height.toFloat())
         drawBand(canvas, left, right, ::y)
+        if (points.isNotEmpty() && samples.isNotEmpty()) {
+            val origin = samples.last().timeMillis
+            val from = x(origin).coerceIn(left, right)
+            paint.pathEffect = null
+            paint.style = Paint.Style.FILL
+            paint.color = Brand.MUTED and 0x18FFFFFF
+            canvas.drawRect(from, top, right, bottom, paint)
+            paint.color = Brand.FORECAST
+            paint.textSize = dp(10f)
+            val minutes = (points.last().timeMillis - origin) / 60_000L
+            val text = "Prediction · $minutes min"
+            val at = ((from + right - paint.measureText(text)) / 2).coerceAtLeast(left)
+            canvas.drawText(text, at, top - dp(7f), paint)
+        }
         drawGrid(canvas, left, right, top, bottom, start, end, ::x)
         drawLevels(canvas, left, right, min, max, ::y)
         drawGaps(canvas, left, right, top, bottom, start, minOf(end, now), ::x)
@@ -382,11 +396,17 @@ class GlucoseChartView(context: Context) : View(context) {
         paint.strokeCap = Paint.Cap.ROUND
         paint.strokeJoin = Paint.Join.ROUND
         samples.zipWithNext().forEach { (from, to) ->
-            // Missing readings may be a sensor or transport issue; never draw a measured curve across them.
-            if (to.timeMillis - from.timeMillis > GlucoseHistory.GAP_MS) return@forEach
-            paint.color = Brand.glucoseColor(to.mgdl)
+            val interval = to.timeMillis - from.timeMillis
+            // A dashed guide joins observed endpoints across short losses, without inventing samples.
+            // Leave longer outages open; the missing-sample bands and inspection remain unchanged.
+            if (interval > 15 * 60_000L + 30_000L) return@forEach
+            val missing = interval > GlucoseHistory.GAP_MS
+            paint.pathEffect = if (missing) DashPathEffect(floatArrayOf(dp(2f), dp(3f)), 0f) else null
+            paint.strokeWidth = dp(if (missing) 1.2f else 2.6f)
+            paint.color = if (missing) Brand.MUTED else Brand.glucoseColor(to.mgdl)
             canvas.drawLine(x(from.timeMillis), y(from.mgdl.toDouble()), x(to.timeMillis), y(to.mgdl.toDouble()), paint)
         }
+        paint.pathEffect = null
         val spacing = (right - left) / (samples.size - 1).coerceAtLeast(1)
         if (spacing < dp(9f)) return
         samples.forEach { atom(canvas, x(it.timeMillis), y(it.mgdl.toDouble()), Brand.glucoseColor(it.mgdl), dp(3.4f)) }
@@ -529,7 +549,9 @@ class GlucoseChartView(context: Context) : View(context) {
         paint.style = Paint.Style.STROKE
         paint.strokeWidth = dp(2f)
         paint.color = Brand.FORECAST
-        paint.pathEffect = DashPathEffect(floatArrayOf(dp(5f), dp(4f)), 0f)
+        paint.pathEffect = null
+        paint.strokeCap = Paint.Cap.ROUND
+        paint.strokeJoin = Paint.Join.ROUND
         canvas.drawPath(path, paint)
         paint.pathEffect = null
         val target = points.last()

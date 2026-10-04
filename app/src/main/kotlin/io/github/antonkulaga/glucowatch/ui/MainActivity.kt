@@ -154,7 +154,7 @@ class MainActivity : Activity() {
         val p = state.prediction?.points?.lastOrNull()
         val fromLoop = state.settings.predictorId == LoopStatus.MODEL_ID && state.settings.source in GlucoseRepository.LOOP_SOURCES
         val fromPhone = state.settings.predictorId == PhoneLink.MODEL_ID && state.settings.source == DataSource.PHONE
-        val minutes = state.settings.horizonMinutes
+        val minutes = state.forecastMinutes
         forecast.text = when {
             !state.settings.predictionEnabled -> ""
             p == null && fromLoop -> "No fresh loop forecast"

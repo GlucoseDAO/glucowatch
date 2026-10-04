@@ -56,6 +56,9 @@ data class GlucoseState(
     val failures: List<FailureRecord> = emptyList(),
 ) {
     val latest get() = readings.lastOrNull()
+    val forecastMinutes get() = prediction?.points?.lastOrNull()?.let { point ->
+        latest?.let { ((point.timeMillis - it.timeMillis) / 60_000L).toInt() }
+    } ?: settings.forecastHorizonMinutes
 
     fun ageMinutes(now: Long = System.currentTimeMillis()): Long? = latest?.let { (now - it.timeMillis) / 60_000 }
 
@@ -99,7 +102,10 @@ class GlucoseRepository(context: Context) {
         return GlucoseState(
             settings = settings,
             readings = readings,
-            prediction = predict(settings, readings, loop, phoneForecast),
+            prediction = if (settings.predictionEnabled && settings.predictorId == "onnx")
+                runCatching { DebugModelForecast.predict(appContext, readings, treatments, settings.forecastHorizonMinutes, glucowatch.core.ForecastTherapy.read(listOf(syncCache(settings)) + extras.map { extraCache(settings, it) })) }
+                    .onFailure { Log.w(TAG, "Debug ONNX forecast failed", it) }.getOrNull()
+                else predict(settings, readings, loop, phoneForecast),
             lastError = listOfNotNull(cache.getString("error", null), cache.getString(EXTRA_ERROR, null).takeIf { extras.isNotEmpty() })
                 .joinToString("\n").ifEmpty { null },
             lastFetchMillis = cache.getLong("fetchedAt", 0),
@@ -140,7 +146,7 @@ class GlucoseRepository(context: Context) {
         DataSource.NIGHTSCOUT -> nightscoutProblem(settings.nightscoutUrl)
         DataSource.CARELINK -> "Sign in to CareLink in the phone app, then get the sign-in in settings"
             .takeIf { carelink.load()?.subject.let { it == null || it != settings.carelinkAccount } }
-        DataSource.PHONE -> "Pair with the phone in settings".takeIf { pairing == null }
+        DataSource.PHONE -> "Pair with the phone in settings".takeIf { pairing == null && DebugPhoneSnapshot.read(appContext) == null }
     }
 
     /**
@@ -154,7 +160,7 @@ class GlucoseRepository(context: Context) {
         }
         val errors = settings.extras.mapNotNull { extra ->
             problemOf(settings, extra, null)?.let { return@mapNotNull "${extra.label}: $it" }
-            runCatching { SourceSync(extraCache(settings, extra)).fetch(settings.account(extra, carelink)!!, settings.chartHours, glucose = false) }
+            runCatching { SourceSync(extraCache(settings, extra), includeProfiles = settings.predictorId == "onnx").fetch(settings.account(extra, carelink)!!, settings.chartHours, glucose = false) }
                 .exceptionOrNull()
                 ?.let {
                     Log.w(TAG, "$extra (extra) refresh failed", it)
@@ -190,8 +196,8 @@ class GlucoseRepository(context: Context) {
         val account = settings.account(settings.source, carelink)
         when {
             settings.source == DataSource.SHARE -> fetchShareWithWatchFallback(settings)
-            account != null -> SourceSync(syncCache(settings)).fetch(account, settings.chartHours)
-            else -> return fetchPhone(settings, pairing!!)
+            account != null -> SourceSync(syncCache(settings), includeProfiles = settings.predictorId == "onnx").fetch(account, settings.chartHours)
+            else -> return fetchPhone(settings, pairing)
         }
         return null
     }
@@ -207,7 +213,7 @@ class GlucoseRepository(context: Context) {
      */
     private fun fetchShareWithWatchFallback(settings: Settings) {
         val account = settings.account(DataSource.SHARE, carelink)!!
-        val primary = runCatching { SourceSync(syncCache(settings)).fetch(account, settings.chartHours) }
+        val primary = runCatching { SourceSync(syncCache(settings), includeProfiles = settings.predictorId == "onnx").fetch(account, settings.chartHours) }
         val error = primary.exceptionOrNull()
         // Another route cannot fix bad credentials or an account lockout; avoid extra logins.
         if (error is ShareException.AuthFailed || error is ShareException.TooManyAttempts) primary.getOrThrow()
@@ -263,7 +269,7 @@ class GlucoseRepository(context: Context) {
      */
     private fun tryRoute(settings: Settings, account: SourceAccount, what: String, open: (URL) -> URLConnection): Boolean {
         val result = runCatching {
-            SourceSync(syncCache(settings), UrlConnectionTransport(openConnection = open)).fetch(account, settings.chartHours)
+            SourceSync(syncCache(settings), UrlConnectionTransport(openConnection = open), includeProfiles = settings.predictorId == "onnx").fetch(account, settings.chartHours)
         }
         val failure = result.exceptionOrNull()
         if (failure is ShareException.AuthFailed || failure is ShareException.TooManyAttempts) throw failure
@@ -310,11 +316,11 @@ class GlucoseRepository(context: Context) {
      * from the phone's glucose source and its extras (a Dexcom sensor and a CareLink pump).
      * Returns the phone's own fetch error: one source failing there still relays the other.
      */
-    private fun fetchPhone(settings: Settings, pairing: PhonePairing): String? {
-        val horizon = if (settings.predictionEnabled && settings.predictorId == PhoneLink.MODEL_ID) settings.horizonMinutes else 0
+    private fun fetchPhone(settings: Settings, pairing: PhonePairing?): String? {
+        val horizon = if (settings.predictionEnabled && settings.predictorId == PhoneLink.MODEL_ID) settings.forecastHorizonMinutes else 0
         val watchId = PhonePairingStore(appContext).watchId
-        val snapshot = PhoneConnection(appContext).open(pairing.address) { _, input, output ->
-            WatchLinkClient(watchId).sync(input, output, pairing.key, horizon)
+        val snapshot = DebugPhoneSnapshot.read(appContext) ?: PhoneConnection(appContext).open(requireNotNull(pairing).address) { _, input, output ->
+            WatchLinkClient(watchId).sync(input, output, requireNotNull(pairing).key, horizon)
         }
         val now = System.currentTimeMillis()
         val old = if (cached(settings, UPSTREAM) == snapshot.upstream) CacheFormat.decodeReadings(cached(settings, SourceSync.READINGS)) else emptyList()
@@ -345,17 +351,17 @@ class GlucoseRepository(context: Context) {
         if (!settings.predictionEnabled || readings.isEmpty()) return null
         if (settings.predictorId == LoopStatus.MODEL_ID && hasLoopForecast(settings)) {
             // Only the loop's own forecast; no silent fallback to another model.
-            return loop?.prediction(readings.last().timeMillis, settings.horizonMinutes)
+            return loop?.prediction(readings.last().timeMillis, settings.forecastHorizonMinutes)
         }
         if (settings.predictorId == PhoneLink.MODEL_ID && settings.source == DataSource.PHONE) {
             // Only the phone's forecast, and only if it starts from the latest reading.
             val last = readings.last().timeMillis
             val first = phoneForecast?.points?.firstOrNull()?.timeMillis ?: return null
             if (first <= last || first - last > 10 * 60_000L) return null
-            val end = last + settings.horizonMinutes * 60_000L + 150_000L
+            val end = last + settings.forecastHorizonMinutes * 60_000L + 150_000L
             return phoneForecast.points.filter { it.timeMillis <= end }.ifEmpty { null }?.let { Prediction(phoneForecast.modelId, it) }
         }
-        return runCatching { Predictors.byId(settings.predictorId).predict(readings, settings.horizonMinutes) }
+        return runCatching { Predictors.byId(settings.predictorId).predict(readings, settings.forecastHorizonMinutes) }
             .onFailure { Log.w(TAG, "Predictor ${settings.predictorId} failed", it) }
             .getOrNull()
     }

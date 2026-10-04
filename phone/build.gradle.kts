@@ -15,7 +15,7 @@ val dotEnv = dotEnvFile.takeIf { it.isFile }?.readLines().orEmpty().mapNotNull {
         else value.replace(Regex("""\s+#.*$"""), "")
 }.toMap()
 val devKeys = listOf("DEXCOM_USERNAME", "DEXCOM_PASSWORD", "DEXCOM_REGION", "NIGHTSCOUT_URL",
-    "NIGHTSCOUT_TOKEN", "NIGHTSCOUT_API", "GLUCOWATCH_SOURCE", "GLUCOWATCH_UNIT")
+    "NIGHTSCOUT_TOKEN", "NIGHTSCOUT_API", "GLUCOWATCH_SOURCE", "GLUCOWATCH_UNIT", "HF_TOKEN", "HF_MODEL_ADDRESS")
 val devDefaults = devKeys.associateWith { System.getenv(it) ?: dotEnv[it] ?: "" }
 fun javaString(value: String) = "\"" + value.replace("\\", "\\\\").replace("\"", "\\\"") + "\""
 
@@ -29,11 +29,12 @@ android {
         applicationId = "io.github.antonkulaga.glucowatch.phone"
         minSdk = 29
         targetSdk = 36
-        versionCode = 10
-        versionName = "0.1.9"
+        versionCode = 11
+        versionName = "0.1.10"
     }
 
     buildFeatures { buildConfig = true }
+    sourceSets.getByName("debug").kotlin.directories.add(file("../debug-inference").absolutePath)
 
     buildTypes {
         getByName("debug") {
@@ -62,6 +63,8 @@ kotlin {
 }
 
 dependencies {
+    // Emulator/development inference only. No native runtime in release APKs or model binaries in Git.
+    debugImplementation("com.microsoft.onnxruntime:onnxruntime-android:1.30.0")
     implementation(project(":core"))
     // FileProvider hands the system camera app a private file to write one meal photo into.
     implementation("androidx.core:core-ktx:1.17.0")

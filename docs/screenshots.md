@@ -24,8 +24,27 @@ health data. Keep them local and do not use them as store images.
 
 The phone's heart-rate card reads optional Health Connect data on Android 14 and later. The
 unmodified emulator has no samples, so its screenshots show the empty state.
-The script uses adb port 5588, the same port as the optional 480 px watch capture; run those
-captures separately.
+The phone uses adb port 5590, separate from all three watch emulators.
+
+### Prediction captures
+
+The development APK can run a private GlucoseDao ONNX bundle with its preprocessing files.
+For Dexcom plus CareLink, sign CareLink into the phone first and preserve its rotating session:
+
+```bash
+uv run scripts/phone_screenshots.py dexcom --model-bundle data/output/prediction/1 \
+  --also CARELINK --preserve-settings --keep \
+  --snapshot-out data/output/prediction/phone-snapshot.json
+uv run scripts/screenshots.py dexcom --phone-snapshot data/output/prediction/phone-snapshot.json \
+  --reset-app --watch all --keep --out data/output/screenshots/prediction
+```
+
+Phone model captures require a real model forecast. The watch displays that phone forecast
+through a private debug snapshot; this checks rendering, not Bluetooth pairing. Original data
+timestamps and age badges remain visible. `--reset-app` clears only the selected test watch's
+settings and cache, ensuring an earlier scenario cannot supply another person's data.
+Use `--model-bundle` on the watch script to test local inference instead. All such captures
+contain private health data and stay out of store assets. See [prediction.md](prediction.md).
 
 ## Watch screenshots
 

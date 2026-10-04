@@ -22,6 +22,7 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import java.io.File
 import java.time.Instant
 import java.time.ZoneId
@@ -38,7 +39,7 @@ import kotlin.system.exitProcess
  * without echo. CareLink reads and refreshes the tokens scripts/carelink_login.py saved
  * (CARELINK_TOKEN_FILE, default ~/.config/glucowatch/carelink-token.json).
  * Flags: --source share|nightscout|carelink, --region eu|us|jp, --unit mmol|mgdl,
- * --url, --token, --api v1|v3, --hours N, --predict, --trace (CareLink: each request's URL,
+ * --url, --token, --api v1|v3, --hours N, --predict, --export-readings FILE, --export-treatments FILE (CareLink), --trace (CareLink: each request's URL,
  * status and JSON keys, never the values).
  */
 fun main(args: Array<String>) {
@@ -84,11 +85,21 @@ fun main(args: Array<String>) {
                 exitProcess(1)
             }
         }
-        "carelink", "cl" -> fetchCareLink(env, "--trace" in opts, hours, fmt)
+        "carelink", "cl" -> fetchCareLink(env, "--trace" in opts, hours, fmt, opt("--export-treatments"))
         else -> {
             System.err.println("Unknown --source '$source': use share, nightscout or carelink")
             exitProcess(2)
         }
+    }
+
+    opt("--export-readings")?.let { path ->
+        val file = File(path)
+        file.parentFile?.mkdirs()
+        file.writeText(JsonArray(readings.map { reading ->
+            JsonObject(mapOf("date" to JsonPrimitive(reading.timeMillis), "sgv" to JsonPrimitive(reading.mgdl)))
+        }).toString())
+        println("Exported ${readings.size} readings to ${file.absolutePath}")
+        return
     }
 
     if (readings.isEmpty()) {
@@ -151,7 +162,7 @@ private class FileLogin(private val file: File) : CareLinkLogin {
     }
 }
 
-private fun fetchCareLink(env: Map<String, String>, trace: Boolean, hours: Int, fmt: DateTimeFormatter): List<GlucoseReading> {
+private fun fetchCareLink(env: Map<String, String>, trace: Boolean, hours: Int, fmt: DateTimeFormatter, exportPath: String? = null): List<GlucoseReading> {
     val file = File(env["CARELINK_TOKEN_FILE"] ?: (System.getProperty("user.home") + "/.config/glucowatch/carelink-token.json"))
     val login = FileLogin(file)
     val token = login.load() ?: run {
@@ -175,7 +186,23 @@ private fun fetchCareLink(env: Map<String, String>, trace: Boolean, hours: Int, 
     val since = now - hours * 3_600_000L
     println("CareLink OK (${token.country}), ${data.readings.size} readings in the last day, last upload " +
         (data.lastUploadMillis?.let { "${(now - it) / 60_000} min ago" } ?: "unknown"))
-    data.treatments.filter { it.timeMillis >= since }.forEach { println("${fmt.format(Instant.ofEpochMilli(it.timeMillis))}  treatment ${describe(it)}") }
+    if (exportPath != null) {
+        val end = minOf(data.lastUploadMillis ?: now, now)
+        val file = File(exportPath)
+        file.parentFile?.mkdirs()
+        val rows = data.treatments.map { t -> JsonObject(buildMap {
+            put("timeMillis", JsonPrimitive(t.timeMillis)); put("insulin", JsonPrimitive(t.insulin)); put("carbs", JsonPrimitive(t.carbs))
+            put("automatic", JsonPrimitive(t.automatic)); put("insulinKind", JsonPrimitive(t.insulinKind.name))
+            t.basalRate?.let { put("basalRate", JsonPrimitive(it)) }
+            t.basalPercent?.let { put("basalPercent", JsonPrimitive(it)) }
+            t.durationMinutes?.let { put("durationMinutes", JsonPrimitive(it)) }
+            put("percentOfProfile", JsonPrimitive(t.percentOfProfile))
+        }) }
+        file.writeText(JsonObject(mapOf("source" to JsonPrimitive("carelink"), "coverage_start" to JsonPrimitive(end-24*3_600_000L),
+            "coverage_end" to JsonPrimitive(end), "treatments" to JsonArray(rows))).toString())
+        file.setReadable(false,false); file.setReadable(true,true); file.setWritable(false,false); file.setWritable(true,true)
+        println("Exported ${rows.size} CareLink treatments with their original timestamps")
+    } else data.treatments.filter { it.timeMillis >= since }.forEach { println("${fmt.format(Instant.ofEpochMilli(it.timeMillis))}  treatment ${describe(it)}") }
     data.loop?.let { println("Active insulin ${it.iob} U, ${it.ageMinutes(now)} min ago") } ?: println("No active insulin reported")
     return data.readings.filter { it.timeMillis >= since }
 }

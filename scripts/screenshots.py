@@ -238,7 +238,27 @@ def configure(extras):
         nap(1)
     if fetched_at() <= before:
         log('  no fetch finished within 45 s; capturing anyway')
+    import xml.etree.ElementTree as ET
+    settings = ET.fromstring(adb('shell', 'run-as', PKG, 'cat', 'shared_prefs/settings.xml'))
+    saved = {node.get('name'): node.text for node in settings}
+    if saved.get('source') != extras.get('source') or saved.get('predictor') != extras.get('predictor'):
+        raise RuntimeError('Screenshot source/model settings did not apply; refusing to capture another source')
     nap(2)
+
+
+def install_model_bundle(bundle, package=PKG, serial=None):
+    """Copy a user-selected private debug bundle through stdin, never model binaries in Git."""
+    target = serial or SERIAL
+    prefix = [ADB, '-s', target]
+    subprocess.run(prefix + ['shell', 'am', 'force-stop', package], capture_output=True, check=True)
+    subprocess.run(prefix + ['shell', 'run-as', package, 'mkdir', '-p', 'files/debug-model'], capture_output=True, check=True)
+    for name in ('model.onnx', 'onnx_meta.json', 'scalers.json'):
+        source=Path(bundle)/name
+        if source.is_file():
+            command=f'run-as {package} sh -c '+shlex.quote(f'umask 077; cat > files/debug-model/{name}')
+            subprocess.run(prefix + ['shell', command], input=source.read_bytes(), capture_output=True, check=True)
+        else:
+            subprocess.run(prefix + ['shell', 'run-as', package, 'rm', '-f', f'files/debug-model/{name}'], capture_output=True, check=True)
 
 
 def screencap(path):
@@ -327,6 +347,10 @@ def main():
     parser.add_argument('--watch', nargs='+', choices=[*WATCHES, 'all'], default=[DEFAULT_WATCH],
                         help=f'which watches to simulate (default: {DEFAULT_WATCH}, the one the app is tried on)')
     parser.add_argument('--unit', choices=['mmol', 'mgdl'], help='override GLUCOWATCH_UNIT')
+    parser.add_argument('--reset-app',action='store_true',help='Reset this test emulator’s watch app settings and cache')
+    parser.add_argument('--phone-snapshot',type=Path,help='Real phone forecast exported privately for emulator rendering; no Bluetooth claim')
+    parser.add_argument('--model-bundle', type=Path, help='Private GlucoseDao ONNX bundle to run locally in debug builds')
+    parser.add_argument('--also', choices=['CARELINK', 'NIGHTSCOUT'], help='The same person’s pump; never combine two people')
     parser.add_argument('--out', default=str(ROOT / 'data' / 'output' / 'screenshots'))
     args = parser.parse_args()
 
@@ -360,6 +384,14 @@ def main():
             plans[scenario] = {**common, 'source': 'NIGHTSCOUT', 'nightscoutUrl': url, 'predictor': 'loop',
                                'nightscoutToken': env.get('NIGHTSCOUT_TOKEN', '') if scenario == 'nightscout' else '',
                                'nightscoutApi': env.get('NIGHTSCOUT_API', 'v1') if scenario == 'nightscout' else 'v1'}
+    if args.model_bundle:
+        if not (args.model_bundle / 'model.onnx').is_file(): parser.error('Missing model.onnx in bundle')
+        for scenario, plan in plans.items():
+            if scenario != 'demo':
+                plan['predictor'] = 'onnx'
+                if args.also: plan['also'] = args.also
+    if args.phone_snapshot:
+        for plan in plans.values(): plan.update(source='PHONE',predictor='phone')
     if not plans:
         sys.exit('nothing to capture')
 
@@ -385,7 +417,7 @@ def main():
         for watch in watches:
             use_watch(watch)
             log(f'{watch}: {WATCHES[watch]["label"]}')
-            overviews.append(capture_watch(watch, plans, out / watch, build, args.keep))
+            overviews.append(capture_watch(watch, plans, out / watch, build, args.keep, args.model_bundle, args.phone_snapshot, args.reset_app))
             build = False
         stacked(overviews).save(out / 'overview.png')
         log(f'done: {out}')
@@ -394,7 +426,7 @@ def main():
             replay.shutdown()
 
 
-def capture_watch(watch, plans, out, build, keep):
+def capture_watch(watch, plans, out, build, keep, model_bundle=None, phone_snapshot=None, reset_app=False):
     """Every scenario on the booted watch into [out]; returns its overview (a row per scenario)."""
     from PIL import Image
     raw_dir = out / 'raw'
@@ -403,6 +435,16 @@ def capture_watch(watch, plans, out, build, keep):
     try:
         prepare_device()
         build_and_install(build)
+        if reset_app:
+            adb('shell','pm','clear',PKG)
+            adb('shell','pm','grant',PKG,'android.permission.health.READ_HEART_RATE',check=False)
+        if model_bundle: install_model_bundle(model_bundle)
+        if phone_snapshot:
+            adb('shell','am','force-stop',PKG)
+            adb('shell','run-as',PKG,'mkdir','-p','files')
+            command='run-as '+PKG+' sh -c '+shlex.quote('umask 077; cat > files/debug-phone-snapshot.json')
+            subprocess.run([ADB,'-s',SERIAL,'shell',command],input=phone_snapshot.read_bytes(),capture_output=True,check=True)
+        else: adb('shell','run-as',PKG,'rm','-f','files/debug-phone-snapshot.json',check=False)
         rows = []
         for scenario, extras in plans.items():
             log(f'{watch} {scenario}: configuring')

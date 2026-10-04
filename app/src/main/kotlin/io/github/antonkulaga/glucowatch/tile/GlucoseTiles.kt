@@ -107,7 +107,7 @@ abstract class GlucoseTile : TileService() {
 
     protected fun forecast(state: GlucoseState, size: Float = 13f): LayoutElementBuilders.LayoutElement? =
         state.prediction?.points?.lastOrNull()?.let { p ->
-            text("${state.settings.unit.format(p.mgdl)} in ${state.settings.horizonMinutes} min", size, palette.forecast)
+            text("${state.settings.unit.format(p.mgdl)} in ${state.forecastMinutes} min", size, palette.forecast)
         }
 
     /** The chart as a PNG at the screen's pixel width, [share] of the screen height tall. */

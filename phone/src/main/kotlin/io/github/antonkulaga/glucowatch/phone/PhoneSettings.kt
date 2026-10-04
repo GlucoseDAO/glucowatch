@@ -21,9 +21,12 @@ data class PhoneSettings(
     val nightscoutApi: NightscoutApi = runCatching { NightscoutApi.parse(BuildConfig.DEV_NIGHTSCOUT_API) }.getOrDefault(NightscoutApi.V1),
     val unit: GlucoseUnit = runCatching { GlucoseUnit.parse(BuildConfig.DEV_GLUCOWATCH_UNIT) }.getOrDefault(GlucoseUnit.MMOL),
     val predictorId: String = LinearTrendPredictor.ID,
+    val huggingFaceToken: String = BuildConfig.DEV_HF_TOKEN,
+    val modelAddress: String = BuildConfig.DEV_HF_MODEL_ADDRESS,
     /** Draw heart rate as a second track on the glucose chart. The current bpm shows either way. */
     val heartTrack: Boolean = false,
     val carelinkAccount: String = "",
+    val carelinkCountry: String = "DE",
     val alsoFrom: Set<LinkSource> = emptySet(),
     val dexcomNotifications: Boolean = false,
 ) {
@@ -74,6 +77,7 @@ data class PhoneSettings(
 /** App-private storage on the phone. The login leaves it only for Dexcom, the user's Nightscout, or a paired watch. */
 class PhoneSettingsStore(context: Context) {
     private val prefs = context.applicationContext.getSharedPreferences("settings", Context.MODE_PRIVATE)
+    private val carelink = PhoneCareLinkStore(context)
 
     fun load(): PhoneSettings {
         val d = PhoneSettings()
@@ -87,9 +91,12 @@ class PhoneSettingsStore(context: Context) {
             nightscoutApi = enumOr(prefs.getString("nightscoutApi", null), d.nightscoutApi),
             unit = enumOr(prefs.getString("unit", null), d.unit),
             predictorId = prefs.getString("predictor", d.predictorId)!!,
+            huggingFaceToken = prefs.getString("huggingFaceToken", d.huggingFaceToken)!!,
+            modelAddress = prefs.getString("modelAddress", d.modelAddress)!!,
             heartTrack = prefs.getBoolean("heartTrack", d.heartTrack),
             dexcomNotifications = prefs.getBoolean("dexcomNotifications", false),
             carelinkAccount = prefs.getString("carelinkAccount", "").orEmpty(),
+            carelinkCountry = prefs.getString("carelinkCountry", null) ?: carelink.load()?.country ?: d.carelinkCountry,
             alsoFrom = prefs.getString("alsoFrom", "").orEmpty().split(',')
                 .mapNotNull { runCatching { LinkSource.valueOf(it) }.getOrNull() }.toSet(),
         )
@@ -106,9 +113,12 @@ class PhoneSettingsStore(context: Context) {
             .putString("nightscoutApi", s.nightscoutApi.name)
             .putString("unit", s.unit.name)
             .putString("predictor", s.predictorId)
+            .putString("huggingFaceToken", s.huggingFaceToken)
+            .putString("modelAddress", s.modelAddress)
             .putBoolean("heartTrack", s.heartTrack)
             .putBoolean("dexcomNotifications", s.dexcomNotifications)
             .putString("carelinkAccount", s.carelinkAccount)
+            .putString("carelinkCountry", s.carelinkCountry)
             .putString("alsoFrom", s.alsoFrom.joinToString(",") { it.name })
             .apply()
     }

@@ -1,0 +1,1 @@
+Import .env or YAML settings from a file or URL; supplied models download and select automatically. Search Hugging Face by model name or repo. Show the full model forecast horizon with a continuous prediction line. Use overlapping insulin and meal history without mixing accounts. The separate ONNX development APK supports GlucoseDao models.

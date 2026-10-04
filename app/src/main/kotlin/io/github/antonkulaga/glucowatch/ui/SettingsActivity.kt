@@ -163,7 +163,7 @@ class SettingsActivity : Activity() {
         unit = radios(GlucoseUnit.entries.map { it.name to it.label }, s.unit.name)
         prediction = CheckBox(this).apply { text = "Show forecast"; isChecked = s.predictionEnabled }
         predictor = radios(
-            Predictors.all.map { it.id to it.displayName } + (LoopStatus.MODEL_ID to "Loop (Nightscout)") + (PhoneLink.MODEL_ID to "Phone app model"),
+            Predictors.all.map { it.id to it.displayName } + (LoopStatus.MODEL_ID to "Loop (Nightscout)") + (PhoneLink.MODEL_ID to "Phone app model") + (if (io.github.antonkulaga.glucowatch.BuildConfig.DEBUG) listOf("onnx" to "Local ONNX (development)") else emptyList()),
             s.predictorId,
         )
         staleAlert = radios(StaleAlert.entries.map { it.name to it.label }, s.staleAlert.name)

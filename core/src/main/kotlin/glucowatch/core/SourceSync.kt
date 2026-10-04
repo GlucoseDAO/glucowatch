@@ -40,6 +40,7 @@ class SourceSync(
     private val cache: SyncCache,
     private val transport: HttpTransport = UrlConnectionTransport(),
     private val retainMs: Long = DAY_MS,
+    private val includeProfiles: Boolean = false,
 ) {
     init {
         require(retainMs >= DAY_MS) { "Keep at least a day, the most Dexcom Share returns" }
@@ -85,8 +86,9 @@ class SourceSync(
 
             val oldTreatments = CacheFormat.decodeTreatments(cache.get(TREATMENTS).orEmpty())
             val window = if (firstRun) firstRunMs() else maxOf(chartHours, 3) * 3_600_000L
-            val treatments = oldTreatments.filter { it.timeMillis in (now - retainMs) until (now - window) } +
-                client.treatments(now - window)
+            val freshTreatments = client.treatments(now - window)
+            val treatments = oldTreatments.filter { it.timeMillis in (now - retainMs) until (now - window) } + freshTreatments
+            val start = if (freshTreatments.size >= NightscoutClient.MAX_COUNT) freshTreatments.first().timeMillis else now - window
 
             val oldLoop = CacheFormat.decodeLoop(cache.get(LOOP).orEmpty())
             // First run looks back a few hours, so a loop that went quiet still shows when it last reported.
@@ -96,8 +98,10 @@ class SourceSync(
                 mapOf(
                     TREATMENTS to CacheFormat.encodeTreatments(treatments.sortedBy { it.timeMillis }),
                     LOOP to CacheFormat.encodeLoop(loop?.takeIf { now - it.timeMillis <= DAY_MS }),
+                    THERAPY_COVERAGE to coverage(start, now),
                 ),
             )
+            if (includeProfiles) runCatching { client.basalProfiles() }.onSuccess { cache.put(mapOf(BASAL_PROFILES to it)) }
         } finally {
             cache.put(mapOf(jwtKey to client.jwt))
         }
@@ -120,6 +124,7 @@ class SourceSync(
             val oldTreatments = CacheFormat.decodeTreatments(cache.get(TREATMENTS).orEmpty())
             val treatments = oldTreatments.filter { it.timeMillis in (now - retainMs) until covered } + data.treatments.filter { it.timeMillis >= covered }
             values[TREATMENTS] = CacheFormat.encodeTreatments(treatments.sortedBy { it.timeMillis })
+            data.lastUploadMillis?.let { end -> values[THERAPY_COVERAGE] = coverage(end - DAY_MS, minOf(end, now)) }
             val loop = data.loop?.mergedOnto(CacheFormat.decodeLoop(cache.get(LOOP).orEmpty())) ?: CacheFormat.decodeLoop(cache.get(LOOP).orEmpty())
             values[LOOP] = CacheFormat.encodeLoop(loop?.takeIf { now - it.timeMillis <= DAY_MS })
             cache.put(values)
@@ -135,10 +140,23 @@ class SourceSync(
      */
     private fun firstRunMs() = minOf(retainMs, NIGHTSCOUT_BACKFILL_MS)
 
+    private fun coverage(start: Long, end: Long): String {
+        val ranges = ForecastTherapy.read(listOf(cache)).ranges + TherapyRange(start, end)
+        val kept = mutableListOf<TherapyRange>()
+        ranges.filter { it.end >= end - retainMs }.sortedBy { it.start }.forEach { range ->
+            val last = kept.lastOrNull()
+            if (last != null && range.start <= last.end) kept[kept.lastIndex] = TherapyRange(last.start, maxOf(last.end, range.end))
+            else kept += range
+        }
+        return kept.joinToString(";") { "${maxOf(it.start, end - retainMs)},${it.end}" }
+    }
+
     companion object {
         const val READINGS = "readings"
         const val TREATMENTS = "treatments"
         const val LOOP = "loop"
+        const val THERAPY_COVERAGE = "therapy:coverage"
+        const val BASAL_PROFILES = "therapy:profiles"
         private const val CARELINK_CONFIG = "carelink:config"
         private const val CARELINK_SESSION = "carelink:session"
         const val DAY_MS = 24 * 3_600_000L

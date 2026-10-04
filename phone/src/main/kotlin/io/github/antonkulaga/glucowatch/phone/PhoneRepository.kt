@@ -13,6 +13,7 @@ import glucowatch.core.GlucoseReading
 import glucowatch.core.LoopStatus
 import glucowatch.core.NightscoutAddress
 import glucowatch.core.OnnxPredictor
+import glucowatch.core.GlucoseDaoPredictor
 import glucowatch.core.Prediction
 import glucowatch.core.Predictors
 import glucowatch.core.SourceSync
@@ -37,6 +38,7 @@ data class PhoneState(
     val loop: LoopStatus?,
     val lastError: String?,
     val lastFetchMillis: Long,
+    val therapy: glucowatch.core.ForecastTherapy = glucowatch.core.ForecastTherapy(),
 ) {
     val latest get() = readings.lastOrNull()
 }
@@ -67,6 +69,7 @@ class PhoneRepository(context: Context) {
                 cached(settings, "error").takeIf { cache.getString(PLAN, null) == settings.configurationKey }?.ifEmpty { null },
             ).joinToString("\n").ifEmpty { null },
             lastFetchMillis = cached(settings, "fetchedAt").toLongOrNull() ?: 0L,
+            therapy = combined.therapy,
         )
     }
 
@@ -89,7 +92,7 @@ class PhoneRepository(context: Context) {
                     }
                     fun selected(of: LinkSource) = SyncSource(settings.label(of), settings.account(of, carelink)!!,
                         syncCache(settings, of), problem(settings, of))
-                    val errors = CombinedSourceSync(retainMs = HISTORY_MS)
+                    val errors = CombinedSourceSync(retainMs = HISTORY_MS, includeProfiles = settings.predictorId == OnnxPredictor.ID)
                         .fetch(if (settings.usesDexcomNotifications) null else selected(settings.source),
                             settings.extras.map(::selected), CHART_HOURS, now)
                     store(settings) {
@@ -113,8 +116,10 @@ class PhoneRepository(context: Context) {
      * anew from the selected sources. Old fetches and notification callbacks cannot write across
      * this transaction because they use this lock and [store]'s configuration guard.
      */
-    suspend fun changeSettings(new: PhoneSettings, keepGlucoseHistory: Boolean) = lock.withLock {
+    suspend fun changeSettings(new: PhoneSettings, keepGlucoseHistory: Boolean, updateLogin: (() -> Unit)? = null) = lock.withLock {
         val old = settingsStore.load()
+        // Config imports replace a pump session under the same lock as source fetches.
+        updateLogin?.invoke()
         if (old.accountKey == new.accountKey) {
             settingsStore.save(new)
             return@withLock
@@ -172,10 +177,17 @@ class PhoneRepository(context: Context) {
         if (System.currentTimeMillis() - latest.timeMillis > 15 * 60_000L) return null
         val predictor = if (state.settings.predictorId == OnnxPredictor.ID) modelStore.predictor()
             else Predictors.byId(state.settings.predictorId)
-        return predictor?.let { runCatching { it.predict(state.readings, horizonMinutes) }
+        return predictor?.let { runCatching {
+            val minutes = if (it.id == OnnxPredictor.ID) minOf(horizonMinutes, it.defaultHorizonMinutes) else horizonMinutes
+            if (it is GlucoseDaoPredictor) it.predict(state.readings, state.treatments, minutes, state.therapy)
+                else it.predict(state.readings, minutes)
+        }
             .onFailure { Log.w(TAG, "Predictor ${state.settings.predictorId} failed", it) }
             .getOrNull() }
     }
+
+    fun defaultForecastMinutes(state: PhoneState): Int =
+        if (state.settings.predictorId == OnnxPredictor.ID) modelStore.predictor()?.defaultHorizonMinutes ?: 120 else 30
 
     /** For a watch's sync: fresh data (at most [FRESH_MS] old) and, if asked, a forecast from the phone's model. */
     fun snapshot(horizonMinutes: Int): LinkSnapshot {

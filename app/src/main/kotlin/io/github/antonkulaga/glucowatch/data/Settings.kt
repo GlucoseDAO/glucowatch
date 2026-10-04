@@ -9,6 +9,7 @@ import glucowatch.core.LinearTrendPredictor
 import glucowatch.core.NightscoutApi
 import glucowatch.core.Region
 import glucowatch.core.SourceAccount
+import glucowatch.core.link.PhoneLink
 
 enum class DataSource(val label: String) {
     DEMO("Demo data"),
@@ -56,6 +57,8 @@ data class Settings(
     /** Hex id of the paired phone app (see PhonePairingStore); empty before pairing. */
     val phoneId: String = "",
 ) {
+    // Ask for the largest supported bundle; the phone/local engine limits this to its metadata.
+    val forecastHorizonMinutes get() = if (predictorId in setOf("onnx", PhoneLink.MODEL_ID)) 240 else horizonMinutes
     val hasCredentials get() = username.isNotBlank() && password.isNotBlank()
 
     /**

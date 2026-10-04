@@ -122,6 +122,12 @@ class NightscoutClient(
         return docs.mapNotNull(::parseTreatment).sortedBy { it.timeMillis }
     }
 
+    /** Versioned pump schedules used by local forecasts, including the profile timezone. */
+    fun basalProfiles(): String = JsonArray(when (api) {
+        NightscoutApi.V1 -> getV1("api/v1/profile.json", "count" to "100")
+        NightscoutApi.V3 -> getV3("api/v3/profile", "sort\$desc" to "startDate", "limit" to "100")
+    }).toString()
+
     /** IOB, COB and forecast from the loop's uploads at or after [sinceMillis], or null if there are none. */
     fun loopStatus(sinceMillis: Long, maxCount: Int = 10): LoopStatus? {
         val since = isoMillis(sinceMillis)
