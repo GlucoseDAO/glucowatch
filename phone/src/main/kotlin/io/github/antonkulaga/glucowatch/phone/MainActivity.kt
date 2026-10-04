@@ -726,13 +726,11 @@ class MainActivity : Activity() {
             GLUCOSE_MODELS.forEach { (name, repo) ->
                 addView(actionRow(R.drawable.ic_model, name, Brand.TEXT) { findRepo(repo) })
             }
-            addView(hint(if (PhoneModelRuntime.supportsBundles)
-                "Development build: GlucoseDao models run locally with glucose, basal, bolus and the model’s supported carb inputs. Select your pump in Connect."
-                else "These transformer models need the development runtime. Release builds support small dense ONNX models."))
+            addView(hint("GlucoseDao models run locally with glucose, basal, bolus and the model’s supported carb inputs. Select your pump in Connect."))
             addView(modelFiles)
-            addView(hint("The model takes float32 [1,12] or [1,24] five-minute mg/dL values, oldest first, and " +
-                "returns float32 [1,1–24] future mg/dL values, one every five minutes. Dense layers and simple " +
-                "activations are supported; other graphs are refused on import."))
+            addView(hint("Repository imports use the model’s metadata and scalers to prepare inputs and show its maximum forecast horizon. " +
+                "Standalone files support small dense models taking float32 [1,12] or [1,24] five-minute mg/dL values " +
+                "and returning [1,1–24] future mg/dL values."))
             removeButton = Button(this@MainActivity).apply {
                 text = "Remove imported model"; Brand.style(this, false); setOnClickListener { removeModel() }
             }

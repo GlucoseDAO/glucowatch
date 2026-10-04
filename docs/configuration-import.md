@@ -25,8 +25,8 @@ a Hugging Face repo/tree/file URL, or a short name that has exactly one search r
 For multiple files, the app prefers `onnx/model.onnx`, then `model.onnx`; otherwise supply
 the particular file's URL. The previous predictor remains selected if model setup fails;
 source configuration stays saved, and the import status reports that failure. Supported
-models use their maximum forecast horizon. The large GlucoseDao bundles require a debug
-APK; see [prediction runtimes](prediction.md#development-and-release-runtimes).
+models use their maximum forecast horizon. The normal GlucoPhone release supports the large GlucoseDao bundles;
+see [prediction runtimes](prediction.md#phone-and-watch-runtimes).
 
 ## dotenv fields
 

@@ -43,14 +43,14 @@ android {
         applicationId = "io.github.antonkulaga.glucowatch"
         minSdk = 33
         targetSdk = 36
-        versionCode = 11
-        versionName = "0.1.10"
+        versionCode = 12
+        versionName = "0.1.11"
     }
 
     buildFeatures {
         buildConfig = true
     }
-    sourceSets.getByName("debug").kotlin.directories.add(file("../debug-inference").absolutePath)
+    sourceSets.getByName("debug").kotlin.directories.add(file("../onnx-inference").absolutePath)
 
     buildTypes {
         getByName("debug") {
@@ -79,7 +79,7 @@ kotlin {
 }
 
 dependencies {
-    debugImplementation("com.microsoft.onnxruntime:onnxruntime-android:1.30.0")
+    debugImplementation("com.microsoft.onnxruntime:onnxruntime-android:1.28.0")
     implementation(project(":core"))
     implementation("androidx.core:core-ktx:1.17.0")
     implementation("androidx.wear.watchface:watchface-complications-data-source-ktx:1.2.1")

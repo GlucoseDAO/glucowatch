@@ -6,7 +6,7 @@ import glucowatch.core.GlucoseReading
 import glucowatch.core.GlucosePredictor
 import glucowatch.core.Prediction
 import glucowatch.core.Treatment
-import glucowatch.debug.DebugModels
+import glucowatch.inference.ImportedModels
 
 /** An explicitly installed private debug bundle, used by emulator screenshots only. */
 object DebugModelForecast {
@@ -19,7 +19,7 @@ object DebugModelForecast {
         val key = "${model.absolutePath}:${model.lastModified()}:${model.length()}"
         if (loaded?.first != key) {
             (loaded?.second as? AutoCloseable)?.close()
-            loaded = key to DebugModels.load(model, folder.resolve("onnx_meta.json"), folder.resolve("scalers.json"))
+            loaded = key to ImportedModels.load(model, folder.resolve("onnx_meta.json"), folder.resolve("scalers.json"))
         }
         val predictor = loaded!!.second
         val minutes = minOf(horizon, predictor.defaultHorizonMinutes)

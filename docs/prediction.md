@@ -12,24 +12,33 @@ glucose uploads for inference. `.env` supplies debug defaults; release defaults 
 The phone's Connect tab can also [import a filled `.env` or YAML configuration](configuration-import.md)
 from a file or URL, save credentials and automatically download/select the supplied model.
 
-## Development and release runtimes
+## Phone and watch runtimes
 
-Debug phone and watch APKs include ONNX Runtime Android 1.30.0 through `debugImplementation`
-from Maven Central. They run the three requested GlucoseDao exports on the device, including
-x86_64 emulators. The shared runtime adapter is in `debug-inference/`; feature preparation
-and the predictor are Kotlin source in core. No model or runtime binary is committed.
-Debug imports allow up to 128 MiB and fetch preprocessing sidecars automatically.
+The normal GlucoPhone release APK includes ONNX Runtime Android 1.28.0 (MIT licensed)
+from Maven Central. It runs all three GlucoseDao exports locally, including on x86_64
+emulators. Import your private configuration on Connect; no separate development APK
+is needed. Imports allow up to 128 MiB and fetch preprocessing sidecars automatically.
+The shared adapter is in `onnx-inference/`; feature preparation and predictors are
+Kotlin source in core. No runtime or model binary is committed. Model weights are
+downloaded only after the user chooses a model. The phone APK includes the runtime's
+MIT licence and third-party notices under `assets/licenses/`.
 
-GitHub releases also provide `glucowatch-phone-onnx-development-<version>.apk` for these
-models. This development APK has empty credential defaults and uses the same signing
-certificate as the standard releases. Import your private configuration on Connect.
-Its native runtime is separate from the three standard release APKs and F-Droid builds.
+Version 1.28's Android package has no telemetry initializer or transport classes. The
+adapter also disables telemetry before creating sessions. Later runtime versions must
+be checked again for telemetry before upgrading. Release minification keeps the JNI
+classes and members by their Java names, as required by the runtime.
 
-Release APKs retain the source-only small dense ONNX interpreter and its 10 MiB limit.
-The native runtime and developer screenshot hooks are excluded from release builds.
-Consequently the three transformer bundles require a development APK; this work does not
-make their native runtime part of an F-Droid release. A compatible small model takes
-float32 `[1,12]` or `[1,24]` glucose and returns `[1,1..24]` future glucose.
+Watch release APKs retain the source-only small dense ONNX interpreter with a 10 MiB
+limit. Watch development builds include the same native adapter for emulator tests.
+For the transformer models in normal use, the phone computes the forecast and relays
+all points to the watch; neither the model nor the Hub token crosses that link.
+A compatible standalone small model takes float32 `[1,12]` or `[1,24]` glucose and
+returns `[1,1..24]` future glucose.
+
+F-Droid has [no blanket ban on prebuilt free-software Maven dependencies](https://f-droid.org/en/docs/Inclusion_Policy/).
+Its acceptance still requires a dependency, scanner and manual review. The existing
+watch and face merge requests do not evaluate the phone runtime; no phone submission
+has been made. Developer screenshot/configuration extras stay out of release builds.
 
 | Export | Past context | Inputs |
 |---|---|---|

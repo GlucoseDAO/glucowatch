@@ -1,4 +1,4 @@
-package glucowatch.debug
+package glucowatch.inference
 
 import ai.onnxruntime.OnnxTensor
 import ai.onnxruntime.OrtEnvironment
@@ -12,9 +12,9 @@ import glucowatch.core.OnnxPredictor
 import java.io.File
 import java.nio.FloatBuffer
 
-/** Included through the debug source sets only. CPU sessions work on x86_64 emulators and ARM. */
+/** Local CPU inference on phones, and on watches in development builds. */
 class AndroidForecastEngine(model: File) : ForecastEngine {
-    private val environment = OrtEnvironment.getEnvironment()
+    private val environment = OrtEnvironment.getEnvironment().also { it.setTelemetry(false) }
     private val session = OrtSession.SessionOptions().use { options ->
         options.setIntraOpNumThreads(2)
         environment.createSession(model.absolutePath, options)
@@ -35,7 +35,7 @@ class AndroidForecastEngine(model: File) : ForecastEngine {
     override fun close() = session.close()
 }
 
-object DebugModels {
+object ImportedModels {
     fun load(model: File, metadata: File?, scalers: File?): GlucosePredictor {
         if (metadata?.isFile != true) return OnnxPredictor.load(model.readBytes())
         val contract = GlucoseDaoContract.parse(metadata.readText(), scalers?.takeIf(File::isFile)?.readText())

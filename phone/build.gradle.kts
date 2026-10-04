@@ -29,12 +29,12 @@ android {
         applicationId = "io.github.antonkulaga.glucowatch.phone"
         minSdk = 29
         targetSdk = 36
-        versionCode = 11
-        versionName = "0.1.10"
+        versionCode = 12
+        versionName = "0.1.11"
     }
 
     buildFeatures { buildConfig = true }
-    sourceSets.getByName("debug").kotlin.directories.add(file("../debug-inference").absolutePath)
+    sourceSets.getByName("main").kotlin.directories.add(file("../onnx-inference").absolutePath)
 
     buildTypes {
         getByName("debug") {
@@ -42,7 +42,7 @@ android {
         }
         release {
             isMinifyEnabled = true
-            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"))
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
             devKeys.forEach { key -> buildConfigField("String", "DEV_$key", "\"\"") }
         }
     }
@@ -63,8 +63,9 @@ kotlin {
 }
 
 dependencies {
-    // Emulator/development inference only. No native runtime in release APKs or model binaries in Git.
-    debugImplementation("com.microsoft.onnxruntime:onnxruntime-android:1.30.0")
+    // MIT-licensed CPU runtime from Maven Central. No runtime or model binaries in Git.
+    // 1.28 predates Android telemetry; verify packaging/privacy before upgrading.
+    implementation("com.microsoft.onnxruntime:onnxruntime-android:1.28.0")
     implementation(project(":core"))
     // FileProvider hands the system camera app a private file to write one meal photo into.
     implementation("androidx.core:core-ktx:1.17.0")

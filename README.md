@@ -471,8 +471,8 @@ With Nightscout there is one more choice, *Loop (Nightscout)*, which shows your 
 instead of running a model on the watch.
 
 The phone's Model tab also saves a Hugging Face address and optional download token. The
-[prediction guide](docs/prediction.md) describes the source interpreter's supported ONNX models
-and the local GlucoseDao inference comparison, including the separate Dexcom Share experiment.
+[prediction guide](docs/prediction.md) describes local ONNX inference in the normal GlucoPhone release,
+full forecast horizons and the GlucoseDao comparison with Nightscout and Dexcom Share data.
 
 ## Screenshots
 

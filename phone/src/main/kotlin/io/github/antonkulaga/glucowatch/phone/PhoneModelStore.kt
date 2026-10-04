@@ -14,7 +14,7 @@ import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
 
-/** Private user imports. Release uses the source interpreter; debug can run GlucoseDao bundles. */
+/** Private user imports, validated locally before replacing the selected model. */
 class PhoneModelStore(context: Context) {
     private val app = context.applicationContext
     private val prefs = app.getSharedPreferences("model", Context.MODE_PRIVATE)
