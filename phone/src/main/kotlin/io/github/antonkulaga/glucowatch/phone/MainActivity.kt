@@ -32,6 +32,7 @@ import androidx.core.content.FileProvider
 import glucowatch.core.GlucoseUnit
 import glucowatch.core.NightscoutApi
 import glucowatch.core.OnnxPredictor
+import glucowatch.core.PredictionChecks
 import glucowatch.core.Predictors
 import glucowatch.core.HuggingFaceModel
 import glucowatch.core.DemoData
@@ -268,11 +269,15 @@ class MainActivity : Activity() {
 
     private fun showOverflow(anchor: View) = PopupMenu(this, anchor).apply {
         menu.add(0, MENU_REFRESH, 0, "Refresh now")
-        menu.add(0, MENU_PRIVACY, 1, "Heart-rate privacy")
-        menu.add(0, MENU_ABOUT, 2, "About ${getString(R.string.app_name)}")
+        menu.add(0, MENU_CHECK, 1, "Check prediction")
+        menu.add(0, MENU_HISTORY, 2, "Prediction history")
+        menu.add(0, MENU_PRIVACY, 3, "Heart-rate privacy")
+        menu.add(0, MENU_ABOUT, 4, "About ${getString(R.string.app_name)}")
         setOnMenuItemClickListener { item ->
             when (item.itemId) {
                 MENU_REFRESH -> scope.launch { render(repository.refresh()) }
+                MENU_CHECK -> checkPrediction()
+                MENU_HISTORY -> startActivity(Intent(this@MainActivity, PredictionHistoryActivity::class.java))
                 MENU_PRIVACY -> startActivity(Intent(this@MainActivity, HealthPrivacyActivity::class.java))
                 else -> AlertDialog.Builder(this@MainActivity)
                     .setTitle("About ${getString(R.string.app_name)}")
@@ -1185,6 +1190,28 @@ class MainActivity : Activity() {
         applyConnectionSettings(old, new, keepHistory = false)
     }
 
+    /** Keep the forecast that is on screen now, so later readings can be laid over it. */
+    private fun checkPrediction() {
+        scope.launch {
+            val state = repository.state()
+            val minutes = repository.defaultForecastMinutes(state)
+            val prediction = repository.forecast(state, minutes) ?: chart.forecast
+            val message = if (prediction == null || prediction.points.isEmpty()) {
+                "No forecast to store. Pick a model, then check."
+            } else {
+                PredictionChecks.record(File(filesDir, PredictionChecks.FILE_NAME), prediction)
+                val stored = prediction.points.lastOrNull()?.let { point ->
+                    state.latest?.let { ((point.timeMillis - it.timeMillis) / 60_000L).toInt() }
+                } ?: minutes
+                "Stored this forecast, $stored min. Prediction history compares it with later readings."
+            }
+            AlertDialog.Builder(this@MainActivity)
+                .setMessage(message)
+                .setPositiveButton("Close", null)
+                .show()
+        }
+    }
+
     private fun applyConnectionSettings(old: PhoneSettings, new: PhoneSettings, keepHistory: Boolean) {
         result.text = "Testing…"
         scope.launch {
@@ -1489,8 +1516,10 @@ class MainActivity : Activity() {
         const val HEART_HOURS = 48
 
         const val MENU_REFRESH = 1
-        const val MENU_PRIVACY = 2
-        const val MENU_ABOUT = 3
+        const val MENU_CHECK = 2
+        const val MENU_HISTORY = 3
+        const val MENU_PRIVACY = 4
+        const val MENU_ABOUT = 5
 
         /** A repo can hold dozens of exports; more than this is noise in a phone-sized list. */
         const val MAX_LISTED_FILES = 12

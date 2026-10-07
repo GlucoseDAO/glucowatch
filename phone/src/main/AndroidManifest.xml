@@ -55,6 +55,10 @@
         </activity>
 
         <activity
+            android:name=".PredictionHistoryActivity"
+            android:exported="false" />
+
+        <activity
             android:name=".HealthPrivacyActivity"
             android:exported="true">
             <intent-filter>

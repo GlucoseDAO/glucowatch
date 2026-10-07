@@ -97,6 +97,41 @@ three separate APKs (Android installer files):
 | GlucoWatch | `glucowatch-<version>.apk` | Your Wear OS watch |
 | GlucoWatch face | `glucowatch-watchface-<version>.apk` | Your Wear OS watch, alongside GlucoWatch |
 
+Obtainium installs **GlucoPhone on the phone**. It cannot put GlucoWatch on the watch.
+Wear OS does not let an app on the watch install other apps, so Obtainium on the watch
+cannot do it either. The watch files come from the same GitHub release. The phone sends
+them over with Wear Installer, in step 2.
+
+### Leave a debug install before the release
+
+A copy put on the watch or the phone from a computer, for testing, is not the release.
+Android treats it as a different app with the same name and will not replace it.
+The install stops, often with **App not installed**.
+
+Take the test copy off first, then install the release. Taking it off deletes the login,
+the pairing between the phone and the watch, and any forecasts stored on that device.
+You set those up again after the release is installed. A later update does not need this.
+Once the release is what is installed, Obtainium and Wear Installer update it in place.
+
+**On the phone**
+
+1. Open **Settings → Apps → GlucoPhone**.
+2. If it is there and you installed it from a computer, tap **Uninstall**.
+3. If GlucoPhone is not listed, there is nothing to remove. Continue with Obtainium.
+
+**On the watch**
+
+1. Open **Settings → Apps** and uninstall **GlucoWatch**.
+2. Uninstall **GlucoWatch face** the same way. It is a second app. Leaving either one
+   in place blocks the release, and the face and the readings will not match.
+3. Debug mode is **Wireless debugging** and **ADB debugging** under **Developer options**.
+   Step 2 turns them on so the phone can send the apps, and turns them off when that is done.
+   Do not leave them on. They use the battery, and the apps keep running after they are off.
+
+Then install the phone with Obtainium and the watch with Wear Installer, below.
+Pair again when both are installed:
+[Connect your phone and watch](#connect-your-phone-and-watch).
+
 ### 1. Install GlucoPhone through Obtainium
 
 [Obtainium](https://obtainium.imranr.dev/) installs Android apps from their release pages
@@ -129,8 +164,8 @@ Keep this entry in Obtainium to receive future phone updates.
 
 ### 2. Install the watch app and face from your phone
 
-**Obtainium on your phone installs apps on the phone. It does not install them on your watch.**
-Use **Wear Installer 2** to send the two watch APKs to the watch. You can do this without a computer.
+This is the watch install. Obtainium stays on the phone and does not send anything to the watch.
+**Wear Installer 2** does. It needs debug mode on the watch for a few minutes, then you turn it off.
 
 1. In your phone's browser, open the
    [latest release](https://github.com/GlucoseDAO/glucowatch/releases/latest), expand **Assets**,
@@ -150,8 +185,8 @@ Use **Wear Installer 2** to send the two watch APKs to the watch. You can do thi
    in Wear Installer 2's port field. This is different from the pairing port in the previous step.
 7. In Wear Installer 2, choose **Custom APK**, select `glucowatch-<version>.apk` from Downloads,
    and tap **Install**. Repeat for `glucowatch-watchface-<version>.apk`.
-8. Open **GlucoWatch** on the watch to see demo data. Turn off **Wireless debugging** and
-   **ADB debugging** when finished to save battery.
+8. Open **GlucoWatch** on the watch. Turn off **Wireless debugging** and **ADB debugging**.
+   Debug mode is only for this install. The apps stay after you turn it off.
 
 If pairing or installation fails, follow the installer's
 [Wear OS 4+ help](https://freepoc.org/wear-installer-2-help-page/).
@@ -169,11 +204,17 @@ or **Glucose (light)**. For heart rate, grant access when the face asks, and tap
 
 ### Updating later
 
-Obtainium checks for GlucoPhone updates; open its entry to install an available update.
-For the watch, download the newer app and face APKs from the same release and repeat
-**Custom APK → Install** in Wear Installer 2. This updates the installed copies.
-Update all three packages together so the phone and watch use compatible versions.
-The watch's Wi-Fi address and connection port can change when you enable debugging again.
+Obtainium checks for GlucoPhone updates. Open its entry and install the update.
+Do not uninstall GlucoPhone first. Uninstall only when a debug copy is in the way,
+as in [Leave a debug install](#leave-a-debug-install-before-the-release).
+
+For the watch, download the newer app and face files from that same release and repeat
+**Custom APK → Install** in Wear Installer 2. Turn debug mode on for the install and off
+when both files have installed. Do not uninstall the watch apps first, unless the copy
+on the watch is still the debug one from a computer.
+
+Update all three together, the phone app and both watch files, from one release.
+The watch's Wi-Fi address and connection port can change each time you turn debugging on.
 
 If you prefer a computer, use the [adb installation instructions](#install-the-watch-from-a-computer).
 The phone app has not been submitted to F-Droid. Links to the watch and face submissions
@@ -351,7 +392,11 @@ both packages, then install again. That clears the login and the phone pairing s
 & $adb -s 192.168.1.50:41529 uninstall io.github.antonkulaga.glucowatch.watchface
 ```
 
-Leave the phone's GlucoPhone installed. The watch and that phone have to speak the same link,
+To put the GitHub release back on the watch, uninstall both debug packages first.
+The release cannot update a debug install. The steps without a computer are in
+[Leave a debug install](#leave-a-debug-install-before-the-release).
+
+Leave the phone's GlucoPhone installed if it is already the release. The watch and that phone have to speak the same link,
 `PhoneLink.VERSION`. If they do not, the phone says to update both. Replacing GlucoPhone with an
 older APK is the same downgrade and wipes the phone app you already use. After a watch uninstall,
 pair again: **GlucoPhone → Watch → Pair a watch**, and on the watch **Settings → Pair with phone**.

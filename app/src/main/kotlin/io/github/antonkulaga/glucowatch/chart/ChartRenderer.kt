@@ -12,6 +12,8 @@ import android.graphics.PorterDuff
 import android.graphics.RectF
 import android.graphics.Shader
 import android.graphics.Typeface
+import glucowatch.core.GlucoseReading
+import glucowatch.core.PredictionCheck
 import glucowatch.core.Treatment
 import glucowatch.core.Trend
 import glucowatch.core.formatAmount
@@ -112,8 +114,9 @@ object ChartRenderer {
         render(state, width, height, labels = false, overlay = true, washOnly = true, now = now)
 
     /**
-     * [overlay]: the line the face paints on top of the clock. No grid, labels, or treatment marks.
-     * The right-hand side is always the forecast horizon, so the prediction has a place to land.
+     * [overlay]: the line the face paints on top of the clock. No grid or labels. Boluses are small
+     * dots on the line, with the units beside a bolus the user gave. The right-hand side is always
+     * the forecast horizon, so the prediction has a place to land.
      * [washOnly]: the in-range band alone, which the face paints behind the type.
      */
     fun render(
@@ -129,8 +132,8 @@ object ChartRenderer {
         val glanceStyle = palette === Palette.GLUCOSE_ALL || palette === Palette.GLUCOSE_LIGHT
         val inset = if (edge && !overlay) width * 0.07f else 0f
 
-        // The face keeps an hour and a half of history so the forecast is still a clear part of the width.
-        val start = now - if (overlay) 90L * 60_000L else s.chartHours * 3_600_000L
+        // The face keeps two hours of history so the forecast is still a clear part of the width.
+        val start = now - if (overlay) 120L * 60_000L else s.chartHours * 3_600_000L
         val end = if (overlay) now + s.horizonMinutes * 60_000L
             else maxOf(now + 10 * 60_000L, forecast.lastOrNull()?.timeMillis ?: now)
         val visible = state.readings.filter { it.timeMillis in start..end }
@@ -409,6 +412,7 @@ object ChartRenderer {
             c.drawText("No readings", plot.centerX(), plot.centerY() + textSize * 0.35f, label)
         }
         if (overlay) {
+            drawFaceBoluses(c, state.treatments.filter { it.isBolus && it.timeMillis in start..now }, ::x, ::y, ::readingAt, palette, width)
             val point = forecast.lastOrNull()
             if (point != null) {
                 val caption = "${s.unit.format(point.mgdl)} in ${s.horizonMinutes} min"
@@ -452,6 +456,94 @@ object ChartRenderer {
         }
         stop(run.last().x, bandColor(run.last().y))
         return LinearGradient(x0, 0f, x0 + span, 0f, colors.toIntArray(), stops.toFloatArray(), Shader.TileMode.CLAMP)
+    }
+
+    /** Small insulin dots on the face line, with the dose beside a bolus the user gave. */
+    private fun drawFaceBoluses(
+        c: Canvas,
+        boluses: List<Treatment>,
+        xOf: (Long) -> Float,
+        yOf: (Double) -> Float,
+        readingAt: (Long) -> GlucoseReading?,
+        palette: Palette,
+        width: Int,
+    ) {
+        val dot = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL; color = palette.insulin }
+        val markLabel = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = palette.insulin
+            textAlign = Paint.Align.LEFT
+            typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+            textSize = 18f
+        }
+        val taken = mutableListOf<RectF>()
+        boluses.forEach { bolus ->
+            val reading = readingAt(bolus.timeMillis) ?: return@forEach
+            val cx = xOf(bolus.timeMillis)
+            val cy = yOf(reading.mgdl.toDouble())
+            c.drawCircle(cx, cy, if (bolus.automatic) 4.5f else 7f, dot)
+            if (bolus.automatic) return@forEach
+            val text = "${formatAmount(bolus.insulin, 1)}U"
+            val bounds = RectF(cx + 10f, cy - 16f, cx + 10f + markLabel.measureText(text), cy + 4f)
+            if (bounds.right <= width - 8f && taken.none { RectF.intersects(it, bounds) }) {
+                outlined(c, text, bounds.left, cy + 6f, markLabel, palette.insulin, 0xFF000000.toInt())
+                taken += bounds
+            }
+        }
+    }
+
+    /**
+     * One stored forecast (dashed) laid over the readings that landed in its window (solid).
+     * The window runs from the moment the forecast was stored to its last point.
+     */
+    fun comparison(check: PredictionCheck, readings: List<GlucoseReading>, width: Int, height: Int): Bitmap {
+        val bmp = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+        val c = Canvas(bmp)
+        c.drawColor(0xFF000000.toInt())
+        val points = check.prediction.points.sortedBy { it.timeMillis }
+        if (points.isEmpty()) return bmp
+        val from = check.savedAt
+        val to = points.last().timeMillis
+        val actual = readings.filter { it.timeMillis in from..to }.sortedBy { it.timeMillis }
+        val values = actual.map { it.mgdl.toDouble() } + points.map { it.mgdl }
+        var yMin = (values.minOrNull() ?: 70.0) - 12.0
+        var yMax = (values.maxOrNull() ?: 180.0) + 12.0
+        if (yMax - yMin < 30.0) {
+            yMin -= 15.0
+            yMax += 15.0
+        }
+        val plot = RectF(6f, 8f, width - 6f, height - 8f)
+        val span = (to - from).coerceAtLeast(1L)
+        fun x(t: Long) = plot.left + plot.width() * (t - from).toFloat() / span
+        fun y(v: Double) = plot.bottom - plot.height() * ((v - yMin) / (yMax - yMin)).toFloat()
+        if (actual.size >= 2) {
+            val path = Path()
+            actual.forEachIndexed { i, reading ->
+                val px = x(reading.timeMillis)
+                val py = y(reading.mgdl.toDouble())
+                if (i == 0) path.moveTo(px, py) else path.lineTo(px, py)
+            }
+            c.drawPath(path, Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                style = Paint.Style.STROKE
+                strokeWidth = 3.5f
+                color = 0xFFFFFFFF.toInt()
+                strokeCap = Paint.Cap.ROUND
+                strokeJoin = Paint.Join.ROUND
+            })
+        }
+        val forecastPath = Path()
+        points.forEachIndexed { i, point ->
+            val px = x(point.timeMillis)
+            val py = y(point.mgdl)
+            if (i == 0) forecastPath.moveTo(px, py) else forecastPath.lineTo(px, py)
+        }
+        c.drawPath(forecastPath, Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            style = Paint.Style.STROKE
+            strokeWidth = 3.5f
+            color = 0xFFA78BDB.toInt()
+            pathEffect = DashPathEffect(floatArrayOf(10f, 8f), 0f)
+            strokeCap = Paint.Cap.ROUND
+        })
+        return bmp
     }
 
     /** [text] with an outline in the [background] colour first, so lines and ticks never run into it. */

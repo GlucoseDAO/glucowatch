@@ -16,6 +16,7 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import glucowatch.core.LoopStatus
+import glucowatch.core.PredictionChecks
 import glucowatch.core.Region
 import glucowatch.core.formatAge
 import glucowatch.core.formatAmount
@@ -33,6 +34,7 @@ import io.github.antonkulaga.glucowatch.data.RefreshReceiver
 import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
+import java.io.File
 
 /** Current value, full chart and status; tapping any complication opens this screen. */
 class MainActivity : Activity() {
@@ -79,6 +81,16 @@ class MainActivity : Activity() {
             text = "Refresh"; setOnClickListener { refresh() }
             Brand.style(this, primary = true)
         }
+        val check = Button(this).apply {
+            text = "Check prediction"
+            setOnClickListener { checkPrediction() }
+            Brand.style(this, primary = false)
+        }
+        val history = Button(this).apply {
+            text = "Prediction history"
+            setOnClickListener { startActivity(Intent(this@MainActivity, PredictionHistoryActivity::class.java)) }
+            Brand.style(this, primary = false)
+        }
         val graphs = Button(this).apply {
             text = "Check graphs"
             setOnClickListener { startActivity(Intent(this@MainActivity, HistoryActivity::class.java)) }
@@ -98,6 +110,8 @@ class MainActivity : Activity() {
         column.addView(therapy, wrap(8))
         column.addView(source, wrap(8))
         column.addView(refresh, wrap(14))
+        column.addView(check, wrap(6))
+        column.addView(history, wrap(6))
         column.addView(graphs, wrap(6))
         column.addView(settings, wrap(6))
         scroll = ScrollView(this).apply { isVerticalScrollBarEnabled = false; addView(column); attachRotary() }
@@ -122,6 +136,25 @@ class MainActivity : Activity() {
     private fun refresh() {
         source.text = "Refreshing…"
         scope.launch { show(RefreshReceiver.refreshNow(applicationContext)) }
+    }
+
+    /**
+     * Keep the model's whole forecast. The face only draws the next [Settings.horizonMinutes],
+     * so a 2-hour phone model is stored past the part visible on the face.
+     */
+    private fun checkPrediction() {
+        source.text = "Storing forecast…"
+        scope.launch {
+            val state = RefreshReceiver.refreshNow(applicationContext)
+            show(state)
+            val prediction = state.prediction
+            source.text = if (prediction == null || prediction.points.isEmpty()) {
+                "No forecast to store. Turn on Show forecast in Settings."
+            } else {
+                PredictionChecks.record(File(filesDir, PredictionChecks.FILE_NAME), prediction)
+                "Stored this forecast, ${state.forecastMinutes} min."
+            }
+        }
     }
 
     private fun show(state: GlucoseState) {
