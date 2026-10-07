@@ -33,6 +33,7 @@ import glucowatch.core.GlucoseUnit
 import glucowatch.core.NightscoutApi
 import glucowatch.core.OnnxPredictor
 import glucowatch.core.Predictors
+import glucowatch.core.HuggingFaceModel
 import glucowatch.core.DemoData
 import glucowatch.core.HeartSample
 import glucowatch.core.Region
@@ -42,11 +43,13 @@ import glucowatch.core.lastManualBolus
 import glucowatch.core.lastBasal
 import glucowatch.core.InsulinKind
 import glucowatch.core.CareLinkToken
+import glucowatch.core.ImportedConfiguration
 import glucowatch.core.formatAmount
 import glucowatch.core.lastDelta
 import glucowatch.core.link.LinkSource
 import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
@@ -83,6 +86,7 @@ class MainActivity : Activity() {
     private lateinit var changeValue: TextView
     private lateinit var changeNote: TextView
     private lateinit var forecastValue: TextView
+    private lateinit var forecastNote: TextView
     private lateinit var mealSummary: TextView
     private lateinit var heartState: TextView
     private lateinit var heartLabel: TextView
@@ -92,7 +96,13 @@ class MainActivity : Activity() {
     private lateinit var periodRow: LinearLayout
     private lateinit var insulinLine: TextView
     private lateinit var modelStatus: TextView
+    private lateinit var modelForecastNote: TextView
     private lateinit var modelInput: EditText
+    private lateinit var modelToken: EditText
+    private var modelLookup: Job? = null
+    private var configurationImport: Job? = null
+    private lateinit var configUrl: EditText
+    private lateinit var configStatus: TextView
     private lateinit var modelFiles: LinearLayout
     private lateinit var removeButton: Button
     private lateinit var sections: List<LinearLayout>
@@ -156,10 +166,23 @@ class MainActivity : Activity() {
                     }
                 }
             }
+            if (intent.hasExtra("dexcomNotifications")) {
+                val old = store.load()
+                val enabled = intent.getBooleanExtra("dexcomNotifications", old.dexcomNotifications)
+                if (old.dexcomNotifications != enabled) {
+                    repository.clearCache()
+                    store.save(old.copy(dexcomNotifications = enabled))
+                }
+            }
             intent.getStringExtra("also")?.let { names ->
                 store.save(store.load().copy(alsoFrom = names.split(',')
                     .mapNotNull { runCatching { LinkSource.valueOf(it.uppercase()) }.getOrNull() }.toSet()))
             }
+        }
+        if (BuildConfig.DEBUG && intent.getBooleanExtra("importDebugModel", false)) {
+            runCatching { modelStore.importDebugBundle() }.onSuccess {
+                store.save(store.load().copy(predictorId = OnnxPredictor.ID))
+            }.onFailure { android.util.Log.w("GlucoPhone", "Debug model import failed", it) }
         }
         val s = store.load()
 
@@ -378,13 +401,14 @@ class MainActivity : Activity() {
         changeValue = metricValue()
         changeNote = hint("").apply { textSize = 10f; gravity = Gravity.CENTER }
         forecastValue = metricValue()
+        forecastNote = hint("").apply { textSize = 10f; gravity = Gravity.CENTER }
         val metrics = LinearLayout(this).apply {
             setPadding(0, dp(10), 0, dp(14))
             addView(metricColumn("Time in range", rangeValue))
             addView(divider())
             addView(metricColumn("30 min change", changeValue, changeNote))
             addView(divider())
-            addView(metricColumn("Forecast", forecastValue))
+            addView(metricColumn("Forecast", forecastValue, forecastNote))
         }
 
         mealSummary = hint("")
@@ -586,7 +610,7 @@ class MainActivity : Activity() {
         nightscoutToken = field("optional", s.nightscoutToken, InputType.TYPE_TEXT_VARIATION_PASSWORD)
         nightscoutApi = radios(NightscoutApi.entries.map { it.name to it.label }, s.nightscoutApi.name)
         carelinkStatus = hint("")
-        carelinkCountry = field("Two-letter country, e.g. DE", PhoneCareLinkStore(this).load()?.country ?: "DE", InputType.TYPE_TEXT_FLAG_CAP_CHARACTERS)
+        carelinkCountry = field("Two-letter country, e.g. DE", PhoneCareLinkStore(this).load()?.country ?: s.carelinkCountry, InputType.TYPE_TEXT_FLAG_CAP_CHARACTERS)
         PhoneSettings.THERAPY_SOURCES.forEach { of ->
             therapySources[of] = CheckBox(this).apply {
                 text = s.label(of); setTextColor(Brand.TEXT); isChecked = of in s.alsoFrom
@@ -615,6 +639,31 @@ class MainActivity : Activity() {
             },
             hint("Your CareLink username and password are entered only on Medtronic's browser page and are never stored by GlucoPhone. The country selects your account's regional login server. Sign in with a care partner account linked to the patient. To share the combined chart, choose Phone app on the watch."),
         )
+        configUrl = field("https://your-site.example/config.yaml", "", InputType.TYPE_TEXT_VARIATION_URI)
+        configUrl.isSaveEnabled = false
+        configStatus = hint("")
+        connect.addView(card().apply {
+            addView(cardTitle("Import configuration"))
+            addView(hint("Set up sources and prediction from a .env or YAML file. A model address downloads and selects its ONNX model automatically. Omitted settings keep their current values."))
+            addView(Button(this@MainActivity).apply {
+                text = "Upload .env / YAML"; Brand.style(this, true)
+                setOnClickListener {
+                    @Suppress("DEPRECATION")
+                    startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+                        addCategory(Intent.CATEGORY_OPENABLE); type = "*/*"
+                    }, REQUEST_CONFIG)
+                }
+            })
+            addView(label("Configuration URL")); addView(configUrl)
+            addView(Button(this@MainActivity).apply {
+                text = "Import from URL"; Brand.style(this, false)
+                setOnClickListener {
+                    val address = configUrl.text.toString()
+                    importConfiguration { PhoneConfigurationImport(this@MainActivity).url(address) }
+                }
+            })
+            addView(configStatus)
+        })
         connect.addView(card().apply {
             addView(cardTitle("Glucose source"))
             addView(hint("Choose a source. Your login stays in private app storage."))
@@ -636,9 +685,13 @@ class MainActivity : Activity() {
     private fun buildModel(model: LinearLayout, s: PhoneSettings) {
         predictor = radios(Predictors.all.map { it.id to it.displayName } + (OnnxPredictor.ID to "Imported ONNX"), s.predictorId)
         predictor.setOnCheckedChangeListener { _, _ -> saveModelChoice() }
-        modelInput = field("owner/model  ·  or an .onnx link", "", InputType.TYPE_TEXT_VARIATION_URI)
+        modelInput = field("Model name, owner/model, or link", s.modelAddress, InputType.TYPE_TEXT_VARIATION_URI)
+        modelToken = field("hf_… (optional for public models)", s.huggingFaceToken,
+            InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD)
+        modelToken.isSaveEnabled = false
         modelFiles = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         modelStatus = hint("")
+        modelForecastNote = hint("")
 
         model.addView(card().apply {
             addView(cardTitle("Glucose prediction"))
@@ -646,25 +699,38 @@ class MainActivity : Activity() {
                 "The watch must choose “Phone app model” for its forecast."))
             addView(predictor)
             addView(modelStatus)
+            addView(modelForecastNote)
         })
         model.addView(card().apply {
             addView(cardTitle("Your own ONNX model"))
-            addView(hint("Name a Hugging Face model repo and pick one of its .onnx files, paste a link to a " +
-                "single .onnx file, or import one from this phone. Up to 10 MB. Nothing is downloaded until you choose a file."))
-            addView(label("Hugging Face repo or .onnx link"))
+            addView(hint("Search by part of a model name, enter owner/model, or paste a link. The phone finds " +
+                "its ONNX files for you. Nothing is downloaded until you choose a file."))
+            addView(label("Hugging Face model"))
             addView(modelInput)
+            addView(label("Hugging Face access token"))
+            addView(modelToken)
+            addView(hint("Saved privately on this phone and sent only to huggingface.co to download models. Glucose data stays on your devices."))
+            addView(Button(this@MainActivity).apply {
+                text = "Save model settings"; Brand.style(this, false)
+                setOnClickListener { saveModelSettings(); modelStatus.text = "Model address and access token saved." }
+            })
             addView(LinearLayout(this@MainActivity).apply {
                 addView(Button(this@MainActivity).apply {
-                    text = "Find .onnx files"; Brand.style(this, true); setOnClickListener { findModels() }
+                    text = "Find model"; Brand.style(this, true); setOnClickListener { findModels() }
                 }, weight())
                 addView(Button(this@MainActivity).apply {
                     text = "Import a file"; Brand.style(this, false); setOnClickListener { chooseModelFile() }
                 }, weight())
             })
+            addView(label("GlucoseDao shortcuts"))
+            GLUCOSE_MODELS.forEach { (name, repo) ->
+                addView(actionRow(R.drawable.ic_model, name, Brand.TEXT) { findRepo(repo) })
+            }
+            addView(hint("GlucoseDao models run locally with glucose, basal, bolus and the model’s supported carb inputs. Select your pump in Connect."))
             addView(modelFiles)
-            addView(hint("The model takes float32 [1,12] or [1,24] five-minute mg/dL values, oldest first, and " +
-                "returns float32 [1,1–24] future mg/dL values, one every five minutes. Dense layers and simple " +
-                "activations are supported; other graphs are refused on import."))
+            addView(hint("Repository imports use the model’s metadata and scalers to prepare inputs and show its maximum forecast horizon. " +
+                "Standalone files support small dense models taking float32 [1,12] or [1,24] five-minute mg/dL values " +
+                "and returning [1,1–24] future mg/dL values."))
             removeButton = Button(this@MainActivity).apply {
                 text = "Remove imported model"; Brand.style(this, false); setOnClickListener { removeModel() }
             }
@@ -697,16 +763,40 @@ class MainActivity : Activity() {
     // ---------------------------------------------------------------- model import
 
     private fun findModels() {
-        val typed = modelInput.text.toString()
+        val settings = saveModelSettings()
+        val typed = settings.modelAddress
         modelFiles.removeAllViews()
         modelStatus.text = "Looking up $typed…"
-        scope.launch {
-            runCatching { modelStore.listHuggingFace(typed) }.fold(
-                onSuccess = { listing -> showFiles(listing) },
-                onFailure = { modelStatus.text = it.message ?: "Could not read that repo" },
-            )
+        modelLookup?.cancel()
+        modelLookup = scope.launch {
+            try {
+                if (HuggingFaceModel.isSearch(typed)) {
+                    val models = modelStore.searchHuggingFace(typed, settings.huggingFaceToken)
+                    if (!isActive) return@launch
+                    modelStatus.text = if (models.isEmpty()) "No matching models. Try another name or enter owner/model."
+                        else "Choose a repository to find its ONNX files."
+                    models.forEach { model ->
+                        modelFiles.addView(actionRow(R.drawable.ic_model, model.repo, Brand.TEXT) { findRepo(model.repo) })
+                    }
+                } else {
+                    val listing = modelStore.listHuggingFace(typed, settings.huggingFaceToken)
+                    if (isActive) showFiles(listing)
+                }
+            } catch (error: Exception) {
+                if (isActive) modelStatus.text = error.message ?: "Could not find that model"
+            }
         }
     }
+
+    private fun findRepo(repo: String) {
+        modelInput.setText(repo)
+        findModels()
+    }
+
+    private fun saveModelSettings(): PhoneSettings = store.load().copy(
+        modelAddress = modelInput.text.toString().trim(),
+        huggingFaceToken = modelToken.text.toString().trim(),
+    ).also(store::save)
 
     private fun showFiles(listing: PhoneModelStore.Listing) {
         modelStatus.text = "${listing.model.label}: ${listing.files.size} .onnx file" +
@@ -715,7 +805,8 @@ class MainActivity : Activity() {
             modelFiles.addView(actionRow(R.drawable.ic_model, file, Brand.TEXT) {
                 modelStatus.text = "Downloading and checking $file…"
                 modelFiles.removeAllViews()
-                scope.launch { installModel { modelStore.importHuggingFace(listing.model, file) } }
+                val settings = saveModelSettings()
+                scope.launch { installModel { modelStore.importHuggingFace(listing.model, file, settings.huggingFaceToken) } }
             })
         }
     }
@@ -817,6 +908,10 @@ class MainActivity : Activity() {
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
         when (requestCode) {
+            REQUEST_CONFIG -> {
+                val uri = data?.data?.takeIf { resultCode == RESULT_OK } ?: return
+                importConfiguration { PhoneConfigurationImport(this@MainActivity).file(uri) }
+            }
             REQUEST_MODEL -> {
                 val uri = data?.data?.takeIf { resultCode == RESULT_OK } ?: return
                 modelStatus.text = "Checking model…"
@@ -907,7 +1002,20 @@ class MainActivity : Activity() {
         val now = System.currentTimeMillis()
         chart.readings = state.readings
         chart.unit = u
-        chart.forecast = repository.forecast(state, 30)
+        val forecastMinutes = repository.defaultForecastMinutes(state)
+        chart.forecast = repository.forecast(state, forecastMinutes)
+        forecastNote.text = "$forecastMinutes min"
+        if (BuildConfig.DEBUG && intent.getBooleanExtra("exportDebugSnapshot", false) && latest != null) {
+            val json = org.json.JSONObject()
+                .put("upstream", glucowatch.core.link.LinkCrypto.sha256(state.settings.configurationKey.toByteArray()).take(12).joinToString("") { "%02x".format(it) })
+                .put("sourceLabel", state.settings.sourceLabel)
+                .put("readings", glucowatch.core.CacheFormat.encodeReadings(state.readings.filter { now-it.timeMillis <= 24*3_600_000L }))
+                .put("treatments", glucowatch.core.CacheFormat.encodeTreatments(state.treatments.filter { now-it.timeMillis <= 24*3_600_000L }))
+                .put("loop", glucowatch.core.CacheFormat.encodeLoop(state.loop))
+                .put("forecast", glucowatch.core.CacheFormat.encodePrediction(chart.forecast))
+                .put("error", state.lastError.orEmpty())
+            filesDir.resolve("debug-phone-snapshot.json").writeText(json.toString())
+        }
         val logged = foodLog.all()
         chart.food = logged.filter { it.isMeal }
         // Insulin logged on the phone joins what Nightscout reported, so a Share user has some too.
@@ -981,6 +1089,13 @@ class MainActivity : Activity() {
         if (state.settings.predictorId == OnnxPredictor.ID && !modelStore.available) {
             modelStatus.text = "Import a compatible ONNX model to forecast with it."
         }
+        if (state.settings.predictorId == OnnxPredictor.ID) {
+            (modelStore.predictor() as? glucowatch.core.GlucoseDaoPredictor)?.let { model ->
+                modelForecastNote.text = listOfNotNull(model.displayName,
+                    "Supports ${model.contract.horizonSteps * 5} min · showing ${model.defaultHorizonMinutes} min",
+                    model.lastProblem).joinToString(" · ")
+            }
+        }
         state.lastError?.takeIf { state.settings.source != LinkSource.DEMO }?.let { sourceLine.append("\n⚠ $it") }
     }
 
@@ -1047,6 +1162,7 @@ class MainActivity : Activity() {
             nightscoutApi = NightscoutApi.valueOf(selected(nightscoutApi)),
             unit = GlucoseUnit.valueOf(selected(unit)),
             alsoFrom = therapySources.filterValues { it.isChecked }.keys.toSet(),
+            carelinkCountry = carelinkCountry.text.toString().trim().uppercase(),
         )
     }
 
@@ -1084,6 +1200,105 @@ class MainActivity : Activity() {
                 else -> "OK. Paired watches get this now."
             }
         }
+    }
+
+    private fun importConfiguration(read: suspend () -> ImportedConfiguration) {
+        if (configurationImport?.isActive == true) return
+        modelLookup?.cancel()
+        fun enabled(view: View, value: Boolean) {
+            view.isEnabled = value
+            if (view is android.view.ViewGroup) for (i in 0 until view.childCount) enabled(view.getChildAt(i), value)
+        }
+        sections.drop(1).take(2).forEach { enabled(it, false) }
+        configStatus.text = "Reading configuration…"
+        configurationImport = scope.launch {
+            try {
+                val imported = read() // Parse and validate the entire document before changing anything.
+                val previous = store.load()
+                var settings = imported.applyTo(previous)
+                // A different glucose account must not silently inherit another person's pump.
+                if (settings.accountKey != previous.accountKey && imported.alsoFrom == null)
+                    settings = settings.copy(alsoFrom = emptySet())
+                val carelinkStore = PhoneCareLinkStore(this@MainActivity)
+                val clearCarelink = imported.carelinkToken == null && imported["CARELINK_COUNTRY"] != null &&
+                    carelinkStore.load()?.country?.equals(settings.carelinkCountry, true) == false
+                if (clearCarelink) {
+                    settings = settings.copy(carelinkAccount = "")
+                }
+                repository.changeSettings(settings, keepGlucoseHistory = false) {
+                    imported.carelinkToken?.let(carelinkStore::save)
+                    if (clearCarelink) carelinkStore.save(null)
+                }
+                fillConfigurationFields(settings)
+                var modelOutcome = ""
+                if (!imported["HF_MODEL_ADDRESS"].isNullOrBlank()) {
+                    configStatus.text = "Settings imported. Downloading and checking prediction model…"
+                    try {
+                        val address = settings.modelAddress
+                        val model = if (HuggingFaceModel.isSearch(address)) {
+                            val matches = modelStore.searchHuggingFace(address, settings.huggingFaceToken)
+                            require(matches.size == 1) { "Use owner/model when a model name matches multiple repositories" }
+                            matches.single().repo
+                        } else address
+                        val listing = modelStore.listHuggingFace(model, settings.huggingFaceToken)
+                        val file = when {
+                            listing.files.size == 1 -> listing.files.single()
+                            "onnx/model.onnx" in listing.files -> "onnx/model.onnx"
+                            "model.onnx" in listing.files -> "model.onnx"
+                            else -> error("Repository has multiple ONNX variants; supply a link to the desired file")
+                        }
+                        modelStore.importHuggingFace(listing.model, file, settings.huggingFaceToken)
+                        // Merge with current preferences rather than overwrite changes from another activity.
+                        settings = store.load().copy(predictorId = OnnxPredictor.ID)
+                        repository.changeSettings(settings, keepGlucoseHistory = false)
+                        checkRadio(predictor, settings.predictorId)
+                        modelOutcome = " Prediction model downloaded and selected."
+                    } catch (e: CancellationException) { throw e }
+                    catch (_: Exception) {
+                        modelOutcome = " Model setup failed; the previous predictor was kept. Check the model address/access and try again on the Model tab."
+                    }
+                }
+                updateModelStatus()
+                configStatus.text = "Configuration imported.$modelOutcome Testing connections…"
+                val state = repository.refresh()
+                render(state)
+                configStatus.text = "Configuration imported.$modelOutcome " + when {
+                    state.lastError != null -> "Some source data is unavailable; see Today."
+                    state.latest == null -> "Connected; no recent glucose readings."
+                    else -> "Source test passed."
+                }
+                val usesCarelink = settings.source == LinkSource.CARELINK || LinkSource.CARELINK in settings.extras
+                if (usesCarelink && carelinkStore.load() == null) {
+                    configStatus.append(" Complete CareLink browser sign-in to connect the pump.")
+                    startActivity(Intent(this@MainActivity, CareLinkSignInActivity::class.java)
+                        .putExtra("country", settings.carelinkCountry))
+                }
+            } catch (e: CancellationException) { throw e }
+            catch (e: Exception) { configStatus.text = "Could not import configuration: ${e.message ?: "invalid file"}" }
+            finally {
+                sections.drop(1).take(2).forEach { enabled(it, true) }
+                updateVisibility()
+            }
+        }
+    }
+
+    private fun checkRadio(group: RadioGroup, selected: String) {
+        for (i in 0 until group.childCount) {
+            val radio = group.getChildAt(i) as RadioButton
+            if (radio.tag == selected) group.check(radio.id)
+        }
+    }
+
+    private fun fillConfigurationFields(s: PhoneSettings) {
+        username.setText(s.username); password.setText(s.password)
+        nightscoutUrl.setText(s.nightscoutUrl); nightscoutToken.setText(s.nightscoutToken)
+        carelinkCountry.setText(s.carelinkCountry)
+        modelInput.setText(s.modelAddress); modelToken.setText(s.huggingFaceToken)
+        checkRadio(source, s.source.name); checkRadio(region, s.region.name)
+        checkRadio(nightscoutApi, s.nightscoutApi.name); checkRadio(unit, s.unit.name)
+        dexcomNotifications.isChecked = s.dexcomNotifications
+        therapySources.forEach { (of, checkbox) -> checkbox.isChecked = of in s.alsoFrom }
+        updateVisibility()
     }
 
     /** Runs [action] now, or after the user allows Nearby devices. Also asks once for the service's notification. */
@@ -1265,6 +1480,7 @@ class MainActivity : Activity() {
         const val REQUEST_MODEL = 2
         const val REQUEST_HEART = 3
         const val REQUEST_FOOD_PHOTO = 4
+        const val REQUEST_CONFIG = 5
 
         /** The period presets under the chart; pinching moves freely between them. */
         val PERIODS = listOf(3, 6, 12, 24)
@@ -1278,5 +1494,11 @@ class MainActivity : Activity() {
 
         /** A repo can hold dozens of exports; more than this is noise in a phone-sized list. */
         const val MAX_LISTED_FILES = 12
+
+        val GLUCOSE_MODELS = listOf(
+            "CITRAS" to "GlucoseDao/CITRAS-full-1e-4-cov-lossmard-ctx864-futureallchannels-fdrop0-upperbound-mv1-s42",
+            "INPAINT-CITRAS" to "GlucoseDao/INPAINT-CITRAS-120h_past-116h_post-one_sensor_wear-bidirectional_attention-full_finetune-s42",
+            "NF-TFT" to "GlucoseDao/NF-TFT-lossmard-ctx576-futurecarbs-fdrop0-refit-mv1-s42",
+        )
     }
 }

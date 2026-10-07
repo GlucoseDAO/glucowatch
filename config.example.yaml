@@ -1,0 +1,29 @@
+# Copy to config.yaml, fill in locally, then import on the phone's Connect tab.
+# Quote passwords and tokens, especially numeric passwords and values containing #.
+version: 1
+source: dexcom
+unit: mgdl
+also_from: [carelink]
+heart_track: false
+dexcom:
+  username: "your-dexcom-username"
+  password: "your-dexcom-password"
+  region: eu
+  notifications: false
+carelink:
+  country: DE
+  # Country alone opens Medtronic browser sign-in if the phone has no session.
+  # To MOVE an existing session here, optionally supply all four fields below.
+  # Stop using the session on the original device: refresh tokens rotate.
+  # client_id: "..."
+  # access_token: "..."
+  # refresh_token: "..."
+  # expires_at: 1791060000000  # epoch milliseconds
+prediction:
+  model: "GlucoseDao/INPAINT-CITRAS-120h_past-116h_post-one_sensor_wear-bidirectional_attention-full_finetune-s42"
+  hf_token: ""
+# For Nightscout, use source: nightscout and also_from: [] for that person's pump.
+# nightscout:
+#   url: "https://your-nightscout.example"
+#   token: ""
+#   api: v1

@@ -76,7 +76,7 @@ class CareLinkSignInActivity : Activity() {
                     }
                     PhoneCareLinkStore(this@CareLinkSignInActivity).save(token)
                     val store = PhoneSettingsStore(this@CareLinkSignInActivity)
-                    store.save(store.load().copy(carelinkAccount = account))
+                    store.save(store.load().copy(carelinkAccount = account, carelinkCountry = token.country))
                     prefs.edit().clear().apply()
                     startActivity(Intent(this@CareLinkSignInActivity, MainActivity::class.java)
                         .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_NEW_TASK))

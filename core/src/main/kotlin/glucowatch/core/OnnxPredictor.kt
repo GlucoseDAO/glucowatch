@@ -15,6 +15,7 @@ import kotlin.math.tanh
 class OnnxPredictor private constructor(private val graph: Graph) : GlucosePredictor {
     override val id = ID
     override val displayName = "Imported ONNX"
+    override val defaultHorizonMinutes get() = minOf(120, graph.outputWidth * 5)
 
     override fun predict(history: List<GlucoseReading>, horizonMinutes: Int): Prediction? {
         val count = graph.inputWidth

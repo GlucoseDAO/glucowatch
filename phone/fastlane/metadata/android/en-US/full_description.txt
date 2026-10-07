@@ -1,6 +1,6 @@
 The optional phone companion of GlucoWatch, the glucose watch face and app for Wear OS. The watch app works without it.
 
-The phone app reads Dexcom Share, your own Nightscout, or demo data, and does one of two things for the watch:
+The phone app reads Dexcom Share, your own Nightscout, optional Medtronic CareLink, or demo data, and does one of two things for the watch:
 
 * Relay: pick "Phone app" as the source on the watch. The phone fetches, and the watch gets readings, insulin and carbs, the loop's status and an optional forecast over Bluetooth. The watch then needs no login and no internet.
 * Copy the login: keep Dexcom Share or Nightscout on the watch and tap "Copy login from phone", so you do not type a password on the watch. The watch then fetches by itself.
@@ -8,5 +8,9 @@ The phone app reads Dexcom Share, your own Nightscout, or demo data, and does on
 The watch and the phone talk over the Bluetooth link Wear OS already uses. There is no Google Play Services and no extra server. You pair the two apps once by comparing a six-digit code on both screens. Only paired watches get anything, and every message is encrypted with the key from pairing.
 
 Dexcom readings need Share turned on in the official Dexcom app, with at least one follower.
+
+For CareLink, complete Medtronic's browser sign-in on the phone. CareLink is optional; Nightscout and demo data work without it.
+
+Import a private .env or YAML configuration to set up your accounts and automatically download the selected prediction model. The standard phone APK runs supported ONNX models locally and can send their full forecast to a paired watch. A Hugging Face repository name is enough to find the model; an access token is optional. Glucose data stays on your devices.
 
 This is not a medical device. Do not make treatment decisions from it. Keep using the official Dexcom app and its alarms.

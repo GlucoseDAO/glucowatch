@@ -15,7 +15,7 @@ val dotEnv = dotEnvFile.takeIf { it.isFile }?.readLines().orEmpty().mapNotNull {
         else value.replace(Regex("""\s+#.*$"""), "")
 }.toMap()
 val devKeys = listOf("DEXCOM_USERNAME", "DEXCOM_PASSWORD", "DEXCOM_REGION", "NIGHTSCOUT_URL",
-    "NIGHTSCOUT_TOKEN", "NIGHTSCOUT_API", "GLUCOWATCH_SOURCE", "GLUCOWATCH_UNIT")
+    "NIGHTSCOUT_TOKEN", "NIGHTSCOUT_API", "GLUCOWATCH_SOURCE", "GLUCOWATCH_UNIT", "HF_TOKEN", "HF_MODEL_ADDRESS")
 val devDefaults = devKeys.associateWith { System.getenv(it) ?: dotEnv[it] ?: "" }
 fun javaString(value: String) = "\"" + value.replace("\\", "\\\\").replace("\"", "\\\"") + "\""
 
@@ -29,11 +29,12 @@ android {
         applicationId = "io.github.antonkulaga.glucowatch.phone"
         minSdk = 29
         targetSdk = 36
-        versionCode = 9
-        versionName = "0.1.8"
+        versionCode = 13
+        versionName = "0.1.12"
     }
 
     buildFeatures { buildConfig = true }
+    sourceSets.getByName("main").kotlin.directories.add(file("../onnx-inference").absolutePath)
 
     buildTypes {
         getByName("debug") {
@@ -41,7 +42,7 @@ android {
         }
         release {
             isMinifyEnabled = true
-            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"))
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
             devKeys.forEach { key -> buildConfigField("String", "DEV_$key", "\"\"") }
         }
     }
@@ -62,6 +63,9 @@ kotlin {
 }
 
 dependencies {
+    // MIT-licensed CPU runtime from Maven Central. No runtime or model binaries in Git.
+    // 1.28 predates Android telemetry; verify packaging/privacy before upgrading.
+    implementation("com.microsoft.onnxruntime:onnxruntime-android:1.28.0")
     implementation(project(":core"))
     // FileProvider hands the system camera app a private file to write one meal photo into.
     implementation("androidx.core:core-ktx:1.17.0")

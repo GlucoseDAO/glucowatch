@@ -41,11 +41,22 @@ sorted path order. For text, `icon.png` and `featureGraphic.png`, the last one r
 Screenshots from all of these are combined. A file with the same name replaces the earlier one,
 and files with different names are all kept.
 
-What this means for this repo:
+Metadata follow-up on 2026-10-04 for 0.1.12:
 
-- The face's F-Droid page currently shows the app's text, icon and three screenshots, because
-  the only store text is at the root.
-- A `watchface/fastlane/` directory would give the face its own text and icon, because
+- The root listing describes the watch app, including optional CareLink sign-in through
+  GlucoPhone and separate F-Droid/GitHub downloads for the app and face.
+- `watchface/fastlane/metadata/android/en-US/` supplies the face's own title, summary,
+  description, icon, interactive/ambient demo screenshots and changelog. It explains that
+  glucose complications require GlucoWatch on the same watch.
+- Root metadata remains for compatibility with the current index publisher. Current
+  fdroidserver master imports the face's subdir, but combines root screenshots with it.
+  Confirm the index publisher's subdir-image support in !49898 before moving the watch
+  app's metadata out of the root.
+
+Why the root matters:
+
+- Before 0.1.12 the face inherited the app's store text and icon from the root.
+- The `watchface/fastlane/` directory gives the face its own text and icon, because
   `watchface/` sorts after `fastlane/`. The app's screenshots would still appear next to the face's.
 - Moving the app's text to `app/fastlane/` and the face's to `watchface/fastlane/`, and leaving
   nothing at the root, gives each package only its own text.

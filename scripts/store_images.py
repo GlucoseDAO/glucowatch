@@ -6,6 +6,8 @@ real account's readings):
 
     fastlane/metadata/android/en-US/images/phoneScreenshots/01-face.png ... 05-app.png
         1080 x 1920, a round watch capture with a title, in GlucoseDAO colours
+    watchface/fastlane/metadata/android/en-US/images/
+        the face's own 512 px icon and interactive/ambient store screenshots
     watchface/src/main/res/drawable/preview.png        the face in the watch face picker
     app/src/main/res/drawable/tile_preview*.png        each tile in the "Add tiles" list
 
@@ -20,6 +22,7 @@ ROOT = Path(__file__).resolve().parent.parent
 # The watch the app is tried on (the default of scripts/screenshots.py).
 RAW = ROOT / 'data' / 'output' / 'screenshots' / 'watch6-classic-43' / 'raw'
 SHOTS = ROOT / 'fastlane' / 'metadata' / 'android' / 'en-US' / 'images' / 'phoneScreenshots'
+FACE_IMAGES = ROOT / 'watchface' / 'fastlane' / 'metadata' / 'android' / 'en-US' / 'images'
 
 # Black, grey and white, as on the watch face (see core/.../GlucosePalette.kt).
 BACKGROUND_TOP, BACKGROUND_BOTTOM = (30, 30, 30), (0, 0, 0)   # charcoal to black, no tint
@@ -33,6 +36,10 @@ SCREENS = [
     ('03-tile-glucose-all.png', 'demo-tile-glucose-all.png', 'Glucose, time and heart', 'Clock, glucose, heart rate and battery together'),
     ('04-tile-glucose-light.png', 'demo-tile-glucose-light.png', 'Light tile', 'Clock, glucose and range on an off-white screen'),
     ('05-app.png', 'demo-app-0.png', 'App', 'Dexcom, Nightscout or optional phone link'),
+]
+FACE_SCREENS = [
+    ('01-face.png', 'demo-face.png', 'GlucoWatch face', 'Glucose from the GlucoWatch app'),
+    ('02-face-ambient.png', 'demo-face-ambient.png', 'Ambient face', 'Time and glucose in always-on mode'),
 ]
 # Preview in the "Add tiles" list -> the capture it comes from.
 TILE_PREVIEWS = {
@@ -52,7 +59,7 @@ def circle(frame, size):
     return out.resize((size, size), Image.LANCZOS)
 
 
-def store_image(capture, title, subtitle):
+def store_image(capture, title, subtitle, icon_path=None):
     w, h = 1080, 1920
     img = Image.new('RGB', (w, h))
     d = ImageDraw.Draw(img)
@@ -69,13 +76,15 @@ def store_image(capture, title, subtitle):
     d.ellipse(((w - watch) / 2 - bezel, top - bezel, (w + watch) / 2 + bezel, top + watch + bezel), fill=BEZEL)
     screen = circle(capture, watch)
     img.paste(screen, ((w - watch) // 2, top), screen)
-    icon = Image.open(ROOT / 'fastlane/metadata/android/en-US/images/icon.png').convert('RGBA').resize((150, 150), Image.LANCZOS)
+    icon_path = icon_path or ROOT / 'fastlane/metadata/android/en-US/images/icon.png'
+    icon = Image.open(icon_path).convert('RGBA').resize((150, 150), Image.LANCZOS)
     img.paste(icon, ((w - 150) // 2, h - 260), icon)
     return img
 
 
 def main():
     missing = [raw for _, raw, _, _ in SCREENS if not (RAW / raw).is_file()]
+    missing += [raw for _, raw, _, _ in FACE_SCREENS if not (RAW / raw).is_file() and raw not in missing]
     missing += [raw for raw in TILE_PREVIEWS.values() if not (RAW / raw).is_file() and raw not in missing]
     if missing:
         sys.exit(f'missing {", ".join(missing)} in {RAW}: run uv run scripts/screenshots.py demo first')
@@ -84,10 +93,18 @@ def main():
         old.unlink()
     for name, raw, title, subtitle in SCREENS:
         store_image(Image.open(RAW / raw), title, subtitle).save(SHOTS / name, optimize=True)
+    face_shots = FACE_IMAGES / 'phoneScreenshots'
+    face_shots.mkdir(parents=True, exist_ok=True)
+    for old in face_shots.glob('*.png'):
+        old.unlink()
+    face_icon = FACE_IMAGES / 'icon.png'
+    circle(Image.open(RAW / 'demo-face.png'), 512).save(face_icon, optimize=True)
+    for name, raw, title, subtitle in FACE_SCREENS:
+        store_image(Image.open(RAW / raw), title, subtitle, face_icon).save(face_shots / name, optimize=True)
     circle(Image.open(RAW / 'demo-face.png'), 450).save(ROOT / 'watchface/src/main/res/drawable/preview.png', optimize=True)
     for preview, raw in TILE_PREVIEWS.items():
         circle(Image.open(RAW / raw), 320).save(ROOT / 'app/src/main/res/drawable' / preview, optimize=True)
-    print(f'wrote {len(SCREENS)} store screenshots, the face preview and {len(TILE_PREVIEWS)} tile previews')
+    print(f'wrote {len(SCREENS)} app and {len(FACE_SCREENS)} face store screenshots, the face icon/preview and {len(TILE_PREVIEWS)} tile previews')
 
 
 if __name__ == '__main__':

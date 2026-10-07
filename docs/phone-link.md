@@ -73,10 +73,11 @@ The phone app runs a foreground service (type `connectedDevice`) that listens on
 service record, `PhoneLink.SERVICE_UUID`. The watch opens one connection per request and the
 phone answers it. Each message is a 4-byte length followed by the body.
 
-Protocol version 2 adds the insulin kind, basal rate/percentage and duration to each relayed
-treatment. Update the watch and phone together; a version mismatch shows an update message.
+Protocol version 2 added the insulin kind, basal rate/percentage and duration to each relayed
+treatment. Version 3 (0.1.9) adds the flag distinguishing a pump's percent of the scheduled
+basal from Nightscout's percentage adjustment. Update the watch and phone together; a version mismatch shows an update message.
 The service UUID and pairing keys are unchanged, so existing pairings survive the update.
-Old four-field treatment caches still read as boluses/carbs.
+Old four-field treatment caches still read as boluses/carbs, and eight-field basal caches remain readable.
 
 | Request | When | Answer |
 |---|---|---|
@@ -169,7 +170,11 @@ A model comes from one of two places, and only when the user asks for it:
   that listing, and the repo's `.onnx` files are shown for the user to pick from. Only then is a
   file downloaded, over HTTPS, following Hugging Face's redirect to its file storage. A `resolve`
   or `blob` link to one file skips the listing, so a repo whose listing is unavailable still
-  works. Gated and private repos are refused rather than authenticated: no token is ever sent.
+  works. The **Hugging Face access token** field allows private or gated repositories that the
+  user's account can read. **Save model settings** keeps the address and masked token in private
+  phone settings; **Find .onnx files** saves them too. The token is sent only to the HTTPS origin
+  `huggingface.co` (the default port or 443), never to file-storage redirect hosts, Dexcom,
+  Nightscout, or the watch. A `tree/main/onnx` link limits the chooser to the `onnx/` directory.
 - **A file on the phone**, through the system document picker.
 
 Either way the model is loaded and checked before it replaces the one already stored, is capped at
@@ -178,6 +183,12 @@ implements `GlucosePredictor`. The watch shows the
 phone's forecast only when it starts from the latest reading. Otherwise
 it shows "No fresh phone forecast". The choice **Loop (Nightscout)** also works through the phone,
 because the phone relays the loop status.
+
+`HF_TOKEN` and `HF_MODEL_ADDRESS` in `.env` supply initial phone settings only in debug builds.
+Release defaults are empty, as with the source credentials. Adding a token does not expand the
+source interpreter's supported graphs: the GlucoseDao CITRAS, INPAINT-CITRAS and NF-TFT exports
+require a full ONNX runtime and different feature layouts. They currently fail phone import.
+See [prediction.md](prediction.md) for the local inference comparison and its restrictions.
 
 ## The phone screen
 

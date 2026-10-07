@@ -1,0 +1,1 @@
+GlucoPhone now runs GlucoseDao ONNX models in the normal release APK. Import a private .env or YAML configuration to set up accounts and download the model. Forecasts use the full model horizon, including 240 minutes for INPAINT-CITRAS.

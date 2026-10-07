@@ -150,11 +150,13 @@ class PhoneLinkTest {
         val bolus = Treatment(now - 3_600_000L, insulin = 3.5, carbs = 40.0)
         val auto = Treatment(now - 1_800_000L, insulin = 0.2, automatic = true)
         val basal = Treatment(now - 900_000L, insulinKind = InsulinKind.BASAL, basalRate = 0.65, durationMinutes = 30.0)
+        val percentTemp = Treatment(now - 300_000L, insulinKind = InsulinKind.BASAL,
+            basalPercent = 130.0, durationMinutes = 60.0, percentOfProfile = true)
         dexcom.put(mapOf(SourceSync.READINGS to CacheFormat.encodeReadings(readings)))
         // The pump's own sensor values never reach the chart; its insulin and IOB do.
         carelink.put(mapOf(
             SourceSync.READINGS to CacheFormat.encodeReadings(listOf(GlucoseReading(now, 240, Trend.Flat))),
-            SourceSync.TREATMENTS to CacheFormat.encodeTreatments(listOf(bolus, auto, basal)),
+            SourceSync.TREATMENTS to CacheFormat.encodeTreatments(listOf(bolus, auto, basal, percentTemp)),
             SourceSync.LOOP to CacheFormat.encodeLoop(LoopStatus(now - 60_000L, iob = 2.4)),
         ))
         val combined = CombinedSourceSync.read(dexcom, listOf(carelink))
@@ -165,8 +167,9 @@ class PhoneLinkTest {
 
         val snapshot = connect(phone) { i, o -> WatchLinkClient(watchId).sync(i, o, key, horizonMinutes = 0) }
         assertEquals(readings, snapshot.readings)
-        assertEquals(listOf(bolus, auto, basal), snapshot.treatments)
-        assertEquals(0.65, snapshot.treatments.single { it.isBasal }.basalRate)
+        assertEquals(listOf(bolus, auto, basal, percentTemp), snapshot.treatments)
+        assertEquals(0.65, snapshot.treatments.single { it.basalRate != null }.basalRate)
+        assertEquals("130%", snapshot.treatments.single { it.percentOfProfile }.basalValue())
         assertEquals(2.4, snapshot.loop?.iob)
         assertEquals("Dexcom Share + CareLink (MiniMed) insulin", snapshot.sourceLabel)
     }
@@ -207,14 +210,16 @@ class PhoneLinkTest {
 
     @Test
     fun `old protocol gets an update message instead of losing basal data silently`() {
-        val error = assertFailsWith<LinkException> {
-            connect(FakePhone()) { i, o ->
-                val link = Frames(i, o)
-                link.send(message { writeInt(1); writeByte(PhoneLink.SYNC); write(watchId) })
-                link.receiveOk()
+        for (version in listOf(1, 2)) {
+            val error = assertFailsWith<LinkException> {
+                connect(FakePhone()) { i, o ->
+                    val link = Frames(i, o)
+                    link.send(message { writeInt(version); writeByte(PhoneLink.SYNC); write(watchId) })
+                    link.receiveOk()
+                }
             }
+            assertTrue("Update both" in error.message!!)
         }
-        assertTrue("Update both" in error.message!!)
     }
 
     @Test

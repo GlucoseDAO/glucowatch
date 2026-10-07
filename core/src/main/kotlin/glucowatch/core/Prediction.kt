@@ -14,18 +14,23 @@ data class Prediction(val modelId: String, val points: List<PredictedPoint>)
 
 /**
  * Plug your own model in by implementing this interface and adding it to [Predictors.all].
- * [history] is sorted oldest first and covers up to the last 24 hours.
+ * [history] is sorted oldest first; the phone can accumulate two weeks.
  * Return null when the model cannot make a forecast (too little data, gaps, ...).
  */
 interface GlucosePredictor {
     val id: String
     val displayName: String
+    val defaultHorizonMinutes: Int get() = 30
     fun predict(history: List<GlucoseReading>, horizonMinutes: Int): Prediction?
 }
 
 /** Registry of available models. The watch app lets the user pick one by [GlucosePredictor.id]. */
 object Predictors {
     val all: List<GlucosePredictor> = listOf(LinearTrendPredictor())
+
+    /** Imported bundles share the ONNX id; their engine is provided by the host's build. */
+    fun imported(contract: GlucoseDaoContract, engine: ForecastEngine): GlucoseDaoPredictor =
+        GlucoseDaoPredictor(contract, engine)
 
     fun byId(id: String): GlucosePredictor = all.firstOrNull { it.id == id } ?: all.first()
 }

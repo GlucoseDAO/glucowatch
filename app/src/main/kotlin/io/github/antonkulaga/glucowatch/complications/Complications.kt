@@ -279,7 +279,7 @@ class PredictionComplicationService : GlucoseComplicationService() {
     override fun build(type: ComplicationType, state: GlucoseState): ComplicationData? {
         val point = state.prediction?.points?.lastOrNull() ?: return NoDataComplicationData()
         val unit = state.settings.unit
-        val minutes = state.settings.horizonMinutes
+        val minutes = state.forecastMinutes
         val value = unit.format(point.mgdl)
         val fromLoop = state.prediction?.modelId == LoopStatus.MODEL_ID
         val description = plain("Forecast $value ${unit.label} in $minutes minutes" + if (fromLoop) ", from the loop" else "")
