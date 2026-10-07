@@ -32,6 +32,7 @@ import glucowatch.core.formatAmount
 import glucowatch.core.lastCarbs
 import glucowatch.core.lastDelta
 import glucowatch.core.lastManualBolus
+import io.github.antonkulaga.glucowatch.R
 import io.github.antonkulaga.glucowatch.chart.ChartRenderer
 import io.github.antonkulaga.glucowatch.data.GlucoseRepository
 import io.github.antonkulaga.glucowatch.data.GlucoseState
@@ -115,56 +116,103 @@ class GlucoseValueComplicationService : GlucoseComplicationService() {
     }
 
     /**
-     * The default face's value block. The number is as large as the left side allows.
-     * The trend arrow sits in a narrower box just to its right, drawn a little squashed,
-     * and stops short of the date.
+     * The reading on the left of the middle band, between the big hour and the big minute.
+     * The trend arrow sits just to the right of the number, drawn a little narrower.
      */
     private fun glucoseImage(state: GlucoseState, number: String, arrow: String, delta: String?, stale: Boolean): Bitmap {
-        // Matches the face slot (450 x 128). The right side stays empty for the date and clock.
-        val width = 540
-        val height = 154
+        // Full face: the in-range wash behind, the reading in the left of the middle band on top of it.
+        val width = 450
+        val height = 450
         val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(bitmap)
-        val latest = state.latest ?: return bitmap
+        canvas.drawBitmap(ChartRenderer.rangeWash(state, width, height), 0f, 0f, null)
+        canvas.save()
+        canvas.translate(22f, 178f)
+        canvas.scale(0.5f, 0.5f)
+        drawGlucoseDigits(canvas, 300f, 192f, state, number, arrow, stale)
+        canvas.restore()
+        drawGlucoseCaption(canvas, state, delta, stale)
+        return bitmap
+    }
+
+    /**
+     * Change and age under the reading, one line each. Drawn on the full face so the type
+     * stays large enough to read; the digit box above is scaled down.
+     */
+    private fun drawGlucoseCaption(canvas: Canvas, state: GlucoseState, delta: String?, stale: Boolean) {
+        val minutes = state.ageMinutes() ?: 0
+        val age = if (minutes < 1) "now" else "${formatAge(minutes)} ago"
+        val change = when {
+            stale -> "OLD DATA"
+            delta != null -> "$delta ${state.settings.unit.label}"
+            else -> null
+        }
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = if (stale) 0xFFF0B000.toInt() else 0xFFD5D8DA.toInt()
+            textAlign = Paint.Align.LEFT
+            typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+            textSize = 26f
+        }
+        val left = 26f
+        val maxWidth = 148f
+        while (paint.textSize > 18f && (
+            (change != null && paint.measureText(change) > maxWidth) || paint.measureText(age) > maxWidth
+        )) {
+            paint.textSize -= 1f
+        }
+        var baseline = 268f
+        if (change != null) {
+            canvas.drawText(change, left, baseline, paint)
+            baseline += paint.textSize + 8f
+        }
+        paint.color = 0xFFD5D8DA.toInt()
+        canvas.drawText(age, left, baseline, paint)
+    }
+
+    /** Digits in a 300 by 192 box. The face scales that box into the left of the middle band. */
+    private fun drawGlucoseDigits(
+        canvas: Canvas, width: Float, height: Float, state: GlucoseState,
+        number: String, arrow: String, stale: Boolean,
+    ) {
+        val latest = state.latest ?: return
         val color = if (stale) 0xFF858989.toInt()
             else ChartRenderer.glanceColorFor(latest.mgdl.toDouble(), state, latest.trend)
         val valuePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             this.color = color
             textAlign = Paint.Align.LEFT
+            typeface = roundedDigits()
+            textSize = 128f
+        }
+        val squash = 0.62f
+        val gap = 4f
+        // The rounded face has no arrow glyphs, so the trend mark stays in the system font.
+        val arrowPaint = Paint(valuePaint).apply {
             typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
         }
-        // Date starts at face x 236, which is bitmap x 283. The arrow ends just before it.
-        val rightLimit = 274f
-        val gap = 6f
-        val squash = 0.62f
-        val arrowPaint = Paint(valuePaint)
-        var size = 108f
-        var valueWidth = 0f
-        var arrowVisual = 0f
+        var size = valuePaint.textSize
+        var valueWidth = valuePaint.measureText(number)
         var rawArrow = 0f
-        var baseline = 108f
-        var leftBound = 72f
-        while (size >= 64f) {
-            valuePaint.textSize = size
-            valueWidth = valuePaint.measureText(number)
-            // Keep the digits in the upper band, level with the date, and stop above the status line.
-            val cap = size * 0.74f
-            baseline = (64f + cap * 0.42f).coerceAtMost(116f)
-            leftBound = circleLeft(baseline - cap)
+        var arrowVisual = 0f
+        fun measureArrow() {
             if (arrow.isEmpty()) {
-                arrowVisual = 0f
                 rawArrow = 0f
+                arrowVisual = 0f
             } else {
-                arrowPaint.textSize = size * 0.9f
+                arrowPaint.textSize = size * 0.72f
                 rawArrow = arrowPaint.measureText(arrow)
                 arrowVisual = rawArrow * squash
             }
-            val used = valueWidth + if (arrow.isEmpty()) 0f else gap + arrowVisual
-            if (leftBound + used <= rightLimit) break
-            size -= 2f
+        }
+        measureArrow()
+        while (size > 64f && valueWidth + (if (arrow.isEmpty()) 0f else gap + arrowVisual) > width - 8f) {
+            size -= 4f
+            valuePaint.textSize = size
+            valueWidth = valuePaint.measureText(number)
+            measureArrow()
         }
         val extras = if (arrow.isEmpty()) 0f else gap + arrowVisual
-        val left = (rightLimit - valueWidth - extras).coerceAtLeast(leftBound)
+        val left = ((width - valueWidth - extras) / 2f).coerceAtLeast(0f)
+        val baseline = height * 0.62f
         canvas.drawText(number, left, baseline, valuePaint)
         if (arrow.isNotEmpty()) {
             val center = left + valueWidth + gap + arrowVisual / 2f
@@ -174,26 +222,16 @@ class GlucoseValueComplicationService : GlucoseComplicationService() {
             canvas.drawText(arrow, center - rawArrow / 2f, arrowBaseline, arrowPaint)
             canvas.restore()
         }
-        val age = "${state.ageMinutes()}m ago"
-        val status = if (stale) "⚠ OLD DATA · 10+ min" else listOfNotNull(delta, age).joinToString("  ·  ")
-        val statusPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            this.color = if (stale) 0xFFF0B000.toInt() else 0xFF9AA3A8.toInt()
-            textAlign = Paint.Align.CENTER
-            typeface = Typeface.create(Typeface.DEFAULT, Typeface.NORMAL)
-            textSize = 26f
-        }
-        canvas.drawText(status, width / 2f, 140f, statusPaint)
-        return bitmap
     }
 
-    /** Left edge of the round face, in this bitmap's x, at a given bitmap y. Keeps the first digit on screen. */
-    private fun circleLeft(bitmapY: Float): Float {
-        val faceY = 36.0 + bitmapY * 128.0 / 154.0
-        val dy = faceY - 225.0
-        val inside = (225.0 * 225.0 - dy * dy).coerceAtLeast(0.0)
-        val faceLeft = 225.0 - kotlin.math.sqrt(inside) + 4.0
-        return (faceLeft * 540.0 / 450.0).toFloat()
+    /** Baloo 2 ExtraBold, the open rounded face used for the reading. */
+    private fun roundedDigits(): Typeface {
+        rounded?.let { return it }
+        val face = Typeface.create(resources.getFont(R.font.baloo2), 800, false)
+        return face.also { rounded = it }
     }
+
+    private var rounded: Typeface? = null
 }
 
 class GlucoseChartComplicationService : GlucoseComplicationService() {
@@ -201,22 +239,32 @@ class GlucoseChartComplicationService : GlucoseComplicationService() {
         val description = plain("Glucose chart, last ${state.settings.chartHours} hours")
         return when (type) {
             ComplicationType.PHOTO_IMAGE -> PhotoImageComplicationData.Builder(
-                pngIcon(ChartRenderer.render(state, CHART_WIDTH, CHART_HEIGHT, edge = true, palette = ChartRenderer.Palette.GLUCOSE_ALL)), description,
+                pngIcon(faceChart(state)), description,
             ).setTapAction(tapAction()).build()
             // Wide chart here too: this is the type the GlucoWatch face uses by default.
             ComplicationType.SMALL_IMAGE -> SmallImageComplicationData.Builder(
-                SmallImage.Builder(pngIcon(ChartRenderer.render(state, CHART_WIDTH, CHART_HEIGHT, edge = true, palette = ChartRenderer.Palette.GLUCOSE_ALL)), SmallImageType.PHOTO).build(),
+                SmallImage.Builder(pngIcon(faceChart(state)), SmallImageType.PHOTO).build(),
                 description,
             ).setTapAction(tapAction()).build()
             else -> null
         }
     }
 
+    /**
+     * The curve and its forecast, drawn on top of the clock. The in-range tint is a separate
+     * layer behind the type. The right side of the plot is the forecast horizon.
+     */
+    private fun faceChart(state: GlucoseState): Bitmap {
+        return ChartRenderer.render(
+            state, CHART_WIDTH, CHART_PLOT_HEIGHT, labels = false, overlay = true,
+        )
+    }
+
     /** PNG keeps the IPC payload small compared to a raw bitmap. */
     companion object {
-        // The face shows this rim to rim in a 450 x 200 slot; 1.2x for a sharp scale-down.
-        const val CHART_WIDTH = 540
-        const val CHART_HEIGHT = 240
+        // The face canvas. One pixel of the bitmap is one pixel of the design, so the line stays thick.
+        const val CHART_WIDTH = 450
+        const val CHART_PLOT_HEIGHT = 450
     }
 }
 

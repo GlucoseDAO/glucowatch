@@ -193,6 +193,8 @@ adb shell am start -n io.github.antonkulaga.glucowatch/.ui.MainActivity
 ```
 
 Run the whole block again after the next code change. You do not create a new virtual watch.
+A watch you wear, including one that should take its readings from the phone, is
+[Debug on a Galaxy Watch](#4-debug-on-a-galaxy-watch).
 
 ## Install from F-Droid
 
@@ -364,32 +366,88 @@ adb shell am start -n io.github.antonkulaga.glucowatch/.ui.SettingsActivity \
 
 (Use `adb -e` for the emulator, `adb -s <ip:port>` for a specific watch.) Release builds ignore these extras.
 
-## 4. Install on a Galaxy Watch
+## 4. Debug on a Galaxy Watch
 
-1. Watch: *Settings → About watch → Software information* → tap **Software version** 5× → Developer options on.
-2. *Settings → Developer options* → **ADB debugging** on, **Wireless debugging** on (watch and PC on the same Wi-Fi).
-3. In *Wireless debugging* tap **Pair new device** and pair from the PC:
-   ```bash
-   adb pair <watch-ip>:<pair-port>      # enter the 6-digit code shown on the watch
-   adb connect <watch-ip>:<port>        # the port shown on the main Wireless debugging screen
-   adb devices                          # the watch should be listed
-   ```
-4. Install both APKs:
-   ```bash
-   adb -s <watch-ip>:<port> install -r app/build/outputs/apk/debug/app-debug.apk
-   adb -s <watch-ip>:<port> install -r watchface/build/outputs/apk/debug/watchface-debug.apk
-   ```
-5. Enter credentials (section 3), then long-press the face → pick **GlucoWatch**. If a slot shows
-   nothing: long-press → *Customize* → tap the slot → pick GlucoWatch *Glucose* / *Glucose chart*.
+This installs the **debug** build (`assembleDebug`) on a watch you wear. The emulator steps above
+do not reach that watch. A debug APK is signed with the debug key. When `.env` contains a Dexcom
+login, a fresh install starts on Share. The debug APK contains that password in plain text: keep
+it on your machine.
 
-You can also use the three complications on any other watch face that has matching slots.
+The app and the face are two packages. Install both, or the face has nothing to draw.
 
-Tip: turn Wireless debugging off again when you are done; it drains the battery.
+### On the watch
+
+1. Settings → About watch → Software information → tap **Software version** 5 times, until Developer options appear.
+2. Settings → Developer options → turn on **ADB debugging** and **Wireless debugging**. The watch and the computer must be on the same Wi-Fi.
+3. Open **Wireless debugging** → **Pair new device** (it may say **Pair device with pairing code**). Leave that screen open.
+4. Write down the IP address, the pairing port, and the 6-digit code.
+5. Go back to the main Wireless debugging screen and write down the port shown there. That is the connection port. It is a different number from the pairing port.
+
+### On the computer
+
+From the repository root. On Windows, `adb` is not always on PATH:
+
+```powershell
+$adb = "$env:LOCALAPPDATA\Android\Sdk\platform-tools\adb.exe"
+& $adb pair 192.168.1.50:37123
+```
+
+Type the 6-digit code when `pair` asks. Then connect with the connection port, and check the list:
+
+```powershell
+& $adb connect 192.168.1.50:41529
+& $adb devices
+```
+
+The watch should appear as `192.168.1.50:41529    device`. An emulator may also be listed, as `emulator-5554`. From here every command uses `-s` and the watch's IP and connection port, so the install goes to the watch.
+
+Build, then install both packages. Replace the IP and port with the ones from `adb devices`:
+
+```powershell
+.\gradlew.bat :app:assembleDebug :watchface:assembleDebug
+& $adb -s 192.168.1.50:41529 install -r app\build\outputs\apk\debug\app-debug.apk
+& $adb -s 192.168.1.50:41529 install -r watchface\build\outputs\apk\debug\watchface-debug.apk
+& $adb -s 192.168.1.50:41529 shell am broadcast -a com.google.android.wearable.app.DEBUG_SURFACE --es operation set-watchface --es watchFaceId io.github.antonkulaga.glucowatch.watchface
+```
+
+Each `install` prints `Success`. The broadcast selects **GlucoWatch face**. If the face does not change, long-press the current face, swipe to **GlucoWatch face**, and tap it. Open **GlucoWatch** once so it refreshes.
+
+On macOS and Linux the same commands use `adb` and forward slashes, and `./gradlew` instead of `.\gradlew.bat`.
+
+If a slot on the face is empty: long-press the face → **Customize** → tap the slot → **Glucose** or **Glucose chart**. The three complications can also sit on another face that has matching slots.
+
+Turn **Wireless debugging** off when you are done. It uses extra battery.
+
+### When install says the version is a downgrade
+
+`INSTALL_FAILED_VERSION_DOWNGRADE` means the watch already has a higher `versionCode` than the APK you are installing. A store copy of 0.1.11 is version 12. A checkout that is still on 0.1.8 is version 9. Android will not replace the newer one. The `-d` flag does not apply: that copy is a release build, not a debug build.
+
+Remove both packages, then run the two `install` lines again:
+
+```powershell
+& $adb -s 192.168.1.50:41529 uninstall io.github.antonkulaga.glucowatch
+& $adb -s 192.168.1.50:41529 uninstall io.github.antonkulaga.glucowatch.watchface
+```
+
+Each `uninstall` prints `Success`. This clears the login and the phone pairing stored on the watch. The debug build writes the Dexcom login from `.env` back in on first open.
+
+### Readings from the phone
+
+Leave the phone's GlucoPhone installed. The watch and that phone have to speak the same link, `PhoneLink.VERSION` in `core/src/main/kotlin/glucowatch/core/link/PhoneLink.kt`. If they do not, the phone answers: "The watch and the phone run different versions of GlucoWatch. Update both." Set `PhoneLink.VERSION` to the phone's version, rebuild `:app:assembleDebug`, and `adb install -r` the watch app again. Replacing GlucoPhone with an older APK from this folder is the same downgrade, and it wipes the phone app you already use.
+
+After an uninstall, pair again. Bluetooth on, the two devices near each other:
+
+1. On the phone, open **GlucoPhone → Watch → Pair a watch**. Allow **Nearby devices** if asked. Leave that screen open.
+2. On the watch, open **GlucoWatch → Settings → Pair with phone**. Allow **Nearby devices** if asked. Leave that screen open.
+3. Both screens show the same 6-digit code. Tap **Codes match** on the watch, and confirm the code on the phone.
+4. In the watch **Settings**, set the source to **Phone app** and tap **Save & test**.
+5. Go back to the watch face. The reading then comes from the phone.
 
 ## Phone app (optional)
 
 Install `phone/` on the phone that the watch is paired with. It needs Bluetooth and no Google
-Play Services. The watch keeps working without it.
+Play Services. The watch keeps working without it. A debug watch that should read from a
+GlucoPhone you already use is under [Debug on a Galaxy Watch](#4-debug-on-a-galaxy-watch).
 
 1. On the phone, open **GlucoWatch**, pick a source (Demo data, Dexcom Share or Nightscout), enter
    the login and tap **Save & test**. Allow **Nearby devices** when asked.

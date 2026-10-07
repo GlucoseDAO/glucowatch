@@ -107,22 +107,38 @@ object ChartRenderer {
      * the whole width, labels sit inside it, and nothing that matters (labels, the latest reading,
      * the forecast) comes closer than 7% to the sides, where the circle cuts the corners off.
      */
+    /** The in-range band for the face, in the same vertical scale as [render] with `overlay`. */
+    fun rangeWash(state: GlucoseState, width: Int, height: Int, now: Long = System.currentTimeMillis()): Bitmap =
+        render(state, width, height, labels = false, overlay = true, washOnly = true, now = now)
+
+    /**
+     * [overlay]: the line the face paints on top of the clock. No grid, labels, or treatment marks.
+     * The right-hand side is always the forecast horizon, so the prediction has a place to land.
+     * [washOnly]: the in-range band alone, which the face paints behind the type.
+     */
     fun render(
         state: GlucoseState, width: Int, height: Int, labels: Boolean = true, edge: Boolean = false,
         palette: Palette = Palette.DARK, now: Long = System.currentTimeMillis(),
+        overlay: Boolean = false,
+        washOnly: Boolean = false,
     ): Bitmap {
         val bmp = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
         val c = Canvas(bmp)
         val s = state.settings
         val forecast = state.prediction?.points.orEmpty()
         val glanceStyle = palette === Palette.GLUCOSE_ALL || palette === Palette.GLUCOSE_LIGHT
-        val inset = if (edge) width * 0.07f else 0f
+        val inset = if (edge && !overlay) width * 0.07f else 0f
 
-        val start = now - s.chartHours * 3_600_000L
-        val end = now + if (forecast.isNotEmpty()) s.horizonMinutes * 60_000L else 10 * 60_000L
+        // The face keeps an hour and a half of history so the forecast is still a clear part of the width.
+        val start = now - if (overlay) 90L * 60_000L else s.chartHours * 3_600_000L
+        val end = now + when {
+            overlay -> s.horizonMinutes * 60_000L
+            forecast.isNotEmpty() -> s.horizonMinutes * 60_000L
+            else -> 10 * 60_000L
+        }
         val visible = state.readings.filter { it.timeMillis in start..end }
         // The glucose-first tiles reserve this short chart for the trajectory and target band.
-        val marks = if (glanceStyle) emptyList() else state.treatments.filter { it.timeMillis in start..end }
+        val marks = if (glanceStyle || overlay) emptyList() else state.treatments.filter { it.timeMillis in start..end }
         val boluses = marks.filter { it.isBolus }
         val basals = marks.filter { it.isBasal }
         val carbs = marks.filter { it.carbs > 0 }
@@ -135,7 +151,7 @@ object ChartRenderer {
         val yMax = max(s.highMgdl + 40.0, (values.maxOrNull() ?: 220.0) + 12).coerceAtMost(401.0)
 
         val textSize = height * 0.12f
-        val stroke = max(2.5f, height / 60f)
+        val stroke = if (overlay) max(4.5f, height * 0.013f) else max(2.5f, height / 60f)
         val dot = stroke * 1.25f
         val font = Typeface.create(Typeface.DEFAULT, Typeface.NORMAL)
         val label = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = palette.label; this.textSize = textSize; typeface = font }
@@ -146,38 +162,57 @@ object ChartRenderer {
         val basalRow = if (basals.isEmpty()) 0f else textSize * 1.25f
         val axisRow = if (labels) textSize * 1.35f else 0f
         val left = when {
-            edge -> 0f
+            overlay || edge -> 0f
             labels -> label.measureText(s.unit.format(s.highMgdl.toDouble())) + textSize * 0.5f
             else -> 2f
         }
-        val right = if (edge) width - inset else width - stroke * 2.5f
-        val plot = RectF(left, carbRow + stroke * 2, right, height - axisRow - bolusRow - basalRow - stroke)
+        val right = when {
+            overlay -> width.toFloat()
+            edge -> width - inset
+            else -> width - stroke * 2.5f
+        }
+        // Inset so the forecast ends inside the circle instead of on the rim.
+        val plot = if (overlay) RectF(width * 0.09f, height * 0.06f, width * 0.91f, height * 0.94f)
+            else RectF(left, carbRow + stroke * 2, right, height - axisRow - bolusRow - basalRow - stroke)
 
         fun x(t: Long) = plot.left + (t - start).toFloat() / (end - start) * plot.width()
         fun y(v: Double) = plot.bottom - ((v - yMin) / (yMax - yMin)).toFloat() * plot.height()
         val yHigh = y(s.highMgdl.toDouble())
         val yLow = y(s.lowMgdl.toDouble())
         val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+        if (washOnly) {
+            // Light gray, kept faint so the band is a tint and the type stays on top of it.
+            paint.color = 0xFFD5D8DA.toInt() and 0x00FFFFFF or 0x28000000
+            c.drawRect(0f, yHigh, width.toFloat(), yLow, paint)
+            return bmp
+        }
 
-        // Hour grid and labels.
-        val grid = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = palette.grid; strokeWidth = max(1f, stroke / 2.5f) }
-        label.textAlign = Paint.Align.CENTER
-        for (h in s.chartHours downTo 1) {
-            val gx = x(now - h * 3_600_000L)
-            c.drawLine(gx, plot.top, gx, plot.bottom, grid)
-            val half = label.measureText("-${h}h") / 2
-            if (labels && gx - half >= inset && gx + half <= width - inset) c.drawText("-${h}h", gx, height - textSize * 0.3f, label)
+        // Hour grid and labels. The face overlay is only the line.
+        if (!overlay) {
+            val grid = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = palette.grid; strokeWidth = max(1f, stroke / 2.5f) }
+            label.textAlign = Paint.Align.CENTER
+            for (h in s.chartHours downTo 1) {
+                val gx = x(now - h * 3_600_000L)
+                c.drawLine(gx, plot.top, gx, plot.bottom, grid)
+                val half = label.measureText("-${h}h") / 2
+                if (labels && gx - half >= inset && gx + half <= width - inset) c.drawText("-${h}h", gx, height - textSize * 0.3f, label)
+            }
         }
 
         // Target range: a faint band with thin dashed edges, labelled on the left.
-        paint.color = palette.band
-        c.drawRect(plot.left, yHigh, plot.right, yLow, paint)
-        val guide = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            style = Paint.Style.STROKE; color = palette.guide; strokeWidth = max(1f, stroke / 2.5f)
-            pathEffect = DashPathEffect(floatArrayOf(stroke * 1.5f, stroke * 1.5f), 0f)
+        // The face paints its own wash behind the type, so the line layer stays clear of it.
+        if (!overlay) {
+            paint.color = palette.band
+            c.drawRect(plot.left, yHigh, plot.right, yLow, paint)
         }
-        c.drawLine(plot.left, yHigh, plot.right, yHigh, guide)
-        c.drawLine(plot.left, yLow, plot.right, yLow, guide)
+        if (!overlay) {
+            val guide = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                style = Paint.Style.STROKE; color = palette.guide; strokeWidth = max(1f, stroke / 2.5f)
+                pathEffect = DashPathEffect(floatArrayOf(stroke * 1.5f, stroke * 1.5f), 0f)
+            }
+            c.drawLine(plot.left, yHigh, plot.right, yHigh, guide)
+            c.drawLine(plot.left, yLow, plot.right, yLow, guide)
+        }
         if (labels && edge) {
             // Inside the plot, just above each guide, on a black outline so the line can pass behind.
             label.textAlign = Paint.Align.LEFT
@@ -195,7 +230,7 @@ object ChartRenderer {
         val last = visible.lastOrNull()
         if (forecast.isNotEmpty() && last != null) {
             val from = PointF(x(last.timeMillis), y(last.mgdl.toDouble()))
-            if (forecast.all { it.lower != null && it.upper != null }) {
+            if (!overlay && forecast.all { it.lower != null && it.upper != null }) {
                 val cone = Path().apply {
                     moveTo(from.x, from.y)
                     forecast.forEach { lineTo(x(it.timeMillis), y(it.upper!!)) }
@@ -227,7 +262,7 @@ object ChartRenderer {
         }
         runs.filter { it.isNotEmpty() }.forEach { run ->
             val line = smooth(run)
-            if (run.size > 1 && !glanceStyle) {
+            if (run.size > 1 && !glanceStyle && !overlay) {
                 val area = Path(line).apply { lineTo(run.last().x, plot.bottom); lineTo(run.first().x, plot.bottom); close() }
                 paint.shader = ComposeShader(
                     glowColors(run, yHigh, yLow, ::bandColor),
@@ -372,9 +407,23 @@ object ChartRenderer {
         }
         if (basals.isNotEmpty()) row(basals, plot.bottom + stroke + bolusRow + basalRow / 2, palette.label) { "B ${it.basalValue().replace(" ", "")}" }
 
-        if (visible.isEmpty()) {
+        if (visible.isEmpty() && !overlay) {
             label.textAlign = Paint.Align.CENTER
             c.drawText("No readings", plot.centerX(), plot.centerY() + textSize * 0.35f, label)
+        }
+        if (overlay) {
+            val point = forecast.lastOrNull()
+            if (point != null) {
+                val caption = "${s.unit.format(point.mgdl)} in ${s.horizonMinutes} min"
+                val captionPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = palette.forecast
+                    textAlign = Paint.Align.CENTER
+                    typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+                    this.textSize = 26f
+                }
+                // In the gap under the stacked time and above the battery.
+                outlined(c, caption, width / 2f, 378f, captionPaint, palette.forecast, 0xFF000000.toInt())
+            }
         }
         return bmp
     }
