@@ -1,0 +1,1 @@
+Check prediction is in the menu under Refresh now. It stores the model's full forecast, and Prediction history lays that forecast over the readings that followed.
