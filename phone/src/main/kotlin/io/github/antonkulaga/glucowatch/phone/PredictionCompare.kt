@@ -6,11 +6,16 @@ import android.graphics.DashPathEffect
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.RectF
+import glucowatch.core.GlucoseHistory
 import glucowatch.core.GlucoseReading
 import glucowatch.core.PredictionCheck
+import kotlin.math.abs
 
 /** One stored forecast (dashed) laid over the readings that landed in its window (solid). */
-fun predictionComparison(check: PredictionCheck, readings: List<GlucoseReading>, width: Int, height: Int): Bitmap {
+fun predictionComparison(
+    check: PredictionCheck, readings: List<GlucoseReading>, width: Int, height: Int,
+    cursorMillis: Long? = null,
+): Bitmap {
     val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
     val canvas = Canvas(bitmap)
     canvas.drawColor(0xFF000000.toInt())
@@ -58,5 +63,20 @@ fun predictionComparison(check: PredictionCheck, readings: List<GlucoseReading>,
         pathEffect = DashPathEffect(floatArrayOf(14f, 10f), 0f)
         strokeCap = Paint.Cap.ROUND
     })
+    cursorMillis?.let { cursor ->
+        val marker = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFF9AA3A8.toInt(); strokeWidth = 2f }
+        canvas.drawLine(x(cursor), plot.top, x(cursor), plot.bottom, marker)
+        val point = points.minByOrNull { abs(it.timeMillis - cursor) }
+        if (point != null) {
+            marker.color = 0xFFA78BDB.toInt()
+            canvas.drawCircle(x(point.timeMillis), y(point.mgdl), 7f, marker)
+        }
+        val actualPoint = actual.minByOrNull { abs(it.timeMillis - cursor) }
+            ?.takeIf { abs(it.timeMillis - cursor) <= GlucoseHistory.GAP_MS }
+        if (actualPoint != null) {
+            marker.color = 0xFFFFFFFF.toInt()
+            canvas.drawCircle(x(actualPoint.timeMillis), y(actualPoint.mgdl.toDouble()), 7f, marker)
+        }
+    }
     return bitmap
 }

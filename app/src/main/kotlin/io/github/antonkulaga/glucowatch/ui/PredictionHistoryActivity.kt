@@ -1,6 +1,7 @@
 package io.github.antonkulaga.glucowatch.ui
 
 import android.app.Activity
+import android.content.Intent
 import android.os.Bundle
 import android.util.TypedValue
 import android.widget.ImageView
@@ -25,22 +26,30 @@ class PredictionHistoryActivity : Activity() {
         }
         val checks = PredictionChecks.load(File(filesDir, PredictionChecks.FILE_NAME)).asReversed()
         val readings = GlucoseRepository(this).state().readings
-        column.addView(caption("White is what happened. Purple dashes are the forecast stored at that time.", small = true))
+        column.addView(caption("White is what happened. Purple dashes are the forecast stored at that time. Tap one to compare.", small = true))
         if (checks.isEmpty()) {
             column.addView(caption("No stored forecasts yet. On the main screen, Check prediction is under Refresh."))
         }
         val stamp = DateTimeFormatter.ofPattern("dd.MM HH:mm").withZone(ZoneId.systemDefault())
         val width = resources.displayMetrics.widthPixels - dp(16)
-        checks.forEach { check ->
+        checks.forEachIndexed { index, check ->
             val end = check.prediction.points.maxOf { it.timeMillis }
             val minutes = ((end - check.savedAt) / 60_000L).coerceAtLeast(0)
-            column.addView(caption("${stamp.format(Instant.ofEpochMilli(check.savedAt))} · ${minutes} min"))
+            val block = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                setOnClickListener {
+                    startActivity(Intent(this@PredictionHistoryActivity, PredictionDetailActivity::class.java)
+                        .putExtra(PredictionDetailActivity.EXTRA_INDEX, index))
+                }
+            }
+            block.addView(caption("${stamp.format(Instant.ofEpochMilli(check.savedAt))} · ${minutes} min"))
             val arrived = readings.any { it.timeMillis in check.savedAt..end }
-            if (!arrived) column.addView(caption("Waiting for readings in this window.", small = true))
-            column.addView(ImageView(this).apply {
+            if (!arrived) block.addView(caption("Waiting for readings in this window.", small = true))
+            block.addView(ImageView(this).apply {
                 setImageBitmap(ChartRenderer.comparison(check, readings, width, dp(110)))
                 setPadding(0, dp(4), 0, dp(12))
             })
+            column.addView(block)
         }
         setContentView(ScrollView(this).apply { addView(column); attachRotary() })
     }

@@ -13,7 +13,9 @@ import glucowatch.core.GlucoseReading
 import glucowatch.core.LoopStatus
 import glucowatch.core.NightscoutAddress
 import glucowatch.core.OnnxPredictor
+import glucowatch.core.ForecastReviewer
 import glucowatch.core.GlucoseDaoPredictor
+import glucowatch.core.HuggingFaceModel
 import glucowatch.core.Prediction
 import glucowatch.core.Predictors
 import glucowatch.core.SourceSync
@@ -95,6 +97,7 @@ class PhoneRepository(context: Context) {
                     val errors = CombinedSourceSync(retainMs = HISTORY_MS, includeProfiles = settings.predictorId == OnnxPredictor.ID)
                         .fetch(if (settings.usesDexcomNotifications) null else selected(settings.source),
                             settings.extras.map(::selected), CHART_HOURS, now)
+                    backfillNotifications(settings, now)
                     store(settings) {
                         putString("error", errors.joinToString("\n").ifEmpty { null })
                         putLong("fetchedAt", now)
@@ -183,7 +186,33 @@ class PhoneRepository(context: Context) {
                 else it.predict(state.readings, minutes)
         }
             .onFailure { Log.w(TAG, "Predictor ${state.settings.predictorId} failed", it) }
-            .getOrNull() }
+            .getOrNull() }?.let(::present)
+    }
+
+    /** The name a stored forecast should keep: the GlucoseDao label when one was imported. */
+    fun present(prediction: Prediction): Prediction {
+        val repo = modelStore.origin?.substringBefore(" ·")?.takeIf { '/' in it }
+        val label = when {
+            prediction.modelId == OnnxPredictor.ID && repo != null -> HuggingFaceModel.choiceLabel(repo)
+            prediction.modelId == OnnxPredictor.ID -> "Imported model"
+            else -> ForecastReviewer.title(prediction.modelId)
+        }
+        return if (label == prediction.modelId) prediction else prediction.copy(modelId = label)
+    }
+
+    /**
+     * G6 notifications only carry the latest value. When a Dexcom login is saved, a hole in that
+     * series is filled from Share, which is where the official app uploads the points it recovered
+     * after the transmitter was out of range. A Share failure leaves the notification points as they are.
+     */
+    private fun backfillNotifications(settings: PhoneSettings, now: Long) {
+        if (!settings.usesDexcomNotifications || settings.username.isBlank() || settings.password.isBlank()) return
+        val source = syncCache(settings)
+        val old = CacheFormat.decodeReadings(source.get(SourceSync.READINGS).orEmpty())
+        if (SourceSync.refetchFrom(old, now) == null) return
+        runCatching {
+            SourceSync(source, retainMs = HISTORY_MS).fetch(settings.account(LinkSource.SHARE, carelink)!!, CHART_HOURS, now)
+        }.onFailure { Log.w(TAG, "Dexcom Share backfill failed", it) }
     }
 
     fun defaultForecastMinutes(state: PhoneState): Int =

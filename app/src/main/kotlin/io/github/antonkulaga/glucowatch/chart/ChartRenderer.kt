@@ -12,6 +12,7 @@ import android.graphics.PorterDuff
 import android.graphics.RectF
 import android.graphics.Shader
 import android.graphics.Typeface
+import glucowatch.core.GlucoseHistory
 import glucowatch.core.GlucoseReading
 import glucowatch.core.PredictionCheck
 import glucowatch.core.Treatment
@@ -133,9 +134,15 @@ object ChartRenderer {
         val inset = if (edge && !overlay) width * 0.07f else 0f
 
         // The face keeps two hours of history so the forecast is still a clear part of the width.
-        val start = now - if (overlay) 120L * 60_000L else s.chartHours * 3_600_000L
+        // The in-app chart follows now, and slides back to the last reading when that window is empty.
+        val historyMs = if (overlay) 120L * 60_000L else s.chartHours * 3_600_000L
+        val liveHasReadings = state.readings.any { it.timeMillis in (now - historyMs)..now }
+        val axisEnd = if (overlay || liveHasReadings) now
+            else state.readings.lastOrNull { it.timeMillis <= now }?.timeMillis ?: now
+        val start = axisEnd - historyMs
         val end = if (overlay) now + s.horizonMinutes * 60_000L
-            else maxOf(now + 10 * 60_000L, forecast.lastOrNull()?.timeMillis ?: now)
+            else if (axisEnd == now) maxOf(now + 10 * 60_000L, forecast.lastOrNull()?.timeMillis ?: now)
+            else axisEnd
         val visible = state.readings.filter { it.timeMillis in start..end }
         // The glucose-first tiles reserve this short chart for the trajectory and target band.
         val marks = if (glanceStyle || overlay) emptyList() else state.treatments.filter { it.timeMillis in start..end }
@@ -192,7 +199,7 @@ object ChartRenderer {
             val grid = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = palette.grid; strokeWidth = max(1f, stroke / 2.5f) }
             label.textAlign = Paint.Align.CENTER
             for (h in s.chartHours downTo 1) {
-                val gx = x(now - h * 3_600_000L)
+                val gx = x(axisEnd - h * 3_600_000L)
                 c.drawLine(gx, plot.top, gx, plot.bottom, grid)
                 val half = label.measureText("-${h}h") / 2
                 if (labels && gx - half >= inset && gx + half <= width - inset) c.drawText("-${h}h", gx, height - textSize * 0.3f, label)
@@ -495,7 +502,10 @@ object ChartRenderer {
      * One stored forecast (dashed) laid over the readings that landed in its window (solid).
      * The window runs from the moment the forecast was stored to its last point.
      */
-    fun comparison(check: PredictionCheck, readings: List<GlucoseReading>, width: Int, height: Int): Bitmap {
+    fun comparison(
+        check: PredictionCheck, readings: List<GlucoseReading>, width: Int, height: Int,
+        cursorMillis: Long? = null,
+    ): Bitmap {
         val bmp = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
         val c = Canvas(bmp)
         c.drawColor(0xFF000000.toInt())
@@ -543,6 +553,21 @@ object ChartRenderer {
             pathEffect = DashPathEffect(floatArrayOf(10f, 8f), 0f)
             strokeCap = Paint.Cap.ROUND
         })
+        cursorMillis?.let { cursor ->
+            val marker = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFF9AA3A8.toInt(); strokeWidth = 2f }
+            c.drawLine(x(cursor), plot.top, x(cursor), plot.bottom, marker)
+            val point = points.minByOrNull { abs(it.timeMillis - cursor) }
+            if (point != null) {
+                marker.color = 0xFFA78BDB.toInt()
+                c.drawCircle(x(point.timeMillis), y(point.mgdl), 5f, marker)
+            }
+            val actualPoint = actual.minByOrNull { abs(it.timeMillis - cursor) }
+                ?.takeIf { abs(it.timeMillis - cursor) <= GlucoseHistory.GAP_MS }
+            if (actualPoint != null) {
+                marker.color = 0xFFFFFFFF.toInt()
+                c.drawCircle(x(actualPoint.timeMillis), y(actualPoint.mgdl.toDouble()), 5f, marker)
+            }
+        }
         return bmp
     }
 

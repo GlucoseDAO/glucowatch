@@ -57,6 +57,9 @@
         <activity
             android:name=".ui.PredictionHistoryActivity"
             android:exported="false" />
+        <activity
+            android:name=".ui.PredictionDetailActivity"
+            android:exported="false" />
 
         <receiver
             android:name=".data.RefreshReceiver"

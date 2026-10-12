@@ -54,8 +54,9 @@ class SourceSync(
 
     private fun fetchShare(account: SourceAccount.Share, now: Long) {
         val old = CacheFormat.decodeReadings(cache.get(READINGS).orEmpty())
-        val since = old.lastOrNull()?.timeMillis
-        // Full day on first run, afterwards only what is new (plus a margin for late uploads).
+        val since = refetchFrom(old, now) ?: old.lastOrNull()?.timeMillis
+        // Full day on first run. Later, from the last reading, or from before a hole so a
+        // transmitter outage that Dexcom fills in afterwards shows up on the chart.
         val minutes = if (since == null) DexcomShareClient.MAX_MINUTES
         else (((now - since) / 60_000) + 15).toInt().coerceIn(15, DexcomShareClient.MAX_MINUTES)
         val maxCount = (minutes / 5 + 2).coerceAtMost(DexcomShareClient.MAX_COUNT)
@@ -79,7 +80,8 @@ class SourceSync(
         try {
             if (glucose) {
                 val old = CacheFormat.decodeReadings(cache.get(READINGS).orEmpty())
-                val since = old.lastOrNull()?.timeMillis?.minus(15 * 60_000L) ?: (now - firstRunMs())
+                val anchor = refetchFrom(old, now) ?: old.lastOrNull()?.timeMillis
+                val since = anchor?.minus(15 * 60_000L) ?: (now - firstRunMs())
                 val readings = merge(old, client.readings(since), now, retainMs)
                 cache.put(mapOf(READINGS to CacheFormat.encodeReadings(readings)))
             }
@@ -161,6 +163,24 @@ class SourceSync(
         private const val CARELINK_SESSION = "carelink:session"
         const val DAY_MS = 24 * 3_600_000L
         private const val NIGHTSCOUT_BACKFILL_MS = 5 * DAY_MS
+
+        /**
+         * Where to ask again from when the cache has a hole, or the newest reading has fallen
+         * behind [now] by more than one sample. Null when the series is empty or continuous:
+         * an empty cache is a first run, and a history that simply does not start at the
+         * beginning of the retain window is not a hole.
+         */
+        fun refetchFrom(readings: List<GlucoseReading>, now: Long): Long? {
+            val times = readings.map { it.timeMillis }.filter { it <= now }.distinct().sorted()
+            if (times.isEmpty()) return null
+            var previous = times.first()
+            for (time in times.drop(1)) {
+                if (time - previous > GlucoseHistory.GAP_MS) return previous
+                previous = time
+            }
+            if (now - previous > GlucoseHistory.GAP_MS) return previous
+            return null
+        }
 
         /** One reading per timestamp, newest data wins, nothing older than [retainMs]. */
         fun merge(old: List<GlucoseReading>, fresh: List<GlucoseReading>, now: Long, retainMs: Long = DAY_MS) =

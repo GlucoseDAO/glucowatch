@@ -1219,7 +1219,7 @@ class MainActivity : Activity() {
         scope.launch {
             val state = repository.state()
             val minutes = repository.defaultForecastMinutes(state)
-            val prediction = repository.forecast(state, minutes) ?: chart.forecast
+            val prediction = (repository.forecast(state, minutes) ?: chart.forecast?.let(repository::present))
             val message = if (prediction == null || prediction.points.isEmpty()) {
                 "No forecast to store. Pick a model, then check."
             } else {

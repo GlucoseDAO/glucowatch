@@ -45,6 +45,27 @@ class SourceSyncTest {
     }
 
     @Test
+    fun `share asks back across a hole instead of only past the newest reading`() {
+        val now = 1_745_000_000_000L
+        val minutes = mutableListOf<String>()
+        val transport = HttpTransport { request ->
+            when {
+                "AuthenticatePublisherAccount" in request.url -> HttpResponse(200, "\"11111111-2222-3333-4444-555555555555\"")
+                "LoginPublisherAccountById" in request.url -> HttpResponse(200, "\"66666666-7777-8888-9999-000000000000\"")
+                else -> {
+                    minutes += request.url.substringAfter("minutes=").substringBefore("&")
+                    HttpResponse(200, listOf(reading(now - 2 * 3_600_000, 90), reading(now - 5 * 60_000, 110)).joinToString(",", "[", "]"))
+                }
+            }
+        }
+        val sync = SourceSync(MapCache(), transport)
+        val account = SourceAccount.Share(Region.OUS, "user", "pass")
+        sync.fetch(account, chartHours = 3, now = now)
+        sync.fetch(account, chartHours = 3, now = now)
+        assertTrue(minutes[1].toInt() > 100)
+    }
+
+    @Test
     fun `forecast cache format round-trips`() {
         val p = Prediction("phone", listOf(PredictedPoint(1, 100.5, 90.0, 110.0), PredictedPoint(2, 101.0)))
         assertEquals(p, CacheFormat.decodePrediction(CacheFormat.encodePrediction(p)))

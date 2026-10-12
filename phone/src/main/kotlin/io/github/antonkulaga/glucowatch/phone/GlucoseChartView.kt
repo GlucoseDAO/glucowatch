@@ -206,16 +206,27 @@ class GlucoseChartView(context: Context) : View(context) {
     }
 
     private fun windowEnd(now: Long) = endMs ?: now
+
+    /** Live view ends at the last reading when nothing in the current window has arrived yet. */
+    private fun drawnEnd(now: Long): Long {
+        val end = windowEnd(now)
+        if (endMs != null) return end
+        if (readings.any { it.timeMillis in (now - windowMs)..now }) return now
+        return readings.lastOrNull { it.timeMillis <= now }?.timeMillis ?: now
+    }
+
     private fun timeAt(x: Float): Long {
         val now = System.currentTimeMillis()
         val end = plotEnd(now)
-        val start = windowEnd(now) - windowMs
+        val start = drawnEnd(now) - windowMs
         return start + ((x - plotLeft) / (plotRight - plotLeft) * (end - start)).toLong()
     }
 
     /** Following now, the plot runs on past it to fit the forecast; in history it ends at the window. */
-    private fun plotEnd(now: Long) =
-        if (live) maxOf(now + 10 * 60_000L, forecast?.points?.lastOrNull()?.timeMillis ?: now) else windowEnd(now)
+    private fun plotEnd(now: Long): Long {
+        val end = drawnEnd(now)
+        return if (live && end == now) maxOf(now + 10 * 60_000L, forecast?.points?.lastOrNull()?.timeMillis ?: now) else end
+    }
 
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
         // The chart is what this screen is for, so it takes the height the screen can spare.
@@ -230,7 +241,7 @@ class GlucoseChartView(context: Context) : View(context) {
         val left = plotLeft
         val right = plotRight
         val now = System.currentTimeMillis()
-        val start = windowEnd(now) - windowMs
+        val start = drawnEnd(now) - windowMs
         val end = plotEnd(now)
         val hasBasal = treatments.any { it.isBasal && it.timeMillis in start..end }
         val top = dp(if (hasBasal) 40f else 22f)

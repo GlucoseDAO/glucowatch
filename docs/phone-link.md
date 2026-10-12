@@ -43,11 +43,11 @@ numeric reading and unsupported layouts are rejected. Image-only arrows remain u
 The parser does not extract numbers from arbitrary alarm prose or infer glucose from thresholds.
 Only one G6 package is accepted at a time; changing sources clears that package binding.
 
-History accumulates while enabled; there is no backfill. Timestamps are Android's notification
+History accumulates while enabled. Notifications themselves are not replayed: timestamps are Android's notification
 post times, **not guaranteed sensor times**. Reconnecting the listener does not import existing
 notifications or mark them fresh. Old/future posts and callbacks within a minute of the previous
 sample are rejected. A G6 app that republishes stale glucose with a new post time cannot always be
-detected, so the official G6 app remains the reference. After ten minutes without a readable
+detected, so the official G6 app remains the reference. When a Dexcom username and password are saved, a hole in this series is filled from Share on the next fetch: that is the history the official app uploads after the transmitter was out of range. Share failing does not remove the notification points. After ten minutes without a readable
 update, the phone reports that notification data is stale. Source switches change the watch's
 upstream identity. The phone either carries glucose history into the new source or clears it,
 according to the user's choice; late callbacks cannot write into another source.
