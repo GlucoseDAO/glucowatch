@@ -185,8 +185,8 @@ This is the watch install. Obtainium stays on the phone and does not send anythi
    in Wear Installer 2's port field. This is different from the pairing port in the previous step.
 7. In Wear Installer 2, choose **Custom APK**, select `glucowatch-<version>.apk` from Downloads,
    and tap **Install**. Repeat for `glucowatch-watchface-<version>.apk`.
-8. Open **GlucoWatch** on the watch. Turn off **Wireless debugging** and **ADB debugging**.
-   Debug mode is only for this install. The apps stay after you turn it off.
+8. Open **GlucoWatch** on the watch, then turn debugging off, as in
+   [Each watch update](#each-watch-update). The apps stay installed.
 
 If pairing or installation fails, follow the installer's
 [Wear OS 4+ help](https://freepoc.org/wear-installer-2-help-page/).
@@ -202,19 +202,45 @@ Swipe through the watch's tiles → **Add tiles** and choose **Glucose**, **Gluc
 or **Glucose (light)**. For heart rate, grant access when the face asks, and tap
 **Allow heart rate** in GlucoWatch → Settings for the tiles.
 
+### Each watch update
+
+Do this every time the watch should match a new GlucoPhone release. Debugging is only
+for the few minutes Wear Installer is sending the files. Leave it on and the watch
+uses more battery. The glucose app does not need it afterwards.
+
+1. On the phone, open the [latest release](https://github.com/GlucoseDAO/glucowatch/releases/latest),
+   expand **Assets**, and download `glucowatch-<version>.apk` and
+   `glucowatch-watchface-<version>.apk` into **Downloads**. Use the same version Obtainium
+   just installed for GlucoPhone.
+2. Put the phone and the watch on the same Wi-Fi network.
+3. On the watch, open **Settings → Developer options**. Turn on **ADB debugging**, then
+   **Wireless debugging**. The first time, Developer options is hidden: on a Galaxy Watch,
+   open **Settings → About watch → Software information** and tap **Software version**
+   until it appears. On other watches, tap **Build number** under
+   **Settings → System → About → Versions**.
+4. Open **Wireless debugging** and note the IP address. In Wear Installer 2, enter that
+   address and tap **Done**. If the watch is not paired with Wear Installer yet, use the
+   menu → **Pair with watch** → **Enable**, tap **Pair new device** on the watch, and enter
+   the six-digit code, a space, and the pairing port. Then go back to the main Wireless
+   debugging screen and enter its **connection port** in Wear Installer. That port is a
+   different number from the pairing port, and it can change every time you turn
+   debugging on.
+5. In Wear Installer 2, choose **Custom APK**, select `glucowatch-<version>.apk`, and tap
+   **Install**. Repeat for `glucowatch-watchface-<version>.apk`. Install both. Do not
+   uninstall the copies already on the watch, unless the watch still has a test build
+   from a computer. That case is [Leave a debug install](#leave-a-debug-install-before-the-release).
+6. Open **GlucoWatch** once so the face can refresh.
+7. Turn off **Wireless debugging**, then **ADB debugging**. The new apps stay. Battery
+   use goes back to normal.
+
 ### Updating later
 
 Obtainium checks for GlucoPhone updates. Open its entry and install the update.
 Do not uninstall GlucoPhone first. Uninstall only when a debug copy is in the way,
 as in [Leave a debug install](#leave-a-debug-install-before-the-release).
 
-For the watch, download the newer app and face files from that same release and repeat
-**Custom APK → Install** in Wear Installer 2. Turn debug mode on for the install and off
-when both files have installed. Do not uninstall the watch apps first, unless the copy
-on the watch is still the debug one from a computer.
-
-Update all three together, the phone app and both watch files, from one release.
-The watch's Wi-Fi address and connection port can change each time you turn debugging on.
+Then do [Each watch update](#each-watch-update) with the two watch files from that same
+release. Update the phone and both watch files together.
 
 If you prefer a computer, use the [adb installation instructions](#install-the-watch-from-a-computer).
 The phone app has not been submitted to F-Droid. Links to the watch and face submissions
