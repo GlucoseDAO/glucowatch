@@ -58,4 +58,31 @@ class GlucoseDaoPredictorTest {
         assertNotNull(model.predict(history,listOf(Treatment(at,insulin=2.0)),30))
         assertEquals("Partial pump history · using available events",model.lastProblem)
     }
+    @Test fun `dual-mode metadata keeps carbohydrate grams and withholds them after the origin`() {
+        val parsed = GlucoseDaoContract.parse("""
+            {"version":2,"family_kind":"inpaint_bicitras","step_minutes":5,"input_steps":2880,"horizon_steps":48,
+             "gap_start":1440,"output":"glucose_mgdl","inputs":[{"name":"x_features"}],
+             "channels":["glucose_div100","glucose_observed","log1p_basal","basal_observed","log1p_bolus","bolus_observed","hidden","real_slot","carbs_div100","meal_known"]}
+        """.trimIndent())
+        assertEquals("CITRAS-FM", parsed.displayName)
+        assertEquals("INPAINT-CITRAS", contract.displayName)
+        val narrow = parsed.copy(inputSteps = 24, horizonSteps = 6, gapStart = 12)
+        val model = GlucoseDaoPredictor(narrow, object : ForecastEngine {
+            override fun run(inputs: Map<String, ForecastTensor>, output: String) = FloatArray(24) { 125f }
+            override fun close() {}
+        })
+        val history = history()
+        val at = history.last().timeMillis
+        val therapy = ForecastTherapy(listOf(TherapyRange(history.first().timeMillis, at)))
+        val input = model.inputs(history, listOf(Treatment(at, carbs = 40.0)), therapy).getValue("x_features")
+        assertEquals(longArrayOf(1, 24, 10).toList(), input.shape.toList())
+        assertEquals(0.4f, input.values[11 * 10 + 8])
+        assertEquals(1f, input.values[11 * 10 + 9])
+        assertEquals(0f, input.values[5 * 10 + 8])
+        assertEquals(1f, input.values[5 * 10 + 9])
+        assertEquals(1f, input.values[12 * 10 + 6])
+        assertEquals(0f, input.values[12 * 10 + 8])
+        assertEquals(0f, input.values[12 * 10 + 9])
+        assertEquals(6, assertNotNull(model.predict(history, listOf(Treatment(at, carbs = 40.0)), 30)).points.size)
+    }
 }

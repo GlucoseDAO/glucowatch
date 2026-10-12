@@ -35,8 +35,13 @@ REPOS = (
     "GlucoseDao/CITRAS-full-1e-4-cov-lossmard-ctx864-futureallchannels-fdrop0-upperbound-mv1-s42",
     "GlucoseDao/INPAINT-CITRAS-120h_past-116h_post-one_sensor_wear-bidirectional_attention-full_finetune-s42",
     "GlucoseDao/NF-TFT-lossmard-ctx576-futurecarbs-fdrop0-refit-mv1-s42",
+    "GlucoseDao/DUAL_MODE-CITRAS-FM-W38.7-120h_past-116h_post-threemodes-hybridrefiner-ilet10-s43",
 )
-NAMES = ("CITRAS (future withheld)", "INPAINT-CITRAS (forward)", "NF-TFT (future withheld)")
+NAMES = ("CITRAS (future withheld)", "INPAINT-CITRAS (forward)", "NF-TFT (future withheld)", "CITRAS-FM W38.7 (forward)")
+BUNDLE_FILES = (
+    "onnx/onnx_meta.json", "onnx/scalers.json", "onnx/model.onnx", "onnx/example_inputs.npz",
+    "onnx_meta.json", "scalers.json", "model.onnx", "example_inputs.npz",
+)
 STEP_MS = 300_000
 HORIZONS = (30, 60, 90, 120)
 MAX_DOWNLOAD = 128 * 1024 * 1024
@@ -100,7 +105,7 @@ def bundles(cache: Path, token: str, offline: bool) -> list[dict]:
                         existing.unlink()
             info_path.write_text(json.dumps(info, indent=2))
         info = json.loads(info_path.read_text())
-        for name in ("onnx/onnx_meta.json", "onnx/scalers.json", "onnx/model.onnx", "onnx/example_inputs.npz"):
+        for name in BUNDLE_FILES:
             if name not in {f["rfilename"] for f in info["siblings"]}:
                 continue
             local = folder / Path(name).name
@@ -153,6 +158,23 @@ def inputs_for(model: dict, history: np.ndarray, nf_impute: bool = False,
         first_seen = np.flatnonzero(seen)
         if first_seen.size:
             x[0, first_seen[0]:, 7] = 1
+        names = list(meta["channels"])
+        if "carbs_div100" in names or "meal_known" in names:
+            carbs = cov[-past:, 2]
+            known = np.isfinite(carbs) & (carbs >= 0)
+            if "meal_known" in names:
+                x[0, :past, names.index("meal_known")] = known
+            if "carbs_div100" in names:
+                x[0, :past, names.index("carbs_div100")] = np.where(known & (carbs > 0), carbs / 100, 0)
+            if future is not None:
+                vals = future[:, 2]
+                known_future = np.isfinite(vals) & (vals >= 0)
+                span = len(vals)
+                if "meal_known" in names:
+                    x[0, past:past + span, names.index("meal_known")] = known_future
+                if "carbs_div100" in names:
+                    x[0, past:past + span, names.index("carbs_div100")] = np.where(
+                        known_future & (vals > 0), vals / 100, 0)
         return {meta["inputs"][0]["name"]: x}
     raw = np.column_stack([history, cov])[-meta["input_steps"]:]
     x = np.full((1, meta["input_steps"], len(meta["channels"])), np.nan, dtype=np.float32)
@@ -352,7 +374,7 @@ def evaluate(models: list[dict], entries: Path, cache: Path, args) -> dict:
         eligible = [eligible[i] for i in np.linspace(0, len(eligible)-1, args.max_origins, dtype=int)]
     model_names = list(NAMES)
     if args.future_covariates == "oracle":
-        model_names = ["CITRAS (oracle pump)", "INPAINT-CITRAS (oracle pump)", "NF-TFT (oracle pump)"]
+        model_names = ["CITRAS (oracle pump)", "INPAINT-CITRAS (oracle pump)", "NF-TFT (oracle pump)", "CITRAS-FM W38.7 (oracle pump)"]
     if args.nf_history_zero_imputed:
         model_names[2] = "NF-TFT (history zero-imputed)"
     names = model_names + ["Persistence", "Linear trend"]

@@ -70,6 +70,24 @@ class InputContractTest(unittest.TestCase):
         np.testing.assert_array_equal(features[0,:12,5],1)
         np.testing.assert_array_equal(features[0,12:,:6],0)
 
+    def test_dual_mode_carbs_are_grams_over_100_and_withheld_after_origin(self):
+        channels = ["glucose_div100", "glucose_observed", "log1p_basal", "basal_observed",
+                    "log1p_bolus", "bolus_observed", "hidden", "real_slot", "carbs_div100", "meal_known"]
+        model = dict(meta=dict(task="inpaint", gap_start=12, input_steps=24, channels=channels,
+                               inputs=[dict(name="x_features")]))
+        history = np.full(12, 100, dtype=np.float32)
+        cov = np.full((12, 3), np.nan, dtype=np.float32)
+        cov[5, 2] = 0
+        cov[-1, 2] = 40
+        features = inputs_for(model, history, covariates=cov)["x_features"]
+        self.assertAlmostEqual(float(features[0, 11, 8]), 0.4)
+        self.assertEqual(float(features[0, 11, 9]), 1)
+        self.assertEqual(float(features[0, 5, 8]), 0)
+        self.assertEqual(float(features[0, 5, 9]), 1)
+        self.assertEqual(float(features[0, 0, 9]), 0)
+        np.testing.assert_array_equal(features[0, 12:, 8:], 0)
+        np.testing.assert_array_equal(features[0, 12:, 6], 1)
+
     def test_causal_carry_forward_has_a_limit_and_does_not_fill_pre_history(self):
         values=np.array([np.nan,100,np.nan,np.nan,np.nan,110],dtype=np.float32)
         np.testing.assert_array_equal(fill_causal(values,2),[np.nan,100,100,100,np.nan,110])

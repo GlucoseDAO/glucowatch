@@ -2,8 +2,10 @@
 
 The phone’s Model tab saves a Hugging Face model name and optional access token privately.
 Enter `owner/repo`, paste a repo/file/tree URL, or search by a short name such as `citras`.
-Search returns a repository chooser, then the ONNX files. The three GlucoseDao shortcuts
-avoid typing their long repository names. Imports pin the graph and its adjacent
+Search returns a repository chooser, then the ONNX files. **GlucoseDao models** on the
+Model tab reads that owner's Hugging Face listing and shows every repository that contains
+an ONNX file, newest first, under a short name. Tap the name, then tap the file. The
+written list below is what each of those names is. Imports pin the graph and its adjacent
 `onnx_meta.json` / `scalers.json` to the same Hub commit. Validation runs before replacing
 the previous model. Tokens authenticate HTTPS requests to huggingface.co only; they never
 follow a storage redirect, enter the phone link, or accompany glucose uploads. There are no
@@ -15,7 +17,7 @@ from a file or URL, save credentials and automatically download/select the suppl
 ## Phone and watch runtimes
 
 The normal GlucoPhone release APK includes ONNX Runtime Android 1.28.0 (MIT licensed)
-from Maven Central. It runs all three GlucoseDao exports locally, including on x86_64
+from Maven Central. It runs the GlucoseDao exports below locally, including on x86_64
 emulators. Import your private configuration on Connect; no separate development APK
 is needed. Imports allow up to 128 MiB and fetch preprocessing sidecars automatically.
 The shared adapter is in `onnx-inference/`; feature preparation and predictors are
@@ -42,16 +44,35 @@ has been made. Developer screenshot/configuration extras stay out of release bui
 
 | Export | Past context | Inputs |
 |---|---|---|
+| Linear trend | 20 min | Glucose only. Built in; no download |
 | CITRAS upper bound | 72 h | Glucose, basal, bolus, carbs, persisted scalers |
 | INPAINT-CITRAS | 120 h | Eight glucose/basal/bolus value and availability features; **no carb channel** |
 | NF-TFT | 48 h | Glucose, basal, bolus, carbs, persisted min-max scalers |
+| CITRAS-FM W38.7 | 120 h | Ten features: the eight above, plus carbs/100 and a meal-known mask |
 
 The display uses **the model's maximum horizon** on both phone and watch, including the
 forecast metric and complications. CITRAS and NF-TFT export 24 five-minute future steps
-(120 minutes). This INPAINT bundle declares a 48-step gap, so the app shows all 48 steps
+(120 minutes). INPAINT-CITRAS and CITRAS-FM declare a 48-step gap, so the app shows all 48 steps
 (240 minutes). Small dense imports use their output length up to 120 minutes; the built-in
 linear trend keeps its 30-minute phone default. The comparison below evaluates the common
 first 120 minutes; its scores do not establish accuracy at 240 minutes.
+
+## Accessible models
+
+The watch and phone open on **Linear trend** (`linear`) until another forecast is chosen.
+A GlucoseDao import is selected on the phone's Model tab, or by `prediction.model` in a
+configuration import. The phone pins whatever commit `main` names at download time.
+Revisions below are the `main` commits read on 2026-10-12. Pasting `owner/repo@revision`
+keeps that commit. W38.2 and W34.2 use the same ten-channel contract as W38.7, so the
+GlucoseDao list offers all three.
+
+- **Linear trend** — id `linear`. Least-squares line through the last 20 minutes. This is the forecast that runs with no imported model.
+- **CITRAS** — `GlucoseDao/CITRAS-full-1e-4-cov-lossmard-ctx864-futureallchannels-fdrop0-upperbound-mv1-s42`, revision `267db866277860b81d9f53229de7547c9557d0eb`. Published 2026-09-19, files last updated 2026-10-03. Forecast export with persisted scalers. The live app withholds future glucose, insulin and carbs. Shortcut name: CITRAS.
+- **INPAINT-CITRAS** — `GlucoseDao/INPAINT-CITRAS-120h_past-116h_post-one_sensor_wear-bidirectional_attention-full_finetune-s42`, revision `f3a164774eff5c49f6743e410de0ef32a72502d5`. Published 2026-09-29, files last updated 2026-10-03. Eight-channel gap model, no carbohydrate input. The phone runs it forward: nothing after the latest reading is shown to the graph. This was the model named in `config.example.yaml` before W38.7. Shortcut name: INPAINT-CITRAS.
+- **NF-TFT** — `GlucoseDao/NF-TFT-lossmard-ctx576-futurecarbs-fdrop0-refit-mv1-s42`, revision `2934223c9ff80c06f18e858de81a143597e3e3ad`. Published 2026-09-29, files last updated 2026-10-03. Refit TFT with persisted min-max scalers. Missing pump channels stay missing. Shortcut name: NF-TFT.
+- **CITRAS-FM W38.7** — `GlucoseDao/DUAL_MODE-CITRAS-FM-W38.7-120h_past-116h_post-threemodes-hybridrefiner-ilet10-s43`, revision `063cd7d6236e0a57bb72d3eb8d7f0e67a074b9e2`. Published 2026-10-08 22:13:37 UTC, files last updated 22:23:50 UTC. Continued from W37.3b (CITRAS-FM plus a trained refiner head) at seed 43 on 65% MetaboNet, 10% iLet and 25% AI-READI, backbone learning rate 1e-5 and head learning rate 3e-4, early stopping off for 24,000 updates. Same weights do inpainting, strict forward forecasting, and forward forecasting with announced carbohydrates. The phone uses strict forward: past glucose and pump events, including carbohydrate grams, and no observations after the origin. `config.example.yaml` selects this repo, and it is the newest row in GlucoseDao models. On the corrected iLet pair its strict-forward MARD is 18.55 and its announced-carb MARD is 18.41, the best forecast of the three siblings, with inpainting MARD 7.35. Those figures are internal single-seed readings, not a live-board score, and the iLet people were seen in other periods.
+- **CITRAS-FM W38.2** — `GlucoseDao/DUAL_MODE-CITRAS-FM-W38.2-120h_past-116h_post-threemodes-threesource-ilet3-s42`, revision `9e91079d4ffde483c33e392f009ac6a274fef717`. Published 2026-10-08 22:13:36 UTC, one second before W38.7; files last updated 22:22:59 UTC. Continued from W37.2, a plain CITRAS-FM, at seed 42 on 72% MetaboNet, 3% iLet and 25% AI-READI, learning rate 1e-5. Best inpainting of the three (MARD 7.21) and within noise of W38.7 when both jobs are weighted equally. It appears in GlucoseDao models as CITRAS-FM W38.2. Sugar Sugar's scoring registers this bundle next to W38.7.
+- **CITRAS-FM W34.2** — `GlucoseDao/DUAL_MODE-CITRAS-FM-W34.2-120h_past-116h_post-jointmask-carbgrams-s42`, revision `3b151c5d8d0b78221dede6ba2875333c50d6815b`. Published 2026-10-08 22:13:35 UTC; files last updated 22:24:38 UTC. MetaboNet only, so its iLet score is the unseen-person reading (strict-forward MARD 18.86, inpainting 8.71). Same ten-channel ONNX contract. It appears in GlucoseDao models as CITRAS-FM W34.2.
 
 Basal uses U/h, bolus uses U per five-minute bin, and carbs use g per bin. Delivered basal
 pulses in U are multiplied by 12. Nightscout schedules respect their version/effective time

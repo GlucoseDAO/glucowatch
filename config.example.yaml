@@ -20,7 +20,7 @@ carelink:
   # refresh_token: "..."
   # expires_at: 1791060000000  # epoch milliseconds
 prediction:
-  model: "GlucoseDao/INPAINT-CITRAS-120h_past-116h_post-one_sensor_wear-bidirectional_attention-full_finetune-s42"
+  model: "GlucoseDao/DUAL_MODE-CITRAS-FM-W38.7-120h_past-116h_post-threemodes-hybridrefiner-ilet10-s43"
   hf_token: ""
 # For Nightscout, use source: nightscout and also_from: [] for that person's pump.
 # nightscout:

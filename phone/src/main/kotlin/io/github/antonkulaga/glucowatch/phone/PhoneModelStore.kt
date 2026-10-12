@@ -52,6 +52,10 @@ class PhoneModelStore(context: Context) {
         HuggingFaceModel.parseSearchResults(read(URL(HuggingFaceModel.searchUrl(query)), token).toString(Charsets.UTF_8))
     }
 
+    suspend fun listOrganization(owner: String, token: String = ""): List<HuggingFaceModel> = withContext(Dispatchers.IO) {
+        HuggingFaceModel.parseOrganization(read(URL(HuggingFaceModel.organizationUrl(owner)), token).toString(Charsets.UTF_8))
+    }
+
     suspend fun importHuggingFace(model: HuggingFaceModel, file: String, token: String = ""): String = withContext(Dispatchers.IO) {
         // Pin model and preprocessing files to one commit, even if main moves during the download.
         val info = read(URL(model.listingUrl), token).toString(Charsets.UTF_8)

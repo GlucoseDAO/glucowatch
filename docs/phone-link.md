@@ -186,7 +186,7 @@ because the phone relays the loop status.
 
 `HF_TOKEN` and `HF_MODEL_ADDRESS` in `.env` supply initial phone settings only in debug builds.
 Release defaults are empty, as with the source credentials. Adding a token does not expand the
-source interpreter's supported graphs: the GlucoseDao CITRAS, INPAINT-CITRAS and NF-TFT exports
+source interpreter's supported graphs: the GlucoseDao CITRAS, INPAINT-CITRAS, NF-TFT and CITRAS-FM exports
 require a full ONNX runtime and different feature layouts. They currently fail phone import.
 See [prediction.md](prediction.md) for the local inference comparison and its restrictions.
 

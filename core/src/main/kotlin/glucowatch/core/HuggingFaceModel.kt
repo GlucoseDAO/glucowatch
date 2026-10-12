@@ -64,6 +64,26 @@ data class HuggingFaceModel(
             return "$HOST/api/models?search=${URLEncoder.encode(text, "UTF-8")}&limit=20"
         }
 
+        /** One owner's repositories. The caller still sends the token only to huggingface.co. */
+        fun organizationUrl(owner: String): String {
+            require(NAME.matches(owner)) { "'$owner' is not a Hugging Face owner" }
+            return "$HOST/api/models?author=${URLEncoder.encode(owner, "UTF-8")}&limit=100"
+        }
+
+        /**
+         * A short row label for a GlucoseDao-style repo id. The full id stays the download address.
+         * Unknown names stay as published, without the owner.
+         */
+        fun choiceLabel(repo: String): String {
+            val name = repo.substringAfter('/')
+            val dual = Regex("""DUAL_MODE-CITRAS-FM-(W\d+(?:\.\d+)?)""").find(name)
+            if (dual != null) return "CITRAS-FM ${dual.groupValues[1]}"
+            if (name.startsWith("INPAINT-CITRAS")) return "INPAINT-CITRAS"
+            if (name.startsWith("NF-TFT")) return "NF-TFT"
+            if (name.startsWith("CITRAS")) return "CITRAS"
+            return name
+        }
+
         /** Untrusted Hub search results may name repositories, never arbitrary download hosts. */
         fun parseSearchResults(json: String): List<HuggingFaceModel> {
             val entries = runCatching { Json.parseToJsonElement(json).jsonArray }
@@ -75,6 +95,27 @@ data class HuggingFaceModel(
                 if (parts.size != 2) return@mapNotNull null
                 runCatching { HuggingFaceModel(repoId(parts[0], parts[1])) }.getOrNull()
             }.distinctBy { it.repo }.take(20)
+        }
+
+        /**
+         * Repositories from an owner listing. A repo is kept when its file list contains an ONNX
+         * graph. Newest publication first. Ids that are not a real `owner/name` are dropped.
+         */
+        fun parseOrganization(json: String): List<HuggingFaceModel> {
+            val entries = runCatching { Json.parseToJsonElement(json).jsonArray }
+                .getOrElse { throw IllegalArgumentException("Hugging Face returned an unexpected model list") }
+            return entries.mapNotNull { entry ->
+                val obj = runCatching { entry.jsonObject }.getOrNull() ?: return@mapNotNull null
+                val id = obj["id"]?.jsonPrimitive?.contentOrNull ?: return@mapNotNull null
+                val parts = id.split('/')
+                if (parts.size != 2) return@mapNotNull null
+                val files = obj["siblings"]?.let { runCatching { it.jsonArray }.getOrNull() }.orEmpty().mapNotNull { file ->
+                    runCatching { file.jsonObject["rfilename"]?.jsonPrimitive?.contentOrNull }.getOrNull()
+                }
+                if (files.none { isOnnx(it) }) return@mapNotNull null
+                val model = runCatching { HuggingFaceModel(repoId(parts[0], parts[1])) }.getOrNull() ?: return@mapNotNull null
+                model to (obj["createdAt"]?.jsonPrimitive?.contentOrNull ?: "")
+            }.sortedByDescending { it.second }.map { it.first }.distinctBy { it.repo }.take(40)
         }
 
         fun isOnnx(name: String) = name.endsWith(".onnx", ignoreCase = true)

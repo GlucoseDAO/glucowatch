@@ -91,6 +91,7 @@ class SettingsActivity : Activity() {
     private lateinit var nightscoutFields: List<View>
     private lateinit var loopPredictor: View
     private lateinit var phonePredictor: View
+    private lateinit var forecastHint: TextView
     private lateinit var phoneFields: List<View>
     private lateinit var carelinkFields: List<View>
     private lateinit var carelinkStatus: TextView
@@ -173,6 +174,7 @@ class SettingsActivity : Activity() {
         }
         loopPredictor = predictor.findViewWithTag(LoopStatus.MODEL_ID)
         phonePredictor = predictor.findViewWithTag(PhoneLink.MODEL_ID)
+        forecastHint = hint("Phone app model shows the forecast from the phone. Pick the GlucoseDao model there. The watch does not download it.")
         result = TextView(this).apply { textSize = 12f; gravity = Gravity.CENTER; setTextColor(Brand.TEXT) }
         val save = Button(this).apply {
             text = "Save & test"; Brand.style(this, primary = true)
@@ -261,7 +263,7 @@ class SettingsActivity : Activity() {
         }
         heartStatus = hint("On the \u201cGlucose, time and heart\u201d tile. Allowed; change it in the watch's app permissions.")
         listOf(
-            label("Units"), unit, label("Forecast"), prediction, predictor,
+            label("Units"), unit, label("Forecast"), prediction, predictor, forecastHint,
             label("Old reading alert (after 10 min)"), staleAlert, alertPermission,
             label("Heart rate"), heartButton, heartStatus, save, result,
             Button(this).apply {
@@ -501,6 +503,7 @@ class SettingsActivity : Activity() {
         val phone = source == DataSource.PHONE
         loopPredictor.visibility = if (loop) View.VISIBLE else View.GONE
         phonePredictor.visibility = if (phone) View.VISIBLE else View.GONE
+        forecastHint.visibility = if (phone && prediction.isChecked) View.VISIBLE else View.GONE
         val chosen = selected(predictor)
         if ((!loop && chosen == LoopStatus.MODEL_ID) || (!phone && chosen == PhoneLink.MODEL_ID)) check(predictor, LinearTrendPredictor.ID)
         val choices = Predictors.all.size + (if (loop) 1 else 0) + (if (phone) 1 else 0)

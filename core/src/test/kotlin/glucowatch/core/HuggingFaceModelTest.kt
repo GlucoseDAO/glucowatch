@@ -29,6 +29,30 @@ class HuggingFaceModelTest {
         assertFailsWith<IllegalArgumentException> { HuggingFaceModel.parseSearchResults("{}") }
     }
 
+    @Test fun `an owner listing keeps onnx repos newest first and shortens their names`() {
+        assertEquals("https://huggingface.co/api/models?author=GlucoseDao&limit=100",
+            HuggingFaceModel.organizationUrl("GlucoseDao"))
+        val response = """[
+            {"id":"GlucoseDao/old","createdAt":"2026-09-01T00:00:00.000Z","siblings":[{"rfilename":"onnx/model.onnx"}]},
+            {"id":"GlucoseDao/weights-only","createdAt":"2026-10-12T00:00:00.000Z","siblings":[{"rfilename":"best_model.pt"}]},
+            {"id":"GlucoseDao/DUAL_MODE-CITRAS-FM-W38.7-rest","createdAt":"2026-10-08T22:13:37.000Z","siblings":[{"rfilename":"model.onnx"}]},
+            {"id":"not a repo","siblings":[{"rfilename":"model.onnx"}]},
+            {"id":"GlucoseDao/INPAINT-CITRAS-long","createdAt":"2026-09-29T00:00:00.000Z","siblings":[{"rfilename":"onnx/model.onnx"}]}
+        ]"""
+        assertEquals(listOf(
+            "GlucoseDao/DUAL_MODE-CITRAS-FM-W38.7-rest",
+            "GlucoseDao/INPAINT-CITRAS-long",
+            "GlucoseDao/old",
+        ), HuggingFaceModel.parseOrganization(response).map { it.repo })
+        assertEquals("CITRAS-FM W38.7", HuggingFaceModel.choiceLabel("GlucoseDao/DUAL_MODE-CITRAS-FM-W38.7-rest"))
+        assertEquals("INPAINT-CITRAS", HuggingFaceModel.choiceLabel("GlucoseDao/INPAINT-CITRAS-long"))
+        assertEquals("NF-TFT", HuggingFaceModel.choiceLabel("GlucoseDao/NF-TFT-lossmard"))
+        assertEquals("CITRAS", HuggingFaceModel.choiceLabel("GlucoseDao/CITRAS-full-1e-4"))
+        assertEquals("glumind-global-h12", HuggingFaceModel.choiceLabel("GlucoseDao/glumind-global-h12"))
+        assertFailsWith<IllegalArgumentException> { HuggingFaceModel.organizationUrl("../other") }
+        assertFailsWith<IllegalArgumentException> { HuggingFaceModel.parseOrganization("{}") }
+    }
+
     @Test fun `tree directory limits the file chooser`() {
         val model = HuggingFaceModel.parse("https://huggingface.co/owner/model/tree/main/onnx")
         assertEquals("onnx", model.directory)

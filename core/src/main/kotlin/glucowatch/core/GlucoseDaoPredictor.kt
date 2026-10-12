@@ -22,9 +22,10 @@ data class GlucoseDaoContract(
     val scalers: Map<String, FeatureScaler>,
 ) {
     val pastSteps get() = gapStart ?: inputSteps
-    val displayName get() = when (family) {
-        "inpaint_bicitras" -> "INPAINT-CITRAS"
-        "citras" -> "CITRAS"
+    val displayName get() = when {
+        family == "inpaint_bicitras" && channels.size == 10 -> "CITRAS-FM"
+        family == "inpaint_bicitras" -> "INPAINT-CITRAS"
+        family == "citras" -> "CITRAS"
         else -> "NF-TFT"
     }
 
@@ -42,9 +43,11 @@ data class GlucoseDaoContract(
             require(root["metadata_schema"] == null || root["metadata_schema"] is JsonNull) { "Static model metadata is unsupported" }
             val channels = root.getValue("channels").jsonArray.map { it.jsonPrimitive.content }
             val inpaint = family == "inpaint_bicitras"
-            val expected = if (inpaint) listOf("glucose_div100", "glucose_observed", "log1p_basal", "basal_observed",
-                "log1p_bolus", "bolus_observed", "hidden", "real_slot") else listOf("glucose", "basal", "bolus", "carbs")
-            require(channels == expected) { "Unsupported model channel order" }
+            val inpaintBase = listOf("glucose_div100", "glucose_observed", "log1p_basal", "basal_observed",
+                "log1p_bolus", "bolus_observed", "hidden", "real_slot")
+            val layouts = if (inpaint) listOf(inpaintBase, inpaintBase + listOf("carbs_div100", "meal_known"))
+                else listOf(listOf("glucose", "basal", "bolus", "carbs"))
+            val expected = layouts.firstOrNull { it == channels } ?: error("Unsupported model channel order")
             val names = root.getValue("inputs").jsonArray.map { it.jsonObject.getValue("name").jsonPrimitive.content }
             require(names == if (inpaint) listOf("x_features") else listOf("x_scaled", "future_scaled")) { "Unsupported model input names" }
             val gap = if (inpaint) number("gap_start") else null
@@ -85,6 +88,8 @@ data class FeatureScaler(val factor: Float, val offset: Float) {
  * All future observations are withheld, including the inpainter's post-gap record. Historical
  * pump pulses use U/h (delivered five-minute U × 12), matching the training adapter. A reported
  * basal rate already has U/h units. Unknown intervals remain missing, never assumed zero.
+ * When the bundle has carbohydrate channels, grams are divided by 100 and a recorded zero
+ * sets the meal-known mask without a value. Slots after the origin stay withheld.
  */
 class GlucoseDaoPredictor(val contract: GlucoseDaoContract, private val engine: ForecastEngine) : GlucosePredictor, AutoCloseable {
     override val id = OnnxPredictor.ID
@@ -144,18 +149,23 @@ class GlucoseDaoPredictor(val contract: GlucoseDaoContract, private val engine: 
             if (slot in glucose.indices) glucose[slot] = reading.mgdl.toFloat()
         }
         if (contract.gapStart != null) {
-            val data = FloatArray(contract.inputSteps * 8)
+            val width = contract.channels.size
+            val data = FloatArray(contract.inputSteps * width)
             val firstSeen = glucose.indexOfFirst(Float::isFinite).takeIf { it >= 0 } ?: past
             for (i in 0 until contract.inputSteps) {
-                val at = i * 8
+                val at = i * width
                 if (i < past) {
                     if (glucose[i].isFinite() && glucose[i] > 0) { data[at] = glucose[i] / 100; data[at + 1] = 1f }
                     if (basal[i].isFinite()) { data[at + 2] = ln1p(basal[i]); data[at + 3] = 1f }
                     if (bolus[i].isFinite()) { data[at + 4] = ln1p(bolus[i]); data[at + 5] = 1f }
+                    if (width == 10 && carbs[i].isFinite() && carbs[i] >= 0f) {
+                        data[at + 9] = 1f
+                        if (carbs[i] > 0f) data[at + 8] = carbs[i] / 100f
+                    }
                 } else data[at + 6] = 1f
                 if (i >= firstSeen) data[at + 7] = 1f
             }
-            return mapOf("x_features" to ForecastTensor(longArrayOf(1, contract.inputSteps.toLong(), 8), data))
+            return mapOf("x_features" to ForecastTensor(longArrayOf(1, contract.inputSteps.toLong(), width.toLong()), data))
         }
         val channels = listOf(glucose, basal, bolus, carbs)
         val data = FloatArray(past * 4) { index -> contract.scalers.getValue(contract.channels[index % 4]).scale(channels[index % 4][index / 4]) }

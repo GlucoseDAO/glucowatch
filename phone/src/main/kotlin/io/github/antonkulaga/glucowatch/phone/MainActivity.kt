@@ -727,11 +727,12 @@ class MainActivity : Activity() {
                     text = "Import a file"; Brand.style(this, false); setOnClickListener { chooseModelFile() }
                 }, weight())
             })
-            addView(label("GlucoseDao shortcuts"))
-            GLUCOSE_MODELS.forEach { (name, repo) ->
-                addView(actionRow(R.drawable.ic_model, name, Brand.TEXT) { findRepo(repo) })
-            }
-            addView(hint("GlucoseDao models run locally with glucose, basal, bolus and the model’s supported carb inputs. Select your pump in Connect."))
+            addView(Button(this@MainActivity).apply {
+                text = "GlucoseDao models"; Brand.style(this, false)
+                setOnClickListener { listGlucoseDao() }
+            })
+            addView(hint("Loads the ONNX models published under GlucoseDao, newest first. Tap a name, then tap its file. " +
+                "A paired watch shows that forecast when its source is Phone app and its forecast is Phone app model."))
             addView(modelFiles)
             addView(hint("Repository imports use the model’s metadata and scalers to prepare inputs and show its maximum forecast horizon. " +
                 "Standalone files support small dense models taking float32 [1,12] or [1,24] five-minute mg/dL values " +
@@ -789,6 +790,29 @@ class MainActivity : Activity() {
                 }
             } catch (error: Exception) {
                 if (isActive) modelStatus.text = error.message ?: "Could not find that model"
+            }
+        }
+    }
+
+    private fun listGlucoseDao() {
+        val settings = saveModelSettings()
+        modelFiles.removeAllViews()
+        modelStatus.text = "Checking GlucoseDao…"
+        modelLookup?.cancel()
+        modelLookup = scope.launch {
+            try {
+                val models = modelStore.listOrganization("GlucoseDao", settings.huggingFaceToken)
+                if (!isActive) return@launch
+                modelStatus.text = if (models.isEmpty()) "GlucoseDao has no ONNX model this token can read."
+                    else "Choose a model. Nothing is downloaded until you tap its file."
+                val counts = models.groupingBy { HuggingFaceModel.choiceLabel(it.repo) }.eachCount()
+                models.forEach { model ->
+                    val label = HuggingFaceModel.choiceLabel(model.repo)
+                    val shown = if (counts[label] == 1) label else model.repo.substringAfter('/')
+                    modelFiles.addView(actionRow(R.drawable.ic_model, shown, Brand.TEXT) { findRepo(model.repo) })
+                }
+            } catch (error: Exception) {
+                if (isActive) modelStatus.text = error.message ?: "Could not list GlucoseDao models"
             }
         }
     }
@@ -1523,11 +1547,5 @@ class MainActivity : Activity() {
 
         /** A repo can hold dozens of exports; more than this is noise in a phone-sized list. */
         const val MAX_LISTED_FILES = 12
-
-        val GLUCOSE_MODELS = listOf(
-            "CITRAS" to "GlucoseDao/CITRAS-full-1e-4-cov-lossmard-ctx864-futureallchannels-fdrop0-upperbound-mv1-s42",
-            "INPAINT-CITRAS" to "GlucoseDao/INPAINT-CITRAS-120h_past-116h_post-one_sensor_wear-bidirectional_attention-full_finetune-s42",
-            "NF-TFT" to "GlucoseDao/NF-TFT-lossmard-ctx576-futurecarbs-fdrop0-refit-mv1-s42",
-        )
     }
 }
