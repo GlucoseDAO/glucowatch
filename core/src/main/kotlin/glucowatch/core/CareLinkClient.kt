@@ -90,6 +90,11 @@ data class CareLinkData(
     val loop: LoopStatus?,
     /** When the phone app (the conduit) last uploaded, corrected like the readings. */
     val lastUploadMillis: Long?,
+    /**
+     * One row per sensor point, marker and pump snapshot, including fields the chart does not
+     * draw. The phone keeps these for CSV export. See docs/export.md.
+     */
+    val exportRows: List<ExportRow> = emptyList(),
 )
 
 /**
@@ -249,6 +254,22 @@ class CareLinkClient(
         private const val APP_VERSION = "3.8.0"
         private val JSON_HEADERS = mapOf("Content-Type" to "application/json", "User-Agent" to "Dalvik/2.1.0 (Linux; U; Android 14)")
 
+        /** Whole hours between the pump clock and the server, the same shift applied to every row. */
+        internal fun clockShiftMillis(patient: JsonObject): Long {
+            val deviceUpload = patient.time("lastConduitDateTime")
+            val serverUpload = patient.time("lastConduitUpdateServerDateTime")
+            val pumpClock = patient.time("medicalDeviceTime")
+            val pumpUpload = patient.time("lastMedicalDeviceDataUpdateServerTime")
+            val localAnchor = if (pumpClock != null && pumpUpload != null) pumpClock else deviceUpload
+            val serverAnchor = if (pumpClock != null && pumpUpload != null) pumpUpload else serverUpload
+            val shiftHours = if (localAnchor != null && serverAnchor != null && localAnchor > 0 && serverAnchor > 0) {
+                ((serverAnchor - localAnchor) / 3_600_000.0).roundToInt().takeIf { abs(it) in 1..25 } ?: 0
+            } else {
+                0
+            }
+            return shiftHours * 3_600_000L
+        }
+
         /**
          * Readings, boluses, basal pulses, carbs and active insulin from `patientData`. CareLink reports times
          * in the pump's clock, often labelled UTC whatever the pump's time zone; when the pump's
@@ -257,18 +278,10 @@ class CareLinkClient(
         internal fun parse(patient: JsonObject, now: Long): CareLinkData {
             val deviceUpload = patient.time("lastConduitDateTime")
             val serverUpload = patient.time("lastConduitUpdateServerDateTime")
-            val pumpClock = patient.time("medicalDeviceTime")
             val pumpUpload = patient.time("lastMedicalDeviceDataUpdateServerTime")
             // The pump and the uploading phone may use different time zones. Marker/SG/IOB
             // timestamps belong to the pump, so use its own paired clock/server anchors first.
-            val localAnchor = if (pumpClock != null && pumpUpload != null) pumpClock else deviceUpload
-            val serverAnchor = if (pumpClock != null && pumpUpload != null) pumpUpload else serverUpload
-            val shiftHours = if (localAnchor != null && serverAnchor != null && localAnchor > 0 && serverAnchor > 0) {
-                ((serverAnchor - localAnchor) / 3_600_000.0).roundToInt().takeIf { abs(it) in 1..25 } ?: 0
-            } else {
-                0
-            }
-            val shift = shiftHours * 3_600_000L
+            val shift = clockShiftMillis(patient)
             fun JsonObject.at(vararg keys: String) = time(*keys)?.plus(shift)
 
             val readings = (patient["sgs"] as? JsonArray).orEmpty().filterIsInstance<JsonObject>().mapNotNull { sg ->
@@ -331,7 +344,10 @@ class CareLinkClient(
             val iob = active?.double("amount")?.takeIf { it >= 0 }
             val iobTime = active?.at("datetime") ?: pumpUpload ?: serverUpload
             val loop = if (iob != null && iobTime != null) LoopStatus(timeMillis = iobTime, iob = iob) else null
-            return CareLinkData(withTrend, treatments.sortedBy { it.timeMillis }, loop, pumpUpload ?: serverUpload ?: deviceUpload?.plus(shift))
+            val uploaded = pumpUpload ?: serverUpload ?: deviceUpload?.plus(shift)
+            val sorted = treatments.sortedBy { it.timeMillis }
+            val exportRows = CareLinkRows.build(patient, shift, now, sorted, loop, uploaded)
+            return CareLinkData(withTrend, sorted, loop, uploaded, exportRows)
         }
 
         /**

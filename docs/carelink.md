@@ -6,9 +6,11 @@ and active insulin from a MiniMed pump through CareLink. In **Connect** on the p
 sources**. Nightscout can also add therapy data. The main source supplies the glucose trajectory;
 the extra sources never splice a second sensor's glucose values into it.
 
-**Sign in to CareLink** opens the system browser. Choose the account's two-letter country code
-and sign in with a care partner account linked to the patient. The app validates OAuth state,
-uses PKCE and stores the resulting rotating tokens in private app storage. It does not store a
+**Sign in to CareLink** opens Medtronic's page. Choose the account's two-letter country code
+and sign in with a care partner account linked to the patient. A debug build fills the username
+and password from `.env`; you still solve the captcha. Release builds open the system browser
+with an empty form. The app validates OAuth state,
+uses PKCE and stores the resulting rotating tokens in private app storage. It does not save a
 CareLink username or password. The country is required before sign-in because it selects the
 account's regional server; it is the account country, not necessarily the phone's current
 location. If mobile DNS cannot resolve the official `.eu` CarePartner cloud, the client retries
@@ -44,8 +46,10 @@ the conduit clock is a fallback for older payloads.
 1. `uv run --with playwright scripts/carelink_login.py` opens a visible browser and fills
    `CARELINK_USERNAME` and `CARELINK_PASSWORD` from `.env` where possible. Complete sign-in there.
    The session is saved outside the repository at `~/.config/glucowatch/carelink-token.json`.
-2. Build/install a phone debug APK on an emulator. Dexcom defaults come from `.env`; release
-   builds contain empty credentials. CareLink passwords and tokens are never embedded in an APK.
+2. Build/install a phone or watch debug APK. Dexcom defaults come from `.env`. Debug builds
+   also fill the CareLink sign-in page from `CARELINK_USERNAME` and `CARELINK_PASSWORD`; solve
+   the captcha there. Release builds contain empty credentials. The CareLink password is not
+   saved in app settings, and tokens are never compiled into an APK.
 3. `uv run scripts/carelink_to_phone.py --serial emulator-5590` moves the session into the debug
    app's private storage through adb stdin and opens **Dexcom Share + CareLink insulin**. Tokens
    never appear in adb command arguments. After the import is confirmed, the desktop copy is
@@ -54,3 +58,7 @@ the conduit clock is a fallback for older payloads.
 Screenshots and fetched payloads with real data belong under the gitignored `data/output/` and
 must not be published. This integration has emulator/network checks; Bluetooth still needs the
 real-hardware verification described in `phone-link.md`.
+
+The phone can write the cached CareLink rows, alone or next to Dexcom glucose, as CSV, and a
+PDF that adds pump delivery to a Clarity-style glucose summary. The columns and the rules for
+training on them are in [export.md](export.md).

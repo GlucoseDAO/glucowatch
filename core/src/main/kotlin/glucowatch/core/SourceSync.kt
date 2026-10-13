@@ -129,6 +129,15 @@ class SourceSync(
             data.lastUploadMillis?.let { end -> values[THERAPY_COVERAGE] = coverage(end - DAY_MS, minOf(end, now)) }
             val loop = data.loop?.mergedOnto(CacheFormat.decodeLoop(cache.get(LOOP).orEmpty())) ?: CacheFormat.decodeLoop(cache.get(LOOP).orEmpty())
             values[LOOP] = CacheFormat.encodeLoop(loop?.takeIf { now - it.timeMillis <= DAY_MS })
+            // The watch keeps a day and does not export. The phone keeps the richer rows, because
+            // each CareLink answer replaces only its last day and older days would otherwise be lost.
+            if (retainMs > DAY_MS) {
+                val rolled = ExportLog.roll(ExportRow.decodeJson(cache.get(CARELINK_EXPORT).orEmpty()), data.exportRows, now, retainMs)
+                values[CARELINK_EXPORT] = ExportRow.encodeJson(rolled)
+                data.exportRows.lastOrNull { it.kind == ExportRow.KIND_DEVICE }?.let {
+                    values[CARELINK_DEVICE] = ExportRow.encodeJson(listOf(it))
+                }
+            }
             cache.put(values)
         } finally {
             cache.put(mapOf(CARELINK_CONFIG to client.config, CARELINK_SESSION to client.session))
@@ -159,6 +168,8 @@ class SourceSync(
         const val LOOP = "loop"
         const val THERAPY_COVERAGE = "therapy:coverage"
         const val BASAL_PROFILES = "therapy:profiles"
+        const val CARELINK_EXPORT = "carelink:export"
+        const val CARELINK_DEVICE = "carelink:device"
         private const val CARELINK_CONFIG = "carelink:config"
         private const val CARELINK_SESSION = "carelink:session"
         const val DAY_MS = 24 * 3_600_000L

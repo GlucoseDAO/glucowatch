@@ -19,7 +19,15 @@ val devDefaults = listOf(
     "DEXCOM_USERNAME", "DEXCOM_PASSWORD", "DEXCOM_REGION",
     "NIGHTSCOUT_URL", "NIGHTSCOUT_TOKEN", "NIGHTSCOUT_API",
     "GLUCOWATCH_SOURCE", "GLUCOWATCH_ALSO", "GLUCOWATCH_UNIT", "GLUCOWATCH_PREDICTION",
-).associateWith { System.getenv(it) ?: dotEnv[it] ?: "" }
+    "CARELINK_COUNTRY", "CARELINK_USERNAME", "CARELINK_PASSWORD",
+).associateWith { key ->
+    val value = (System.getenv(key) ?: dotEnv[key] ?: "").trim()
+    if (key == "CARELINK_COUNTRY") value.uppercase() else value
+}
+val carelinkCountry = devDefaults.getValue("CARELINK_COUNTRY")
+require(carelinkCountry.isEmpty() || carelinkCountry.matches(Regex("[A-Z]{2}"))) {
+    ".env: CARELINK_COUNTRY must be two letters, such as DE"
+}
 
 fun checkDefault(key: String, allowed: Set<String>) = devDefaults.getValue(key).lowercase().let {
     require(it.isEmpty() || it in allowed) { ".env: $key must be one of $allowed, got '$it'" }
@@ -33,7 +41,8 @@ devDefaults.getValue("GLUCOWATCH_ALSO").lowercase().split(',').map(String::trim)
 checkDefault("GLUCOWATCH_UNIT", setOf("mmol", "mmol/l", "mgdl", "mg/dl"))
 checkDefault("GLUCOWATCH_PREDICTION", setOf("true", "false"))
 
-fun javaString(value: String) = "\"" + value.replace("\\", "\\\\").replace("\"", "\\\"") + "\""
+fun javaString(value: String) = "\"" + value
+    .replace("\\", "\\\\").replace("\"", "\\\"").replace("\r", "\\r").replace("\n", "\\n") + "\""
 
 android {
     namespace = "io.github.antonkulaga.glucowatch"

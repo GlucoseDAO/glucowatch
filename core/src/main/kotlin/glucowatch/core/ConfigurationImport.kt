@@ -28,6 +28,7 @@ class ImportedConfiguration private constructor(private val values: Map<String, 
         const val MAX_BYTES = 64 * 1024
         private val schema = mapOf(
             "source" to "GLUCOWATCH_SOURCE", "unit" to "GLUCOWATCH_UNIT",
+            "latest_device" to "GLUCOWATCH_LATEST_DEVICE", "device_since" to "GLUCOWATCH_DEVICE_SINCE",
             "also_from" to "GLUCOWATCH_ALSO_FROM", "heart_track" to "GLUCOWATCH_HEART_TRACK",
             "dexcom.username" to "DEXCOM_USERNAME", "dexcom.password" to "DEXCOM_PASSWORD",
             "dexcom.region" to "DEXCOM_REGION", "dexcom.notifications" to "DEXCOM_NOTIFICATIONS",
@@ -99,6 +100,8 @@ class ImportedConfiguration private constructor(private val values: Map<String, 
                             }
                             key in setOf("GLUCOWATCH_HEART_TRACK", "DEXCOM_NOTIFICATIONS") && value is Boolean -> value.toString()
                             key == "CARELINK_EXPIRES_AT" && value is Number -> value.toString()
+                            key == "GLUCOWATCH_DEVICE_SINCE" && value is java.util.Date ->
+                                value.toInstant().atZone(java.time.ZoneOffset.UTC).toLocalDate().toString()
                             value is String -> value
                             else -> error("YAML values must be quoted strings, except booleans, expiry and also_from")
                         }
@@ -121,6 +124,8 @@ class ImportedConfiguration private constructor(private val values: Map<String, 
                 list.split(',').filter(String::isNotBlank).forEach { require(sourceOf(it) in setOf(LinkSource.NIGHTSCOUT, LinkSource.CARELINK)) }
             }
             field("GLUCOWATCH_UNIT") { GlucoseUnit.parse(it) }
+            field("GLUCOWATCH_LATEST_DEVICE") { if (it.isNotBlank()) LatestDevice.parse(it) }
+            field("GLUCOWATCH_DEVICE_SINCE") { if (it.isNotBlank()) java.time.LocalDate.parse(it) }
             field("DEXCOM_REGION") { Region.parse(it) }
             field("NIGHTSCOUT_API") { NightscoutApi.parse(it) }
             field("NIGHTSCOUT_URL") { if (it.isNotBlank()) NightscoutAddress.parse(it) }

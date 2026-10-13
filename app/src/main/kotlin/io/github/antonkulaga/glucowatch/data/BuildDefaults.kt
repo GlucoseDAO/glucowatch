@@ -42,7 +42,7 @@ internal object BuildDefaults {
         nightscoutUrl = nightscoutUrl.ifEmpty { s.nightscoutUrl },
         nightscoutToken = nightscoutToken.ifEmpty { s.nightscoutToken },
         nightscoutApi = nightscoutApi.takeIf { it.isNotEmpty() }?.let(NightscoutApi::parse) ?: s.nightscoutApi,
-        // The CareLink sign-in itself never comes from .env: it needs a browser (scripts/carelink_to_watch.py).
+        // CareLink's password is not stored here. A debug sign-in page reads it from BuildConfig to fill Medtronic's form.
         alsoFrom = also.takeIf { it.isNotEmpty() }?.split(',')?.map { DataSource.valueOf(it.trim().uppercase()) }?.toSet() ?: s.alsoFrom,
         unit = unit.takeIf { it.isNotEmpty() }?.let(GlucoseUnit::parse) ?: s.unit,
         predictionEnabled = prediction.lowercase().toBooleanStrictOrNull() ?: s.predictionEnabled,

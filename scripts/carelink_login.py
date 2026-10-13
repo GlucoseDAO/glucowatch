@@ -125,7 +125,10 @@ def main():
         filled = set()
         while 'code' not in found and time.time() < deadline:
             # Auth0 asks for the username and the password on one page or on two; fill what is shown.
-            for selector, value in (('input#username, input[name=username]', user), ('input#password, input[name=password]', password)):
+            for selector, value in (
+                ('input#username, input[name="username"], input[name="email"], input#email, input[autocomplete="username"]', user),
+                ('input#password, input[name="password"], input[type="password"], input[autocomplete="current-password"]', password),
+            ):
                 if value and selector not in filled:
                     try:
                         field = page.locator(selector).first

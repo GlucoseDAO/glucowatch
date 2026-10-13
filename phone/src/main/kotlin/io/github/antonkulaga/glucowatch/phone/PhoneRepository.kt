@@ -6,9 +6,14 @@ import android.security.NetworkSecurityPolicy
 import android.util.Log
 import glucowatch.core.CacheFormat
 import glucowatch.core.CombinedSourceSync
+import glucowatch.core.ExportCsv
+import glucowatch.core.ExportLog
+import glucowatch.core.ExportRow
+import glucowatch.core.GlucoseReport
 import glucowatch.core.SyncSource
 import glucowatch.core.DemoData
 import glucowatch.core.DexcomNotification
+import glucowatch.core.ExportWindow
 import glucowatch.core.GlucoseReading
 import glucowatch.core.LoopStatus
 import glucowatch.core.NightscoutAddress
@@ -30,6 +35,8 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import java.time.Instant
+import java.time.ZoneId
 import java.util.Base64
 
 /** What the phone screen shows and what it relays. */
@@ -279,6 +286,52 @@ class PhoneRepository(context: Context) {
         override fun put(values: Map<String, String?>) = store(settings) { values.forEach { (key, value) -> putString(prefix + key, value) } }
     }
 
+    /**
+     * CareLink and Dexcom rows inside [window], from the caches [refresh] fills. Call it after a
+     * refresh, and only once [window] has been accepted. Demo mode has nothing to export.
+     */
+    suspend fun exportTables(window: ExportWindow): PhoneExport = lock.withLock {
+        withContext(Dispatchers.IO) {
+            val settings = settingsStore.load()
+            val zone = ZoneId.systemDefault()
+            if (settings.source == LinkSource.DEMO) return@withContext PhoneExport.empty(zone)
+            val dexcomReadings = if (settings.source == LinkSource.SHARE) {
+                CacheFormat.decodeReadings(syncCache(settings).get(SourceSync.READINGS).orEmpty())
+            } else {
+                emptyList()
+            }
+            val dexcomSource = if (settings.dexcomNotifications) ExportRow.SOURCE_DEXCOM_NOTIFICATIONS else ExportRow.SOURCE_DEXCOM_SHARE
+            val carelinkOf = when {
+                settings.source == LinkSource.CARELINK -> settings.source
+                LinkSource.CARELINK in settings.extras -> LinkSource.CARELINK
+                else -> null
+            }
+            val carelinkCache = carelinkOf?.let { syncCache(settings, it) }
+            val carelinkReadings = carelinkCache?.get(SourceSync.READINGS)?.let(CacheFormat::decodeReadings).orEmpty()
+            val carelinkTreatments = carelinkCache?.get(SourceSync.TREATMENTS)?.let(CacheFormat::decodeTreatments).orEmpty()
+            val carelinkLoop = carelinkCache?.get(SourceSync.LOOP)?.let(CacheFormat::decodeLoop)
+            val logged = ExportLog.decode(carelinkCache?.get(SourceSync.CARELINK_EXPORT).orEmpty()) +
+                ExportLog.decode(carelinkCache?.get(SourceSync.CARELINK_DEVICE).orEmpty())
+            val glucose = dexcomReadings.ifEmpty { carelinkReadings }
+            val glucoseSource = when {
+                dexcomReadings.isNotEmpty() && settings.dexcomNotifications -> "Dexcom G6 notifications"
+                dexcomReadings.isNotEmpty() -> "Dexcom Share"
+                carelinkReadings.isNotEmpty() -> "CareLink"
+                else -> "no cached glucose"
+            }
+            PhoneExport(
+                carelinkRows = ExportLog.prefer(logged, ExportRow.fromCareLinkCache(carelinkReadings, carelinkTreatments, carelinkLoop)),
+                dexcomRows = dexcomReadings.map { ExportRow.fromReading(it, dexcomSource) },
+                glucose = glucose,
+                glucoseSource = glucoseSource,
+                pump = carelinkTreatments,
+                zone = zone,
+                hasCareLink = carelinkOf != null,
+                hasDexcom = settings.source == LinkSource.SHARE,
+            ).within(window)
+        }
+    }
+
     /** A move, under the same lock as refresh: only one device may refresh a CareLink session. */
     fun handOverCareLink(): String? = runBlocking { lock.withLock {
         val token = carelink.take() ?: return@withLock null
@@ -306,6 +359,91 @@ class PhoneRepository(context: Context) {
         /** A watch that polls every minute while a reading is late still costs at most two fetches a minute. */
         private const val FRESH_MS = 30_000L
         private val lock = Mutex()
+    }
+}
+
+/** What an export writes. Glucose for the PDF is Dexcom when that is the chart source, otherwise CareLink. */
+data class PhoneExport(
+    val carelinkRows: List<ExportRow>,
+    val dexcomRows: List<ExportRow>,
+    val glucose: List<GlucoseReading>,
+    val glucoseSource: String,
+    val pump: List<Treatment>,
+    val zone: ZoneId,
+    val hasCareLink: Boolean,
+    val hasDexcom: Boolean,
+) {
+    fun carelinkCsv(): String = ExportCsv.write(carelinkRows, zone)
+
+    fun combinedCsv(): String = ExportCsv.write(carelinkRows + dexcomRows, zone)
+
+    val rows get() = (carelinkRows + dexcomRows).sortedBy { it.timeMillis }
+
+    fun report(window: ExportWindow): GlucoseReport = GlucoseReport.build(glucose, pump, glucoseSource, zone,
+        window = window, events = rows)
+
+    fun select(content: glucowatch.core.ExportContent): PhoneExport {
+        return copy(
+            carelinkRows = carelinkRows.filter(content::includes),
+            dexcomRows = dexcomRows.filter(content::includes),
+            glucose = if (content.sensor) glucose else emptyList(),
+            pump = if (content.pump) pump else emptyList(),
+        )
+    }
+
+    fun withHistory(dexcom: List<ExportRow>?, carelink: List<ExportRow>?): PhoneExport {
+        val care = carelink ?: carelinkRows
+        val dex = dexcom ?: dexcomRows
+        val dexReadings = dex.mapNotNull(ExportRow::toReading)
+        val readings = dexReadings.ifEmpty { care.mapNotNull(ExportRow::toReading) }
+        val treatments = if (carelink == null) pump else care.mapNotNull { row ->
+            when (row.kind) {
+                ExportRow.KIND_BOLUS -> Treatment(row.timeMillis, insulin = row.insulinU ?: 0.0, automatic = row.automatic == true)
+                ExportRow.KIND_BASAL_DELIVERY -> Treatment(row.timeMillis, insulin = row.insulinU ?: 0.0, insulinKind = glucowatch.core.InsulinKind.BASAL)
+                ExportRow.KIND_MEAL -> Treatment(row.timeMillis, carbs = row.carbsG ?: 0.0)
+                ExportRow.KIND_REPORTED_BASAL, ExportRow.KIND_TEMP_BASAL -> Treatment(row.timeMillis,
+                    insulinKind = glucowatch.core.InsulinKind.BASAL, basalRate = row.basalRateUPerH,
+                    basalPercent = row.basalPercent, durationMinutes = row.durationMin, percentOfProfile = row.percentOfProfile == true)
+                else -> null
+            }
+        }
+        return copy(carelinkRows = care, dexcomRows = dex, glucose = readings, pump = treatments,
+            glucoseSource = if (dexReadings.isNotEmpty()) { if (dexcom != null) "Dexcom Clarity" else glucoseSource }
+                else if (carelink != null) "CareLink CSV" else if (care.isNotEmpty()) "CareLink" else "no sensor readings",
+            hasCareLink = care.isNotEmpty(), hasDexcom = dex.isNotEmpty())
+    }
+
+    private fun daysIn(rows: List<ExportRow>) = rows.map { Instant.ofEpochMilli(it.timeMillis).atZone(zone).toLocalDate() }.toSet()
+
+    fun hasGaps(window: ExportWindow): Boolean {
+        val n = java.time.temporal.ChronoUnit.DAYS.between(window.start, window.end).toInt() + 1
+        val sensor = daysIn(rows.filter { it.kind == ExportRow.KIND_GLUCOSE && it.glucoseMgdl != null })
+        val pumpDays = daysIn(carelinkRows.filter { it.kind !in setOf(ExportRow.KIND_GLUCOSE, ExportRow.KIND_CALIBRATION, ExportRow.KIND_METER) })
+        return (window.content.sensor && sensor.size < n) || (window.content.pump && pumpDays.size < n)
+    }
+
+    fun coverage(window: ExportWindow): String {
+        val n = java.time.temporal.ChronoUnit.DAYS.between(window.start, window.end).toInt() + 1
+        val sensor = daysIn(rows.filter { it.kind == ExportRow.KIND_GLUCOSE && it.glucoseMgdl != null }).size
+        val pumpDays = daysIn(carelinkRows.filter { it.kind !in setOf(ExportRow.KIND_GLUCOSE, ExportRow.KIND_CALIBRATION, ExportRow.KIND_METER) }).size
+        return "Requested ${window.start} to ${window.end} ($n days). " +
+            listOfNotNull(if (window.content.sensor) "Sensor data on $sensor/$n days" else null,
+                if (window.content.pump) "Pump events on $pumpDays/$n days" else null).joinToString(". ") +
+            ". A day with events may still have gaps; rates are not counted as delivered insulin."
+    }
+
+    /** Drops every event outside the accepted window. Both series use the same dates. */
+    fun within(window: ExportWindow) = copy(
+        carelinkRows = carelinkRows.filter { window.contains(it.timeMillis, zone) },
+        dexcomRows = dexcomRows.filter { window.contains(it.timeMillis, zone) },
+        glucose = glucose.filter { window.contains(it.timeMillis, zone) },
+        pump = pump.filter { window.contains(it.timeMillis, zone) },
+    )
+
+    companion object {
+        fun empty(zone: ZoneId) = PhoneExport(
+            emptyList(), emptyList(), emptyList(), "no cached glucose", emptyList(), zone, false, false,
+        )
     }
 }
 

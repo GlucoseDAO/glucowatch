@@ -3,12 +3,14 @@ package io.github.antonkulaga.glucowatch.phone
 import android.content.Context
 import glucowatch.core.GlucoseUnit
 import glucowatch.core.CareLinkLogin
+import glucowatch.core.LatestDevice
 import glucowatch.core.LinearTrendPredictor
 import glucowatch.core.NightscoutApi
 import glucowatch.core.Region
 import glucowatch.core.SourceAccount
 import glucowatch.core.link.LinkAccount
 import glucowatch.core.link.LinkSource
+import java.time.LocalDate
 
 /** The phone's own source and the model it forecasts with for the watch. */
 data class PhoneSettings(
@@ -22,14 +24,23 @@ data class PhoneSettings(
     val unit: GlucoseUnit = runCatching { GlucoseUnit.parse(BuildConfig.DEV_GLUCOWATCH_UNIT) }.getOrDefault(GlucoseUnit.MMOL),
     val predictorId: String = LinearTrendPredictor.ID,
     val huggingFaceToken: String = BuildConfig.DEV_HF_TOKEN,
+    /** Separate access to repositories outside the GlucoseDao picker; never inherits HF_TOKEN. */
+    val otherModelToken: String = "",
     val modelAddress: String = BuildConfig.DEV_HF_MODEL_ADDRESS,
     /** Draw heart rate as a second track on the glucose chart. The current bpm shows either way. */
     val heartTrack: Boolean = false,
     val carelinkAccount: String = "",
-    val carelinkCountry: String = "DE",
+    val carelinkCountry: String = BuildConfig.DEV_CARELINK_COUNTRY.takeIf { it.matches(Regex("[A-Z]{2}")) } ?: "DE",
     val alsoFrom: Set<LinkSource> = emptySet(),
     val dexcomNotifications: Boolean = false,
+    /** Newest device. An export starts on [latestDeviceSince] so the older series is not included alone. */
+    val latestDevice: LatestDevice? = BuildConfig.DEV_GLUCOWATCH_LATEST_DEVICE
+        .takeIf(String::isNotBlank)?.let { runCatching { LatestDevice.parse(it) }.getOrNull() },
+    val latestDeviceSince: LocalDate? = BuildConfig.DEV_GLUCOWATCH_DEVICE_SINCE
+        .takeIf(String::isNotBlank)?.let { runCatching { LocalDate.parse(it) }.getOrNull() },
 ) {
+    override fun toString() = "PhoneSettings(source=$source, predictor=$predictorId, credentials=redacted)"
+
     val usesDexcomNotifications get() = source == LinkSource.SHARE && dexcomNotifications
     /** Identifies the provider of future glucose readings, independently of its account. */
     val glucoseProvider get() = if (usesDexcomNotifications) "DEXCOM_NOTIFICATIONS" else source.name
@@ -92,9 +103,20 @@ class PhoneSettingsStore(context: Context) {
             unit = enumOr(prefs.getString("unit", null), d.unit),
             predictorId = prefs.getString("predictor", d.predictorId)!!,
             huggingFaceToken = prefs.getString("huggingFaceToken", d.huggingFaceToken)!!,
+            otherModelToken = prefs.getString("otherModelToken", "").orEmpty(),
             modelAddress = prefs.getString("modelAddress", d.modelAddress)!!,
             heartTrack = prefs.getBoolean("heartTrack", d.heartTrack),
             dexcomNotifications = prefs.getBoolean("dexcomNotifications", false),
+            latestDevice = when (val raw = prefs.getString("latestDevice", null)) {
+                null -> d.latestDevice
+                "" -> null
+                else -> runCatching { LatestDevice.valueOf(raw) }.getOrNull()
+            },
+            latestDeviceSince = when (val raw = prefs.getString("latestDeviceSince", null)) {
+                null -> d.latestDeviceSince
+                "" -> null
+                else -> runCatching { LocalDate.parse(raw) }.getOrNull()
+            },
             carelinkAccount = prefs.getString("carelinkAccount", "").orEmpty(),
             carelinkCountry = prefs.getString("carelinkCountry", null) ?: carelink.load()?.country ?: d.carelinkCountry,
             alsoFrom = prefs.getString("alsoFrom", "").orEmpty().split(',')
@@ -114,9 +136,12 @@ class PhoneSettingsStore(context: Context) {
             .putString("unit", s.unit.name)
             .putString("predictor", s.predictorId)
             .putString("huggingFaceToken", s.huggingFaceToken)
+            .putString("otherModelToken", s.otherModelToken)
             .putString("modelAddress", s.modelAddress)
             .putBoolean("heartTrack", s.heartTrack)
             .putBoolean("dexcomNotifications", s.dexcomNotifications)
+            .putString("latestDevice", s.latestDevice?.name.orEmpty())
+            .putString("latestDeviceSince", s.latestDeviceSince?.toString().orEmpty())
             .putString("carelinkAccount", s.carelinkAccount)
             .putString("carelinkCountry", s.carelinkCountry)
             .putString("alsoFrom", s.alsoFrom.joinToString(",") { it.name })

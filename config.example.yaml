@@ -3,6 +3,10 @@
 version: 1
 source: dexcom
 unit: mgdl
+# Newest device for a phone export. dexcom_sensor or minimed_pump.
+# The export dialog still asks; these answers are pre-selected. Quote the date.
+latest_device: minimed_pump
+device_since: "2026-09-01"
 also_from: [carelink]
 heart_track: false
 dexcom:

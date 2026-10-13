@@ -1,11 +1,11 @@
 # Prediction models
 
-The phone’s Model tab saves a Hugging Face model name and optional access token privately.
-Enter `owner/repo`, paste a repo/file/tree URL, or search by a short name such as `citras`.
-Search returns a repository chooser, then the ONNX files. **GlucoseDao models** on the
-Model tab reads that owner's Hugging Face listing and shows every repository that contains
-an ONNX file, newest first, under a short name. Tap the name, then tap the file. The
-written list below is what each of those names is. Imports pin the graph and its adjacent
+The phone’s Model tab keeps **Imported ONNX** selected once you choose it. That opens two
+paths you can switch between at any time, including after a repository’s files are listed:
+**GlucoseDao models** (short names, newest first; tap a name, then tap its file) and
+**My own model** (the full `owner/repo` or link, plus the access token). The repos are private,
+so an access token is saved once on that screen and sent only to huggingface.co. The written list below
+is what each short name is. Imports pin the graph and its adjacent
 `onnx_meta.json` / `scalers.json` to the same Hub commit. Validation runs before replacing
 the previous model. Tokens authenticate HTTPS requests to huggingface.co only; they never
 follow a storage redirect, enter the phone link, or accompany glucose uploads. There are no
@@ -154,3 +154,11 @@ another running device. The phone capture requires an actual model forecast befo
 screenshots. The watch renders that real phone forecast through a private debug snapshot file:
 this verifies rendering and account-cache handling, **not Bluetooth RFCOMM pairing**. Local
 watch ONNX inference can also be captured with `--model-bundle` using its own source inputs.
+
+## Phone model navigation and credentials
+
+The Model tab has Linear trend and Imported ONNX. Imported ONNX opens a source menu: **GlucoseDao organization** or **Import another model**. GlucoseDao lists names without requiring an address. Its token is the existing `HF_TOKEN`; a blank token accesses public repositories. Refresh persists an edited organization token. **Back to model sources** and Android Back return to the source menu.
+
+The other-model page has an address and a separate optional access token, initially blank. It never inherits the organization token. **Find ONNX model** lists repositories/files and **Download & import** validates the selected bundle before replacing the previous model. **Import downloaded ONNX file** works without a token. There is one source-menu control per page and one download/import action per file.
+
+Both tokens stay in application-private preferences with backup disabled and are excluded from Android view-state/autofill. Hugging Face authorization is sent only to `huggingface.co`, never to redirected artifact hosts. Neither token nor model bytes are relayed to a watch or included in health exports. Switching back to Linear retains the imported model for later use.

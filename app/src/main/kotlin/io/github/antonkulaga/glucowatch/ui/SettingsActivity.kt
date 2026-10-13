@@ -2,6 +2,7 @@ package io.github.antonkulaga.glucowatch.ui
 
 import android.Manifest
 import android.app.Activity
+import android.content.Intent
 import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
 import android.graphics.Typeface
@@ -22,6 +23,7 @@ import android.widget.RadioGroup
 import android.widget.ScrollView
 import android.widget.TextView
 import glucowatch.core.CareLinkToken
+import io.github.antonkulaga.glucowatch.BuildConfig
 import glucowatch.core.GlucoseUnit
 import glucowatch.core.LinearTrendPredictor
 import glucowatch.core.LoopStatus
@@ -213,11 +215,23 @@ class SettingsActivity : Activity() {
             text = "Get CareLink sign-in from phone"; Brand.style(this, primary = false)
             setOnClickListener { moveCareLink() }
         }
+        val debugSignIn = Button(this).apply {
+            text = "Sign in to CareLink"
+            Brand.style(this, primary = true)
+            visibility = if (BuildConfig.DEV_CARELINK_USERNAME.isNotBlank() && BuildConfig.DEV_CARELINK_PASSWORD.isNotEmpty()) View.VISIBLE else View.GONE
+            setOnClickListener {
+                startActivity(Intent(this@SettingsActivity, CareLinkSignInActivity::class.java)
+                    .putExtra("country", BuildConfig.DEV_CARELINK_COUNTRY.ifBlank { "DE" }))
+            }
+        }
         carelinkFields = listOf(
-            label("CareLink"), carelinkStatus, carelinkButton,
+            label("CareLink"), carelinkStatus, debugSignIn, carelinkButton,
             hint(
-                "CareLink's sign-in needs a browser, which the watch lacks. Sign in in the phone app, then get " +
-                    "it here. The sign-in moves to the watch: the phone keeps no copy.",
+                if (BuildConfig.DEV_CARELINK_PASSWORD.isNotEmpty())
+                    "This debug build fills the CareLink page from .env. Solve the captcha. The password is not saved on the watch."
+                else
+                    "CareLink's sign-in needs a browser, which the watch lacks. Sign in in the phone app, then get " +
+                        "it here. The sign-in moves to the watch: the phone keeps no copy.",
             ),
         )
         alsoFrom = Settings.THERAPY_SOURCES.associateWith { extra ->
@@ -475,6 +489,10 @@ class SettingsActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
+        if (::carelinkStatus.isInitialized) {
+            carelinkAccount = store.load().carelinkAccount
+            updateCareLink()
+        }
         scroll.requestFocus()
     }
 

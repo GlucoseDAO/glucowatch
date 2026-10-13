@@ -201,6 +201,8 @@ NIGHTSCOUT_API=v1         # v1 or v3 (v3 needs a token)
 GLUCOWATCH_SOURCE=        # demo, share or nightscout; empty picks share if the Dexcom login is set
 GLUCOWATCH_UNIT=mmol      # mmol or mgdl
 GLUCOWATCH_PREDICTION=false
+GLUCOWATCH_LATEST_DEVICE= # phone export: dexcom_sensor or minimed_pump; the watch ignores this
+GLUCOWATCH_DEVICE_SINCE=  # yyyy-MM-dd, the day that device started
 ```
 
 - The desktop check (`:core:run`) uses it and stops asking.
@@ -211,8 +213,9 @@ GLUCOWATCH_PREDICTION=false
   is safe to give to friends or publish. The debug APK does contain your password in plain text:
   keep it to yourself.
 - Environment variables with the same names override the file. A typo in `DEXCOM_REGION`,
-  `NIGHTSCOUT_API`, `GLUCOWATCH_SOURCE`, `GLUCOWATCH_UNIT` or `GLUCOWATCH_PREDICTION` fails the
-  build with a clear message.
+  `NIGHTSCOUT_API`, `GLUCOWATCH_SOURCE`, `GLUCOWATCH_UNIT`, `GLUCOWATCH_PREDICTION`,
+  `GLUCOWATCH_LATEST_DEVICE` or `GLUCOWATCH_DEVICE_SINCE` fails the build with a clear message.
+  The last two are read by the phone debug app. The watch build ignores them.
 
 ## Check your source from the desktop
 

@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.Uri
 import glucowatch.core.GlucoseUnit
 import glucowatch.core.ImportedConfiguration
+import glucowatch.core.LatestDevice
 import glucowatch.core.NightscoutApi
 import glucowatch.core.Region
 import kotlinx.coroutines.Dispatchers
@@ -14,6 +15,7 @@ import java.net.HttpURLConnection
 import java.net.URL
 import java.nio.ByteBuffer
 import java.nio.charset.CodingErrorAction
+import java.time.LocalDate
 
 /** Reads only the supplied config location. Source/HF credentials are never attached to this request. */
 class PhoneConfigurationImport(context: Context) {
@@ -94,4 +96,14 @@ fun ImportedConfiguration.applyTo(old: PhoneSettings): PhoneSettings = old.copy(
     modelAddress = this["HF_MODEL_ADDRESS"] ?: old.modelAddress,
     carelinkCountry = this["CARELINK_COUNTRY"]?.uppercase() ?: old.carelinkCountry,
     carelinkAccount = carelinkToken?.subject ?: old.carelinkAccount,
+    latestDevice = when (val raw = this["GLUCOWATCH_LATEST_DEVICE"]) {
+        null -> old.latestDevice
+        "" -> null
+        else -> LatestDevice.parse(raw)
+    },
+    latestDeviceSince = when (val raw = this["GLUCOWATCH_DEVICE_SINCE"]) {
+        null -> old.latestDeviceSince
+        "" -> null
+        else -> LocalDate.parse(raw)
+    },
 )

@@ -45,7 +45,8 @@
         <activity
             android:name=".CareLinkSignInActivity"
             android:exported="true"
-            android:launchMode="singleTask">
+            android:launchMode="singleTask"
+            android:windowSoftInputMode="adjustResize">
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
@@ -53,6 +54,8 @@
                 <data android:scheme="com.medtronic.carepartner" />
             </intent-filter>
         </activity>
+
+        <activity android:name=".ExportPortalActivity" android:exported="false" />
 
         <activity
             android:name=".PredictionHistoryActivity"

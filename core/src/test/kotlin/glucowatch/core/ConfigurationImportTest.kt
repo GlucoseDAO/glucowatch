@@ -56,6 +56,20 @@ class ConfigurationImportTest {
         assertNull(config.carelinkToken)
     }
 
+    @Test fun `latest device and its start date import from dotenv and yaml`() {
+        val dotenv = ImportedConfiguration.parse("GLUCOWATCH_LATEST_DEVICE=minimed_pump\nGLUCOWATCH_DEVICE_SINCE=2026-09-01\n")
+        assertEquals("minimed_pump", dotenv["GLUCOWATCH_LATEST_DEVICE"])
+        assertEquals("2026-09-01", dotenv["GLUCOWATCH_DEVICE_SINCE"])
+        val yaml = ImportedConfiguration.parse("latest_device: dexcom_sensor\ndevice_since: \"2025-01-01\"\n")
+        assertEquals("dexcom_sensor", yaml["GLUCOWATCH_LATEST_DEVICE"])
+        assertEquals("2025-01-01", yaml["GLUCOWATCH_DEVICE_SINCE"])
+        val dated = ImportedConfiguration.parse("device_since: 2026-09-01\nlatest_device: pump\n")
+        assertEquals("2026-09-01", dated["GLUCOWATCH_DEVICE_SINCE"])
+        assertEquals("pump", dated["GLUCOWATCH_LATEST_DEVICE"])
+        assertFails { ImportedConfiguration.parse("GLUCOWATCH_LATEST_DEVICE=watch") }
+        assertFails { ImportedConfiguration.parse("GLUCOWATCH_DEVICE_SINCE=September") }
+    }
+
     @Test fun `nightscout inference and explicit empty pump list work`() {
         val config = ImportedConfiguration.parse("NIGHTSCOUT_URL=https://example.org\nGLUCOWATCH_ALSO_FROM=")
         assertEquals(LinkSource.NIGHTSCOUT, config.source)

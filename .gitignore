@@ -6,6 +6,10 @@ local.properties
 *.iml
 .kotlin/
 captures/
+output/pdf/
+data/output/
+tmp/
+replay_pid*.log
 *.apk
 *.aab
 
