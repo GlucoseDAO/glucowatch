@@ -96,6 +96,11 @@ Vulkan/OpenGL. Do not automatically retry a failed software launch with `-gpu au
 `-gpu host`. The capture scripts use the same Windows startup settings. Keep emulator console
 ports even and between 5554 and 5584 so adb's port (console + 1) stays in the recommended range.
 
+For emulator-only `ERR_NAME_NOT_RESOLVED` when the host resolves the same names, use the
+diagnosis and verified local DNS workaround in `docs/emulator-dns.md`. DNS overrides require
+closing and restarting the emulator; the launcher reuses a running device. Preserve user data
+and keep the software graphics settings while applying the workaround.
+
 `uv run scripts/screenshots.py` produces round screenshots of the face, the three tiles and the
 app on an emulator shaped like the user's Galaxy Watch6 Classic 43 mm (SM-R950, 432 × 432 px,
 density 340), the default watch. `--watch all` adds the 438 px Watch8 Classic and the 480 px

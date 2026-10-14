@@ -35,6 +35,9 @@ export; its dates remain saved. Remove the property to restore the SDK's automat
 or set `GLUCOWATCH_EMULATOR_DNS` to a different comma-separated list of up to four IPs.
 The override affects emulator launches only; Windows and physical-phone DNS stay unchanged.
 
+The [emulator DNS troubleshooting guide](emulator-dns.md) records the verified Windows case,
+diagnostic commands, restart requirements, startup timing, and rollback for other systems.
+
 ## Token and date checks
 
 1. Set either `HF_TOKEN` or `HUGGINGFACE_TOKEN` in the repository's private `.env` and rebuild.
