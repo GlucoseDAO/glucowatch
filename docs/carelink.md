@@ -50,7 +50,7 @@ the conduit clock is a fallback for older payloads.
    also fill the CareLink sign-in page from `CARELINK_USERNAME` and `CARELINK_PASSWORD`; solve
    the captcha there. Release builds contain empty credentials. The CareLink password is not
    saved in app settings, and tokens are never compiled into an APK.
-3. `uv run scripts/carelink_to_phone.py --serial emulator-5590` moves the session into the debug
+3. `uv run scripts/carelink_to_phone.py --serial emulator-5554` moves the session into the debug
    app's private storage through adb stdin and opens **Dexcom Share + CareLink insulin**. Tokens
    never appear in adb command arguments. After the import is confirmed, the desktop copy is
    deleted. `--source CARELINK --also ''` selects CareLink alone.

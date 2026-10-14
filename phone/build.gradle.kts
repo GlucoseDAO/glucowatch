@@ -19,7 +19,8 @@ val devKeys = listOf("DEXCOM_USERNAME", "DEXCOM_PASSWORD", "DEXCOM_REGION", "NIG
     "GLUCOWATCH_LATEST_DEVICE", "GLUCOWATCH_DEVICE_SINCE", "HF_TOKEN", "HF_MODEL_ADDRESS",
     "CARELINK_COUNTRY", "CARELINK_USERNAME", "CARELINK_PASSWORD")
 val devDefaults = devKeys.associateWith { key ->
-    val value = (System.getenv(key) ?: dotEnv[key] ?: "").trim()
+    val alias = if (key == "HF_TOKEN") "HUGGINGFACE_TOKEN" else null
+    val value = (System.getenv(key) ?: alias?.let(System::getenv) ?: dotEnv[key] ?: alias?.let(dotEnv::get) ?: "").trim()
     if (key == "CARELINK_COUNTRY") value.uppercase() else value
 }
 val carelinkCountry = devDefaults.getValue("CARELINK_COUNTRY")
@@ -98,5 +99,7 @@ dependencies {
     implementation(project(":core"))
     // FileProvider hands the system camera app a private file to write one meal photo into.
     implementation("androidx.core:core-ktx:1.17.0")
+    // Origin-restricted document-start CSV capture; Apache-2.0, from Google's Maven repository.
+    implementation("androidx.webkit:webkit:1.12.1")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
 }

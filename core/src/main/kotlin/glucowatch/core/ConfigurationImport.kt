@@ -39,6 +39,7 @@ class ImportedConfiguration private constructor(private val values: Map<String, 
             "prediction.model" to "HF_MODEL_ADDRESS", "prediction.hf_token" to "HF_TOKEN",
         )
         private val known = schema.values.toSet()
+        private fun canonicalKey(key: String) = if (key == "HUGGINGFACE_TOKEN") "HF_TOKEN" else key
 
         /** Format is inferred from content, so dotfiles and servers with generic MIME types work. */
         fun parse(text: String): ImportedConfiguration {
@@ -58,7 +59,7 @@ class ImportedConfiguration private constructor(private val values: Map<String, 
                 val line = raw.trim().removePrefix("export ").trim()
                 if (line.isEmpty() || line.startsWith('#')) return@forEachIndexed
                 require(Regex("^[A-Za-z_][A-Za-z0-9_]*\\s*=").containsMatchIn(line)) { "Invalid .env assignment on line ${index + 1}" }
-                val key = line.substringBefore('=').trim()
+                val key = canonicalKey(line.substringBefore('=').trim())
                 if (key in known) {
                     require(seen.add(key)) { "Duplicate configuration setting on line ${index + 1}" }
                     val value = line.substringAfter('=').trim()
@@ -67,7 +68,7 @@ class ImportedConfiguration private constructor(private val values: Map<String, 
                     }
                 }
             }
-            return DotEnv.parse(text).filterKeys { it in known }
+            return DotEnv.parse(text).mapKeys { canonicalKey(it.key) }.filterKeys { it in known }
         }
 
         private fun yaml(text: String): Map<String, String> {

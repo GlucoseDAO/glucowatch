@@ -3,6 +3,7 @@ package io.github.antonkulaga.glucowatch.phone
 import android.content.Context
 import glucowatch.core.GlucoseUnit
 import glucowatch.core.CareLinkLogin
+import glucowatch.core.DebugDefaults
 import glucowatch.core.LatestDevice
 import glucowatch.core.LinearTrendPredictor
 import glucowatch.core.NightscoutApi
@@ -24,8 +25,8 @@ data class PhoneSettings(
     val unit: GlucoseUnit = runCatching { GlucoseUnit.parse(BuildConfig.DEV_GLUCOWATCH_UNIT) }.getOrDefault(GlucoseUnit.MMOL),
     val predictorId: String = LinearTrendPredictor.ID,
     val huggingFaceToken: String = BuildConfig.DEV_HF_TOKEN,
-    /** Separate access to repositories outside the GlucoseDao picker; never inherits HF_TOKEN. */
-    val otherModelToken: String = "",
+    /** Independently editable token for other models; the same debug HF_TOKEN seeds both pickers. */
+    val otherModelToken: String = BuildConfig.DEV_HF_TOKEN,
     val modelAddress: String = BuildConfig.DEV_HF_MODEL_ADDRESS,
     /** Draw heart rate as a second track on the glucose chart. The current bpm shows either way. */
     val heartTrack: Boolean = false,
@@ -91,6 +92,7 @@ class PhoneSettingsStore(context: Context) {
     private val carelink = PhoneCareLinkStore(context)
 
     fun load(): PhoneSettings {
+        applyDebugModelDefaults()
         val d = PhoneSettings()
         return PhoneSettings(
             source = enumOr(prefs.getString("source", null), d.source),
@@ -103,7 +105,7 @@ class PhoneSettingsStore(context: Context) {
             unit = enumOr(prefs.getString("unit", null), d.unit),
             predictorId = prefs.getString("predictor", d.predictorId)!!,
             huggingFaceToken = prefs.getString("huggingFaceToken", d.huggingFaceToken)!!,
-            otherModelToken = prefs.getString("otherModelToken", "").orEmpty(),
+            otherModelToken = prefs.getString("otherModelToken", d.otherModelToken).orEmpty(),
             modelAddress = prefs.getString("modelAddress", d.modelAddress)!!,
             heartTrack = prefs.getBoolean("heartTrack", d.heartTrack),
             dexcomNotifications = prefs.getBoolean("dexcomNotifications", false),
@@ -122,6 +124,20 @@ class PhoneSettingsStore(context: Context) {
             alsoFrom = prefs.getString("alsoFrom", "").orEmpty().split(',')
                 .mapNotNull { runCatching { LinkSource.valueOf(it) }.getOrNull() }.toSet(),
         )
+    }
+
+    private fun applyDebugModelDefaults() {
+        if (!BuildConfig.DEBUG) return
+        val edit = prefs.edit()
+        mapOf("huggingFaceToken" to BuildConfig.DEV_HF_TOKEN,
+            "otherModelToken" to BuildConfig.DEV_HF_TOKEN,
+            "modelAddress" to BuildConfig.DEV_HF_MODEL_ADDRESS).forEach { (key, value) ->
+            val fingerprintKey = "debugDefault.$key"
+            if (DebugDefaults.shouldApply(prefs.getString(key, null), prefs.getString(fingerprintKey, null), value))
+                edit.putString(key, value)
+            edit.putString(fingerprintKey, DebugDefaults.fingerprint(value))
+        }
+        edit.apply()
     }
 
     fun save(s: PhoneSettings) {

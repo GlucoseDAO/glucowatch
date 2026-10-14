@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Move a desktop CareLink sign-in into a debug phone app, without tokens in adb arguments.
 
-    uv run scripts/carelink_to_phone.py --serial emulator-5590
+    uv run scripts/carelink_to_phone.py --serial emulator-5554
 
 The default combines Dexcom Share glucose (.env debug defaults) with CareLink insulin.
 Use --source CARELINK --also '' for CareLink alone. After the app confirms the import,
@@ -21,7 +21,7 @@ PKG = 'io.github.antonkulaga.glucowatch.phone'
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--serial', default='emulator-5590')
+    parser.add_argument('--serial', default='emulator-5554')
     parser.add_argument('--token', type=Path, default=Path.home() / '.config/glucowatch/carelink-token.json')
     parser.add_argument('--source', choices=['SHARE', 'NIGHTSCOUT', 'CARELINK'], default='SHARE')
     parser.add_argument('--also', default='CARELINK')

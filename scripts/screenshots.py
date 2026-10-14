@@ -49,6 +49,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from emulator_tools import sdk_dir, sdk_tool, start_emulator
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -59,9 +60,9 @@ IMAGE = 'system-images;android-36;android-wear-signed;x86_64'
 # `adb shell wm density` on a real one). Each has its own console port, so all can stay up
 # with --keep. The first entry is the default.
 WATCHES = {
-    'watch6-classic-43': {'label': 'Galaxy Watch6 Classic 43 mm (432 px)', 'avd': 'glucowatch_gw6c', 'size': 432, 'density': 340, 'port': 5584},
-    'watch8-classic': {'label': 'Galaxy Watch8 Classic (438 px)', 'avd': 'glucowatch_gw8c', 'size': 438, 'density': 340, 'port': 5586},
-    'watch6-classic-47': {'label': 'Galaxy Watch6 Classic 47 mm (480 px)', 'avd': 'glucowatch_gw6c47', 'size': 480, 'density': 340, 'port': 5588},
+    'watch6-classic-43': {'label': 'Galaxy Watch6 Classic 43 mm (432 px)', 'avd': 'glucowatch_gw6c', 'size': 432, 'density': 340, 'port': 5580},
+    'watch8-classic': {'label': 'Galaxy Watch8 Classic (438 px)', 'avd': 'glucowatch_gw8c', 'size': 438, 'density': 340, 'port': 5582},
+    'watch6-classic-47': {'label': 'Galaxy Watch6 Classic 47 mm (480 px)', 'avd': 'glucowatch_gw6c47', 'size': 480, 'density': 340, 'port': 5584},
 }
 DEFAULT_WATCH = next(iter(WATCHES))
 # The watch being captured; set by use_watch().
@@ -99,21 +100,10 @@ def dotenv():
     return {k: v for k, v in values.items() if v}
 
 
-def sdk_dir():
-    if os.environ.get('ANDROID_HOME'):
-        return Path(os.environ['ANDROID_HOME'])
-    props = ROOT / 'local.properties'
-    if props.is_file():
-        for line in props.read_text().splitlines():
-            if line.startswith('sdk.dir='):
-                return Path(line.split('=', 1)[1].strip())
-    sys.exit('Android SDK not found: set ANDROID_HOME or sdk.dir in local.properties')
-
-
 SDK = sdk_dir()
-ADB = str(SDK / 'platform-tools' / 'adb')
-EMULATOR = str(SDK / 'emulator' / 'emulator')
-AVDMANAGER = str(SDK / 'cmdline-tools' / 'latest' / 'bin' / 'avdmanager')
+ADB = sdk_tool(SDK, 'platform-tools/adb')
+EMULATOR = sdk_tool(SDK, 'emulator/emulator')
+AVDMANAGER = sdk_tool(SDK, 'cmdline-tools/latest/bin/avdmanager')
 
 
 def log(message):
@@ -121,7 +111,7 @@ def log(message):
 
 
 def adb(*args, check=True, binary=False):
-    result = subprocess.run([ADB, '-s', SERIAL, *args], capture_output=True, check=False)
+    result = subprocess.run([ADB, '-s', SERIAL, *args], capture_output=True, check=False, timeout=90)
     if check and result.returncode != 0:
         raise RuntimeError(f'adb {" ".join(args)} failed: {result.stderr.decode(errors="replace").strip()}')
     return result.stdout if binary else result.stdout.decode(errors='replace')
@@ -156,7 +146,7 @@ def ensure_avd():
 
 
 def running():
-    out = subprocess.run([ADB, 'devices'], capture_output=True, text=True).stdout
+    out = subprocess.run([ADB, 'devices'], capture_output=True, text=True, timeout=15).stdout
     return any(line.startswith(SERIAL + '\t') and line.endswith('device') for line in out.splitlines())
 
 
@@ -166,16 +156,17 @@ def boot():
         return False
     ensure_avd()
     log(f'booting {AVD} on {SERIAL}')
-    subprocess.Popen([EMULATOR, '-avd', AVD, '-port', str(PORT), '-no-window', '-no-audio', '-no-boot-anim',
-                      '-no-snapshot'],
-                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+    process, log_path = start_emulator(SDK, AVD, PORT)
     deadline = time.time() + 240
     while time.time() < deadline:
+        if process.poll() is not None:
+            sys.exit(f'emulator exited with code {process.returncode}; see {log_path}')
         if running() and adb('shell', 'getprop', 'sys.boot_completed', check=False).strip() == '1':
             break
         nap(2)
     else:
-        sys.exit('emulator did not boot within 4 minutes')
+        process.terminate()
+        sys.exit(f'emulator did not boot within 4 minutes; see {log_path}')
     nap(5)
     return True
 
@@ -187,7 +178,8 @@ def prepare_device():
     # A plugged-in battery puts a charging bolt over the bottom of the face.
     adb('shell', 'dumpsys', 'battery', 'unplug', check=False)
     adb('shell', 'dumpsys', 'battery', 'set', 'level', '80', check=False)
-    zone = subprocess.run(['timedatectl', 'show', '-p', 'Timezone', '--value'], capture_output=True, text=True).stdout.strip()
+    zone = (subprocess.run(['timedatectl', 'show', '-p', 'Timezone', '--value'], capture_output=True, text=True).stdout.strip()
+            if shutil.which('timedatectl') else '')
     if zone:
         adb('shell', 'service', 'call', 'alarm', '3', 's16', zone, check=False)
     size = adb('shell', 'wm', 'size').strip()
@@ -198,7 +190,7 @@ def prepare_device():
 def build_and_install(build):
     if build:
         log('building debug APKs')
-        subprocess.run([str(ROOT / 'gradlew'), '-q', '--console=plain', ':app:assembleDebug', ':watchface:assembleDebug'],
+        subprocess.run([str(ROOT / ('gradlew.bat' if sys.platform == 'win32' else 'gradlew')), '-q', '--console=plain', ':app:assembleDebug', ':watchface:assembleDebug'],
                        cwd=ROOT, check=True)
     # A fresh face install, so every slot starts from its default provider.
     adb('uninstall', FACE, check=False)

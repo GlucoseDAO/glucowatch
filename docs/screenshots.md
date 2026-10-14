@@ -56,7 +56,14 @@ health data. Keep them local and do not use them as store images.
 
 The phone's heart-rate card reads optional Health Connect data on Android 14 and later. The
 unmodified emulator has no samples, so its screenshots show the empty state.
-The phone uses adb port 5590, separate from all three watch emulators.
+The phone uses console port 5554 (adb `emulator-5554`), separate from all three watch emulators.
+The watch console ports are 5580, 5582 and 5584, keeping every adb port (console + 1) inside
+the emulator's recommended range. On Windows, both capture scripts use software graphics,
+two virtual CPU cores, and disable Guest ANGLE. Turning off Guest ANGLE alone still allowed
+the emulator to select host Vulkan/OpenGL on a machine with repeated Windows freezes.
+Startup logs stay under gitignored `data/output/emulator/`; occupied ports fail before a second
+VM starts. For a visible window and interactive testing, use
+`uv run scripts/run_emulator.py phone` or `uv run scripts/run_emulator.py watch`.
 
 ### Prediction captures
 
@@ -100,9 +107,9 @@ Those come in three screen sizes, and the script has one simulated watch for eac
 
 | `--watch` | AVD | Screen | adb serial | Real devices |
 |---|---|---|---|---|
-| `watch6-classic-43` (default) | `glucowatch_gw6c` | round 432 × 432 px | `emulator-5584` | Watch6 40 mm, **Watch6 Classic 43 mm (SM-R950, the watch GlucoWatch is tried on)**, Watch7 40 mm |
-| `watch8-classic` | `glucowatch_gw8c` | round 438 × 438 px | `emulator-5586` | Watch8 Classic, Watch8 40 mm |
-| `watch6-classic-47` | `glucowatch_gw6c47` | round 480 × 480 px | `emulator-5588` | Watch6 44 mm, Watch6 Classic 47 mm, Watch7 44 mm, Watch8 44 mm, Watch Ultra (2024, 2025) |
+| `watch6-classic-43` (default) | `glucowatch_gw6c` | round 432 × 432 px | `emulator-5580` | Watch6 40 mm, **Watch6 Classic 43 mm (SM-R950, the watch GlucoWatch is tried on)**, Watch7 40 mm |
+| `watch8-classic` | `glucowatch_gw8c` | round 438 × 438 px | `emulator-5582` | Watch8 Classic, Watch8 40 mm |
+| `watch6-classic-47` | `glucowatch_gw6c47` | round 480 × 480 px | `emulator-5584` | Watch6 44 mm, Watch6 Classic 47 mm, Watch7 44 mm, Watch8 44 mm, Watch Ultra (2024, 2025) |
 
 ```bash
 uv run scripts/screenshots.py demo                                   # the default watch

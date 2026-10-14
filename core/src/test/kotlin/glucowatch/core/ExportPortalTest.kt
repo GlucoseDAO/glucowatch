@@ -7,6 +7,16 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
 class ExportPortalTest {
+    @Test fun captureBridgeIsConfinedToCsvProviderOrigins() {
+        assertEquals(setOf("https://clarity.dexcom.eu"), ExportPortal.CLARITY.captureOrigins("RO", Region.OUS))
+        assertEquals(setOf("https://clarity.dexcom.com"), ExportPortal.CLARITY.captureOrigins("US", Region.US))
+        assertEquals(setOf("https://clarity.dexcom.jp"), ExportPortal.CLARITY.captureOrigins("JP", Region.JP))
+        val origins = ExportPortal.CARELINK.captureOrigins("RO", Region.OUS)
+        assertTrue("https://*.minimed.eu" in origins)
+        assertFalse("*" in origins)
+        assertTrue(origins.all { it.startsWith("https://") })
+    }
+
     @Test fun latestSelectedDeviceOpensFirst() {
         assertEquals(listOf(ExportPortal.CARELINK, ExportPortal.CLARITY), ExportPortal.sequence(ExportContent.SENSOR_AND_PUMP, LatestDevice.MINIMED_PUMP))
         assertEquals(listOf(ExportPortal.CLARITY, ExportPortal.CARELINK), ExportPortal.sequence(ExportContent.SENSOR_AND_PUMP, LatestDevice.DEXCOM_SENSOR))

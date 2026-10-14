@@ -93,6 +93,7 @@ fun ImportedConfiguration.applyTo(old: PhoneSettings): PhoneSettings = old.copy(
     heartTrack = this["GLUCOWATCH_HEART_TRACK"]?.toBoolean() ?: old.heartTrack,
     dexcomNotifications = this["DEXCOM_NOTIFICATIONS"]?.toBoolean() ?: old.dexcomNotifications,
     huggingFaceToken = this["HF_TOKEN"] ?: old.huggingFaceToken,
+    otherModelToken = if (old.otherModelToken.isBlank()) this["HF_TOKEN"] ?: old.otherModelToken else old.otherModelToken,
     modelAddress = this["HF_MODEL_ADDRESS"] ?: old.modelAddress,
     carelinkCountry = this["CARELINK_COUNTRY"]?.uppercase() ?: old.carelinkCountry,
     carelinkAccount = carelinkToken?.subject ?: old.carelinkAccount,

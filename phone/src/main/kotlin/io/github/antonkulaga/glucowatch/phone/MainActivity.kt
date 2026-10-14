@@ -32,6 +32,7 @@ import android.widget.ScrollView
 import android.widget.TextView
 import androidx.core.content.FileProvider
 import glucowatch.core.ExportContent
+import glucowatch.core.ExportDates
 import glucowatch.core.ExportRow
 import glucowatch.core.ExportCsv
 import glucowatch.core.HistoricalCsv
@@ -343,23 +344,53 @@ class MainActivity : Activity() {
     private fun exportData() {
         val today = LocalDate.now()
         val draft = getSharedPreferences("export-draft", MODE_PRIVATE)
-        var anchor = runCatching { LocalDate.parse(draft.getString("anchor", null)) }.getOrDefault(today)
-        val anchorMode = draft.getString("anchorKind", "end").takeIf { it == "start" } ?: "end"
-        val anchorKind = radios(listOf("end" to "End date", "start" to "Start date"), anchorMode)
-        val days = EditText(this).apply { inputType = InputType.TYPE_CLASS_NUMBER; setText(draft.getInt("days", 14).coerceIn(1, 90).toString()); hint = "1 to 90 days" }
-        val date = Button(this).apply { text = anchor.toString(); Brand.style(this, false) }
-        val span = hint("")
-        fun updateSpan() {
-            val n = days.text.toString().toIntOrNull()?.takeIf { it in 1..90 } ?: return
-            val start = if (selected(anchorKind) == "start") anchor else anchor.minusDays(n - 1L)
-            val end = if (selected(anchorKind) == "end") anchor else anchor.plusDays(n - 1L)
-            span.text = "$start to $end ($n days)"
+        val savedDays = draft.getInt("days", 14).coerceIn(1, 90)
+        val oldAnchor = runCatching { LocalDate.parse(draft.getString("anchor", null)) }.getOrDefault(today)
+        val oldEnd = if (draft.getString("anchorKind", "end") == "start") oldAnchor.plusDays(savedDays - 1L) else oldAnchor
+        val savedEnd = runCatching { LocalDate.parse(draft.getString("end", null)) }.getOrDefault(oldEnd).coerceAtMost(today)
+        var dates = runCatching {
+            ExportDates(LocalDate.parse(draft.getString("start", null)), savedEnd)
+        }.getOrElse { ExportDates.endingOn(savedEnd, savedDays) }
+        var keepStart = draft.getBoolean("keepStart", false)
+        val days = EditText(this).apply {
+            inputType = InputType.TYPE_CLASS_NUMBER; setText(dates.days.toString()); hint = "1 to 90 days"
+            contentDescription = "Number of export days"
         }
-        date.setOnClickListener { pickDate(anchor) { anchor = it; date.text = it.toString(); updateSpan() } }
-        anchorKind.setOnCheckedChangeListener { _, _ -> updateSpan() }
+        val startDate = Button(this).apply { Brand.style(this, false); contentDescription = "Choose export start date" }
+        val endDate = Button(this).apply { Brand.style(this, false); contentDescription = "Choose export end date" }
+        val span = hint("")
+        var updatingDays = false
+        fun renderDates(updateDays: Boolean = false) {
+            startDate.text = dates.start.toString(); endDate.text = dates.end.toString()
+            span.text = "${dates.start} to ${dates.end} · ${dates.days} ${if (dates.days == 1) "day" else "days"}, including both dates"
+            if (updateDays) {
+                updatingDays = true
+                days.setText(dates.days.toString()); days.error = null
+                updatingDays = false
+            }
+        }
+        startDate.setOnClickListener {
+            pickDate(dates.start, dates.end.minusDays(89), dates.end.coerceAtMost(today)) {
+                dates = dates.withStart(it); keepStart = true; renderDates(updateDays = true)
+            }
+        }
+        endDate.setOnClickListener {
+            pickDate(dates.end, dates.start, dates.start.plusDays(89).coerceAtMost(today)) {
+                dates = dates.withEnd(it); keepStart = false; renderDates(updateDays = true)
+            }
+        }
         days.addTextChangedListener(object : android.text.TextWatcher {
             override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
-            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) { updateSpan() }
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
+                if (updatingDays) return
+                val countDays = s?.toString()?.toIntOrNull()
+                if (countDays == null || countDays !in 1..90) {
+                    span.text = "Enter 1 to 90 days, or choose the dates on the calendars."
+                    return
+                }
+                dates = dates.withDays(countDays, keepStart); renderDates()
+                days.error = if (dates.end.isAfter(today)) "This interval ends after today. Choose fewer days or an earlier start." else null
+            }
             override fun afterTextChanged(s: android.text.Editable?) {}
         })
         val draftContent = runCatching { ExportContent.valueOf(draft.getString("content", "").orEmpty()) }.getOrDefault(ExportContent.SENSOR_AND_PUMP)
@@ -375,23 +406,27 @@ class MainActivity : Activity() {
         val box = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL; setPadding(dp(22), dp(8), dp(22), dp(8))
             addView(label("Days (1 to 90)")); addView(days)
-            addView(anchorKind); addView(date); addView(span)
+            addView(hint("Changing Days keeps the date you chose most recently and moves the other. Both dates are included."))
+            addView(label("Start date")); addView(startDate)
+            addView(label("End date")); addView(endDate); addView(span)
             addView(label("Data")); addView(content); addView(incomplete)
             addView(label("Format")); addView(format)
         }
-        updateSpan()
+        renderDates()
         val dialog = AlertDialog.Builder(this).setTitle("Export data").setView(ScrollView(this).apply { addView(box) })
             .setPositiveButton("Continue", null).setNegativeButton("Cancel", null).create()
         dialog.setOnShowListener {
             dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
                 val n = days.text.toString().toIntOrNull()
                 if (n == null || n !in 1..90) { days.error = "Enter 1 to 90 whole days"; return@setOnClickListener }
-                val end = if (selected(anchorKind) == "end") anchor else anchor.plusDays(n - 1L)
+                val end = dates.end
                 if (end.isAfter(today)) { days.error = "The interval ends after today"; return@setOnClickListener }
                 val chosen = ExportContent.valueOf(selected(content))
                 val allow = incomplete.isChecked
                 val pdf = selected(format) == "pdf"
-                draft.edit().putString("anchor", anchor.toString()).putString("anchorKind", selected(anchorKind))
+                draft.edit().putString("start", dates.start.toString()).putString("end", dates.end.toString())
+                    .putBoolean("keepStart", keepStart)
+                    .remove("anchor").remove("anchorKind")
                     .putInt("days", n).putString("content", chosen.name).putBoolean("pdf", pdf)
                     .putBoolean("incomplete", allow).apply()
                 dialog.dismiss()
@@ -425,7 +460,7 @@ class MainActivity : Activity() {
     }
 
     private fun askDeviceStart(device: LatestDevice, current: LocalDate?, onSince: (LocalDate) -> Unit) {
-        pickDate(current ?: LocalDate.now(), onSince)
+        pickDate(current ?: LocalDate.now(), onPicked = onSince)
     }
 
     private fun beginHistoryExport(window: ExportWindow, pdf: Boolean) {
@@ -644,15 +679,20 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun pickDate(initial: LocalDate, onPicked: (LocalDate) -> Unit) {
+    private fun pickDate(initial: LocalDate, minimum: LocalDate? = null,
+                         maximum: LocalDate = LocalDate.now(), onPicked: (LocalDate) -> Unit) {
         val today = LocalDate.now()
         val day = if (initial.isAfter(today)) today else initial
-        DatePickerDialog(this, { _, year, month, dayOfMonth ->
+        DatePickerDialog(this, android.R.style.Theme_Material_Dialog_Alert, { _, year, month, dayOfMonth ->
             onPicked(LocalDate.of(year, month + 1, dayOfMonth))
         }, day.year, day.monthValue - 1, day.dayOfMonth).apply {
             val cal = java.util.Calendar.getInstance()
-            cal.set(today.year, today.monthValue - 1, today.dayOfMonth, 23, 59, 59)
+            cal.set(maximum.year, maximum.monthValue - 1, maximum.dayOfMonth, 23, 59, 59)
             datePicker.maxDate = cal.timeInMillis
+            minimum?.let {
+                cal.set(it.year, it.monthValue - 1, it.dayOfMonth, 0, 0, 0)
+                datePicker.minDate = cal.timeInMillis
+            }
             show()
         }
     }

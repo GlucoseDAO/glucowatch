@@ -3,6 +3,7 @@ package glucowatch.core
 import glucowatch.core.link.LinkSource
 import java.util.Base64
 import kotlin.test.Test
+import kotlin.test.assertFailsWith
 import kotlin.test.assertEquals
 import kotlin.test.assertFails
 import kotlin.test.assertFalse
@@ -10,6 +11,14 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class ConfigurationImportTest {
+    @Test fun huggingFaceTokenAliasWorksWithoutEchoingItsValue() {
+        val config = ImportedConfiguration.parse("HUGGINGFACE_TOKEN=hf_example")
+        assertEquals("hf_example", config["HF_TOKEN"])
+        assertFailsWith<IllegalArgumentException> {
+            ImportedConfiguration.parse("HUGGINGFACE_TOKEN=hf_example\nHF_TOKEN=hf_other")
+        }
+    }
+
     @Test fun `filled development dotenv accepts literal secrets and unrelated desktop keys`() {
         val config = ImportedConfiguration.parse("""
             # developer defaults

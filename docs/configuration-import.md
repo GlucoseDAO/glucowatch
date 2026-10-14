@@ -41,7 +41,7 @@ see [prediction runtimes](prediction.md#phone-and-watch-runtimes).
 | `GLUCOWATCH_LATEST_DEVICE`, `GLUCOWATCH_DEVICE_SINCE` | Newest device (`dexcom_sensor` or `minimed_pump`) and the day it started (`yyyy-MM-dd`). Export still asks; a filled answer is pre-selected. A blank value clears it. The watch does not read these. |
 | `CARELINK_COUNTRY` | Two-letter account country, e.g. `DE`. |
 | `CARELINK_CLIENT_ID`, `CARELINK_ACCESS_TOKEN`, `CARELINK_REFRESH_TOKEN`, `CARELINK_EXPIRES_AT` | Optional complete CareLink session; expiry is epoch **milliseconds**. |
-| `HF_TOKEN`, `HF_MODEL_ADDRESS` | Optional Hub token, repository name or model URL. A supplied model triggers setup. |
+| `HF_TOKEN` (alias `HUGGINGFACE_TOKEN`), `HF_MODEL_ADDRESS` | Optional Hub token, repository name or model URL. A supplied model triggers setup. |
 
 dotenv follows the repository's literal syntax: one `KEY=value` per line, optional
 `export `, single/double quotes, and comments. No shell commands, variable interpolation

@@ -7,6 +7,13 @@ enum class ExportPortal(val label: String, val source: String) {
     CARELINK("CareLink Personal", ExportRow.SOURCE_CARELINK),
     CLARITY("Dexcom Clarity", ExportRow.SOURCE_DEXCOM_CLARITY);
 
+    /** No wildcard for the whole web: only CSV-producing provider frames get the message channel. */
+    fun captureOrigins(country: String, region: Region): Set<String> = when (this) {
+        CARELINK -> listOf("minimed.eu", "minimed.com", "medtronic.com", "medtronic.eu")
+            .flatMap { listOf("https://$it", "https://*.$it") }.toSet()
+        CLARITY -> setOf(url(country, region))
+    }
+
     fun url(country: String, region: Region): String = when (this) {
         CARELINK -> if (country.equals("US", true)) "https://carelink.minimed.com" else "https://carelink.minimed.eu"
         CLARITY -> when (region) {

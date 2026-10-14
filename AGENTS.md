@@ -88,6 +88,14 @@ order and add new slots at the end, or an update swaps providers on every instal
 
 ## Screenshots
 
+On Windows, open an interactive simulator with `uv run scripts/run_emulator.py phone` or
+`uv run scripts/run_emulator.py watch`. The shared launcher uses software graphics, two CPU
+cores and no snapshots, and retains startup logs in gitignored `data/output/emulator/`.
+This workstation has repeatedly frozen during emulator launches that selected host
+Vulkan/OpenGL. Do not automatically retry a failed software launch with `-gpu auto` or
+`-gpu host`. The capture scripts use the same Windows startup settings. Keep emulator console
+ports even and between 5554 and 5584 so adb's port (console + 1) stays in the recommended range.
+
 `uv run scripts/screenshots.py` produces round screenshots of the face, the three tiles and the
 app on an emulator shaped like the user's Galaxy Watch6 Classic 43 mm (SM-R950, 432 × 432 px,
 density 340), the default watch. `--watch all` adds the 438 px Watch8 Classic and the 480 px
