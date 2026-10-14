@@ -170,6 +170,8 @@ and `--dry-run` shows the command without starting anything. The default phone A
 `glucowatch_phone`; the default watch is `Wear_OS_Large_Round` or `glucowatch_gw6c`.
 This launcher does not change the installed emulator version or Android Studio's launch settings.
 For token, calendar and CSV checks, see [phone-testing.md](phone-testing.md).
+If the PC resolves a portal but the emulator reports an unknown host, follow
+[the emulator DNS guide](emulator-dns.md) for diagnosis and the local resolver override.
 Google recommends [software graphics](https://developer.android.com/studio/run/emulator-acceleration#accel-graphics)
 when automatic or host rendering causes problems. A successful software boot is a workaround,
 not proof of which display driver caused a Windows freeze.

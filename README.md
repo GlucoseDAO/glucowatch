@@ -329,6 +329,8 @@ uploading your glucose. See the [phone link guide](docs/phone-link.md).
 - **Dexcom works on Wi-Fi but fails on mobile:** use watch Settings → **Connection check**.
   [Carrier blocking](docs/carrier-blocking.md) explains the errors and available routes.
   **Resolve over HTTPS** is off by default; use it only for a diagnosed DNS failure.
+- **Emulator reports `ERR_NAME_NOT_RESOLVED`:** if the PC resolves the same site, follow
+  [the emulator DNS guide](docs/emulator-dns.md) for the verified resolver override and restart steps.
 - **Phone sync stops:** check Nearby devices permission and the phone's battery restrictions.
   Some manufacturers stop background services; see [known limits](docs/phone-link.md#known-limits).
 - **Empty face:** install both the watch app and face, open the app once, then check complication providers.
