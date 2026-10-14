@@ -184,7 +184,10 @@ phone's forecast only when it starts from the latest reading. Otherwise
 it shows "No fresh phone forecast". The choice **Loop (Nightscout)** also works through the phone,
 because the phone relays the loop status.
 
-`HF_TOKEN` and `HF_MODEL_ADDRESS` in `.env` supply initial phone settings only in debug builds.
+`HF_TOKEN` (or `HUGGINGFACE_TOKEN`) and `HF_MODEL_ADDRESS` in `.env` supply phone settings only
+in debug builds. The token seeds both model pickers, which remain independently editable.
+Rebuilding with changed model defaults reapplies them to an installed debug app; unchanged
+defaults preserve edits made in the app, including an intentionally blank token.
 Release defaults are empty, as with the source credentials. Adding a token does not expand the
 source interpreter's supported graphs: the GlucoseDao CITRAS, INPAINT-CITRAS, NF-TFT and CITRAS-FM exports
 require a full ONNX runtime and different feature layouts. They currently fail phone import.

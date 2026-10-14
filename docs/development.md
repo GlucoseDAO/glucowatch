@@ -56,7 +56,9 @@ If you do get a choice and you want the image to match a watch, the rows are:
 
 Download the image and press **Finish**.
 
-Press the play button next to the device. The first boot takes a few minutes. Leave the window open.
+On Windows machines that freeze when the emulator starts, use the software-rendering launcher
+below instead of the Device Manager play button. Otherwise press play; the first boot takes a
+few minutes. Leave the window open.
 
 The stock Large Round screen is 454 × 454 px at density 320. A real SM-R950 is 432 × 432 px at
 density 340. Large Round is close enough to look at the face. For a capture at the real size,
@@ -151,6 +153,29 @@ or a phone emulator, not on this watch. The watch fetches Dexcom or Nightscout b
 
 ### Each time you want to see a change
 
+On Windows, the repository launcher builds and opens an existing AVD with software graphics,
+two virtual CPU cores, and snapshots disabled. It uses the SDK's own adb and saves emulator
+startup logs under gitignored `data/output/emulator/`. It keeps the app's saved settings:
+
+```powershell
+uv run scripts/run_emulator.py phone
+uv run scripts/run_emulator.py watch
+```
+
+Run one device at a time while investigating a Windows freeze. Rerun the same command after
+editing to rebuild, reinstall, and reopen the app in the running emulator. Close the emulator
+window before switching from a headless screenshot run to interactive testing. `--no-build`
+reuses existing APKs, `--demo` selects demo data, `--avd NAME` selects another existing AVD,
+and `--dry-run` shows the command without starting anything. The default phone AVD is
+`glucowatch_phone`; the default watch is `Wear_OS_Large_Round` or `glucowatch_gw6c`.
+This launcher does not change the installed emulator version or Android Studio's launch settings.
+For token, calendar and CSV checks, see [phone-testing.md](phone-testing.md).
+Google recommends [software graphics](https://developer.android.com/studio/run/emulator-acceleration#accel-graphics)
+when automatic or host rendering causes problems. A successful software boot is a workaround,
+not proof of which display driver caused a Windows freeze.
+
+The remaining commands are the manual alternative:
+
 Start the virtual watch yourself and leave its window open. In Android Studio that is
 **Device Manager**, the play button on **Wear OS Large Round**. Wait until a watch face is on
 the screen. A window that is still booting answers `offline` and will refuse the install.
@@ -201,6 +226,8 @@ NIGHTSCOUT_API=v1         # v1 or v3 (v3 needs a token)
 GLUCOWATCH_SOURCE=        # demo, share or nightscout; empty picks share if the Dexcom login is set
 GLUCOWATCH_UNIT=mmol      # mmol or mgdl
 GLUCOWATCH_PREDICTION=false
+GLUCOWATCH_LATEST_DEVICE= # phone export: dexcom_sensor or minimed_pump; the watch ignores this
+GLUCOWATCH_DEVICE_SINCE=  # yyyy-MM-dd, the day that device started
 ```
 
 - The desktop check (`:core:run`) uses it and stops asking.
@@ -211,8 +238,9 @@ GLUCOWATCH_PREDICTION=false
   is safe to give to friends or publish. The debug APK does contain your password in plain text:
   keep it to yourself.
 - Environment variables with the same names override the file. A typo in `DEXCOM_REGION`,
-  `NIGHTSCOUT_API`, `GLUCOWATCH_SOURCE`, `GLUCOWATCH_UNIT` or `GLUCOWATCH_PREDICTION` fails the
-  build with a clear message.
+  `NIGHTSCOUT_API`, `GLUCOWATCH_SOURCE`, `GLUCOWATCH_UNIT`, `GLUCOWATCH_PREDICTION`,
+  `GLUCOWATCH_LATEST_DEVICE` or `GLUCOWATCH_DEVICE_SINCE` fails the build with a clear message.
+  The last two are read by the phone debug app. The watch build ignores them.
 
 ## Check your source from the desktop
 

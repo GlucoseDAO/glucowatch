@@ -15,9 +15,39 @@ val dotEnv = dotEnvFile.takeIf { it.isFile }?.readLines().orEmpty().mapNotNull {
         else value.replace(Regex("""\s+#.*$"""), "")
 }.toMap()
 val devKeys = listOf("DEXCOM_USERNAME", "DEXCOM_PASSWORD", "DEXCOM_REGION", "NIGHTSCOUT_URL",
-    "NIGHTSCOUT_TOKEN", "NIGHTSCOUT_API", "GLUCOWATCH_SOURCE", "GLUCOWATCH_UNIT", "HF_TOKEN", "HF_MODEL_ADDRESS")
-val devDefaults = devKeys.associateWith { System.getenv(it) ?: dotEnv[it] ?: "" }
-fun javaString(value: String) = "\"" + value.replace("\\", "\\\\").replace("\"", "\\\"") + "\""
+    "NIGHTSCOUT_TOKEN", "NIGHTSCOUT_API", "GLUCOWATCH_SOURCE", "GLUCOWATCH_UNIT",
+    "GLUCOWATCH_LATEST_DEVICE", "GLUCOWATCH_DEVICE_SINCE", "HF_TOKEN", "HF_MODEL_ADDRESS",
+    "CARELINK_COUNTRY", "CARELINK_USERNAME", "CARELINK_PASSWORD")
+val devDefaults = devKeys.associateWith { key ->
+    val alias = if (key == "HF_TOKEN") "HUGGINGFACE_TOKEN" else null
+    val value = (System.getenv(key) ?: alias?.let(System::getenv) ?: dotEnv[key] ?: alias?.let(dotEnv::get) ?: "").trim()
+    if (key == "CARELINK_COUNTRY") value.uppercase() else value
+}
+val carelinkCountry = devDefaults.getValue("CARELINK_COUNTRY")
+require(carelinkCountry.isEmpty() || carelinkCountry.matches(Regex("[A-Z]{2}"))) {
+    ".env: CARELINK_COUNTRY must be two letters, such as DE"
+}
+val latestDevice = devDefaults.getValue("GLUCOWATCH_LATEST_DEVICE").lowercase().replace('-', '_').replace(' ', '_')
+require(latestDevice.isEmpty() || latestDevice in setOf(
+    "dexcom", "dexcom_sensor", "sensor", "minimed", "minimed_pump", "pump", "carelink", "medtronic",
+)) { ".env: GLUCOWATCH_LATEST_DEVICE must be dexcom_sensor or minimed_pump, got '$latestDevice'" }
+val deviceSince = devDefaults.getValue("GLUCOWATCH_DEVICE_SINCE")
+require(deviceSince.isEmpty() || isoDate(deviceSince)) {
+    ".env: GLUCOWATCH_DEVICE_SINCE must be yyyy-MM-dd, got '$deviceSince'"
+}
+
+fun isoDate(value: String): Boolean {
+    val match = Regex("""^(\d{4})-(\d{2})-(\d{2})$""").matchEntire(value) ?: return false
+    val year = match.groupValues[1].toInt()
+    val month = match.groupValues[2].toInt()
+    val day = match.groupValues[3].toInt()
+    if (month !in 1..12) return false
+    val leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0)
+    val length = listOf(31, if (leap) 29 else 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31)
+    return day in 1..length[month - 1]
+}
+fun javaString(value: String) = "\"" + value
+    .replace("\\", "\\\\").replace("\"", "\\\"").replace("\r", "\\r").replace("\n", "\\n") + "\""
 
 // The optional phone app: reads Dexcom Share or Nightscout and relays it to the watch app over
 // Bluetooth (docs/phone-link.md). Keep versionCode and versionName on the same pair as app/ and watchface/.
@@ -69,5 +99,7 @@ dependencies {
     implementation(project(":core"))
     // FileProvider hands the system camera app a private file to write one meal photo into.
     implementation("androidx.core:core-ktx:1.17.0")
+    // Origin-restricted document-start CSV capture; Apache-2.0, from Google's Maven repository.
+    implementation("androidx.webkit:webkit:1.12.1")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
 }

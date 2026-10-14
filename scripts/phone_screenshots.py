@@ -19,16 +19,19 @@ from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont
 
 from screenshots import dotenv, sdk_dir, install_model_bundle
+from emulator_tools import sdk_tool, start_emulator
 
 ROOT = Path(__file__).resolve().parent.parent
 SDK = sdk_dir()
-ADB = str(SDK / 'platform-tools' / 'adb')
-EMULATOR = str(SDK / 'emulator' / 'emulator')
-AVDMANAGER = str(SDK / 'cmdline-tools' / 'latest' / 'bin' / 'avdmanager')
+ADB = sdk_tool(SDK, 'platform-tools/adb')
+EMULATOR = sdk_tool(SDK, 'emulator/emulator')
+AVDMANAGER = sdk_tool(SDK, 'cmdline-tools/latest/bin/avdmanager')
 IMAGE = 'system-images;android-36;default;x86_64'
 AVD = 'glucowatch_phone'
-# 5588 is the watch6-classic-47 emulator's port in screenshots.py; keep the two apart.
-PORT = 5590
+# Console 5554 puts adb on 5555, inside the emulator's supported range [5555, 5586].
+# 5590 put adb on 5591, outside that range, and logcat stopped answering. The watch
+# emulators in screenshots.py use 5580, 5582 and 5584, so this stays clear of them.
+PORT = 5554
 SERIAL = f'emulator-{PORT}'
 PKG = 'io.github.antonkulaga.glucowatch.phone'
 OUT = ROOT / 'data/output/screenshots/phone-galaxy-s22'
@@ -36,14 +39,14 @@ SCENARIOS = ('demo', 'dexcom', 'nightscout')
 
 
 def adb(*args, check=True, binary=False):
-    result = subprocess.run([ADB, '-s', SERIAL, *args], capture_output=True)
+    result = subprocess.run([ADB, '-s', SERIAL, *args], capture_output=True, timeout=90)
     if check and result.returncode:
         raise RuntimeError(result.stderr.decode(errors='replace').strip())
     return result.stdout if binary else result.stdout.decode(errors='replace')
 
 
 def running():
-    return f'{SERIAL}\tdevice' in subprocess.run([ADB, 'devices'], capture_output=True, text=True).stdout
+    return f'{SERIAL}\tdevice' in subprocess.run([ADB, 'devices'], capture_output=True, text=True, timeout=15).stdout
 
 
 def ensure_avd():
@@ -62,19 +65,22 @@ def ensure_avd():
 
 
 def boot():
+    process = None
     if not running():
         ensure_avd()
         print(f'[phone screenshots] booting {AVD} on {SERIAL}', flush=True)
-        subprocess.Popen([EMULATOR, '-avd', AVD, '-port', str(PORT), '-no-window',
-                          '-no-audio', '-no-boot-anim', '-no-snapshot'],
-                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+        process, log_path = start_emulator(SDK, AVD, PORT, disable_guest_angle=True)
     deadline = time.time() + 240
     while time.time() < deadline:
+        if process is not None and process.poll() is not None:
+            sys.exit(f'Phone emulator exited with code {process.returncode}; see {log_path}')
         if running() and adb('shell', 'getprop', 'sys.boot_completed', check=False).strip() == '1':
             break
         time.sleep(2)
     else:
-        sys.exit('Phone emulator did not boot within 4 minutes')
+        if process is not None:
+            process.terminate()
+        sys.exit('Phone emulator did not boot within 4 minutes; see data/output/emulator/')
     adb('shell', 'wm', 'size', '1080x2340')
     adb('shell', 'wm', 'density', '425')
     # Wait for Android's window manager to finish applying the override before capturing.
@@ -94,7 +100,7 @@ def boot():
 
 def install(build, reset=True):
     if build:
-        subprocess.run([str(ROOT / 'gradlew'), '-q', '--console=plain', ':phone:assembleDebug'],
+        subprocess.run([str(ROOT / ('gradlew.bat' if sys.platform == 'win32' else 'gradlew')), '-q', '--console=plain', ':phone:assembleDebug'],
                        cwd=ROOT, check=True)
     debug_dir = ROOT / 'phone/build/outputs/apk/debug'
     apk = next((debug_dir / name for name in ('phone-debug.apk', 'glucowatch-phone-debug.apk')

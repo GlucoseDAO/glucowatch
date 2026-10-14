@@ -28,6 +28,7 @@ class ImportedConfiguration private constructor(private val values: Map<String, 
         const val MAX_BYTES = 64 * 1024
         private val schema = mapOf(
             "source" to "GLUCOWATCH_SOURCE", "unit" to "GLUCOWATCH_UNIT",
+            "latest_device" to "GLUCOWATCH_LATEST_DEVICE", "device_since" to "GLUCOWATCH_DEVICE_SINCE",
             "also_from" to "GLUCOWATCH_ALSO_FROM", "heart_track" to "GLUCOWATCH_HEART_TRACK",
             "dexcom.username" to "DEXCOM_USERNAME", "dexcom.password" to "DEXCOM_PASSWORD",
             "dexcom.region" to "DEXCOM_REGION", "dexcom.notifications" to "DEXCOM_NOTIFICATIONS",
@@ -38,6 +39,7 @@ class ImportedConfiguration private constructor(private val values: Map<String, 
             "prediction.model" to "HF_MODEL_ADDRESS", "prediction.hf_token" to "HF_TOKEN",
         )
         private val known = schema.values.toSet()
+        private fun canonicalKey(key: String) = if (key == "HUGGINGFACE_TOKEN") "HF_TOKEN" else key
 
         /** Format is inferred from content, so dotfiles and servers with generic MIME types work. */
         fun parse(text: String): ImportedConfiguration {
@@ -57,7 +59,7 @@ class ImportedConfiguration private constructor(private val values: Map<String, 
                 val line = raw.trim().removePrefix("export ").trim()
                 if (line.isEmpty() || line.startsWith('#')) return@forEachIndexed
                 require(Regex("^[A-Za-z_][A-Za-z0-9_]*\\s*=").containsMatchIn(line)) { "Invalid .env assignment on line ${index + 1}" }
-                val key = line.substringBefore('=').trim()
+                val key = canonicalKey(line.substringBefore('=').trim())
                 if (key in known) {
                     require(seen.add(key)) { "Duplicate configuration setting on line ${index + 1}" }
                     val value = line.substringAfter('=').trim()
@@ -66,7 +68,7 @@ class ImportedConfiguration private constructor(private val values: Map<String, 
                     }
                 }
             }
-            return DotEnv.parse(text).filterKeys { it in known }
+            return DotEnv.parse(text).mapKeys { canonicalKey(it.key) }.filterKeys { it in known }
         }
 
         private fun yaml(text: String): Map<String, String> {
@@ -99,6 +101,8 @@ class ImportedConfiguration private constructor(private val values: Map<String, 
                             }
                             key in setOf("GLUCOWATCH_HEART_TRACK", "DEXCOM_NOTIFICATIONS") && value is Boolean -> value.toString()
                             key == "CARELINK_EXPIRES_AT" && value is Number -> value.toString()
+                            key == "GLUCOWATCH_DEVICE_SINCE" && value is java.util.Date ->
+                                value.toInstant().atZone(java.time.ZoneOffset.UTC).toLocalDate().toString()
                             value is String -> value
                             else -> error("YAML values must be quoted strings, except booleans, expiry and also_from")
                         }
@@ -121,6 +125,8 @@ class ImportedConfiguration private constructor(private val values: Map<String, 
                 list.split(',').filter(String::isNotBlank).forEach { require(sourceOf(it) in setOf(LinkSource.NIGHTSCOUT, LinkSource.CARELINK)) }
             }
             field("GLUCOWATCH_UNIT") { GlucoseUnit.parse(it) }
+            field("GLUCOWATCH_LATEST_DEVICE") { if (it.isNotBlank()) LatestDevice.parse(it) }
+            field("GLUCOWATCH_DEVICE_SINCE") { if (it.isNotBlank()) java.time.LocalDate.parse(it) }
             field("DEXCOM_REGION") { Region.parse(it) }
             field("NIGHTSCOUT_API") { NightscoutApi.parse(it) }
             field("NIGHTSCOUT_URL") { if (it.isNotBlank()) NightscoutAddress.parse(it) }

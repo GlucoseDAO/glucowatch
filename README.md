@@ -276,6 +276,14 @@ notification timestamps may differ from sensor timestamps. For the watch, use **
 **Additional insulin sources:** use your own Nightscout or CareLink alongside your CGM to
 show therapy data. Only combine sources belonging to the same person.
 [CareLink setup](docs/carelink.md) explains browser sign-in and the pump data available.
+On the phone, **More → Export data** uses the newest device and the day it started when those
+are already saved, then asks for an interval of 1 to 90 days and the file type. Continue signs
+in with the saved login and writes a CareLink CSV, a CareLink and Dexcom CSV, or a PDF report
+to Downloads. Fill that device and day in `.env` (`GLUCOWATCH_LATEST_DEVICE`, `GLUCOWATCH_DEVICE_SINCE`)
+or in the YAML import (`latest_device`, `device_since`).
+The file starts on the device day when the interval reaches further back. [Export files](docs/export.md)
+describes each column. The CSV is the form to use
+for a model: a basal rate is a setting, not a dose.
 
 You can also import an existing configuration with **Connect → Upload .env / YAML** or
 **Import from URL**. See [configuration import](docs/configuration-import.md) and the

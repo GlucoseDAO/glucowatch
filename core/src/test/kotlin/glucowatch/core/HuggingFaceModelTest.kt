@@ -30,8 +30,12 @@ class HuggingFaceModelTest {
     }
 
     @Test fun `an owner listing keeps onnx repos newest first and shortens their names`() {
-        assertEquals("https://huggingface.co/api/models?author=GlucoseDao&limit=100",
+        assertEquals("https://huggingface.co/api/models?author=GlucoseDao&limit=100&full=true",
             HuggingFaceModel.organizationUrl("GlucoseDao"))
+        assertEquals(
+            listOf("CITRAS-FM W38.7", "CITRAS-FM W38.2", "CITRAS-FM W34.2", "INPAINT-CITRAS", "NF-TFT", "CITRAS"),
+            HuggingFaceModel.glucoseDaoChoices().map { HuggingFaceModel.choiceLabel(it.repo) },
+        )
         val response = """[
             {"id":"GlucoseDao/old","createdAt":"2026-09-01T00:00:00.000Z","siblings":[{"rfilename":"onnx/model.onnx"}]},
             {"id":"GlucoseDao/weights-only","createdAt":"2026-10-12T00:00:00.000Z","siblings":[{"rfilename":"best_model.pt"}]},

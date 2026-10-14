@@ -19,7 +19,7 @@ data class HttpRequest(
     }
 }
 
-data class HttpResponse(val status: Int, val body: String)
+data class HttpResponse(val status: Int, val body: String, val headers: Map<String, List<String>> = emptyMap())
 
 fun interface HttpTransport {
     fun execute(request: HttpRequest): HttpResponse

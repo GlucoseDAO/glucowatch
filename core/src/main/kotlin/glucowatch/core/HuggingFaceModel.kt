@@ -64,10 +64,24 @@ data class HuggingFaceModel(
             return "$HOST/api/models?search=${URLEncoder.encode(text, "UTF-8")}&limit=20"
         }
 
+        /**
+         * GlucoseDao forecast repos the phone can run, newest publication first.
+         * The Hub listing does not return these without a token, so the names are offered
+         * as choices and the address is filled in when one is tapped.
+         */
+        fun glucoseDaoChoices(): List<HuggingFaceModel> = listOf(
+            "GlucoseDao/DUAL_MODE-CITRAS-FM-W38.7-120h_past-116h_post-threemodes-hybridrefiner-ilet10-s43",
+            "GlucoseDao/DUAL_MODE-CITRAS-FM-W38.2-120h_past-116h_post-threemodes-threesource-ilet3-s42",
+            "GlucoseDao/DUAL_MODE-CITRAS-FM-W34.2-120h_past-116h_post-jointmask-carbgrams-s42",
+            "GlucoseDao/INPAINT-CITRAS-120h_past-116h_post-one_sensor_wear-bidirectional_attention-full_finetune-s42",
+            "GlucoseDao/NF-TFT-lossmard-ctx576-futurecarbs-fdrop0-refit-mv1-s42",
+            "GlucoseDao/CITRAS-full-1e-4-cov-lossmard-ctx864-futureallchannels-fdrop0-upperbound-mv1-s42",
+        ).map { HuggingFaceModel(it) }
+
         /** One owner's repositories. The caller still sends the token only to huggingface.co. */
         fun organizationUrl(owner: String): String {
             require(NAME.matches(owner)) { "'$owner' is not a Hugging Face owner" }
-            return "$HOST/api/models?author=${URLEncoder.encode(owner, "UTF-8")}&limit=100"
+            return "$HOST/api/models?author=${URLEncoder.encode(owner, "UTF-8")}&limit=100&full=true"
         }
 
         /**

@@ -3,6 +3,8 @@ package io.github.antonkulaga.glucowatch.phone
 import android.Manifest
 import android.app.Activity
 import android.app.AlertDialog
+import android.app.DatePickerDialog
+import android.content.ContentValues
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.BitmapFactory
@@ -29,7 +31,16 @@ import android.widget.RadioGroup
 import android.widget.ScrollView
 import android.widget.TextView
 import androidx.core.content.FileProvider
+import glucowatch.core.ExportContent
+import glucowatch.core.ExportDates
+import glucowatch.core.ExportRow
+import glucowatch.core.ExportCsv
+import glucowatch.core.HistoricalCsv
+import glucowatch.core.ExportPortal
+import glucowatch.core.ExportRequest
+import glucowatch.core.ExportWindow
 import glucowatch.core.GlucoseUnit
+import glucowatch.core.LatestDevice
 import glucowatch.core.NightscoutApi
 import glucowatch.core.OnnxPredictor
 import glucowatch.core.PredictionChecks
@@ -48,6 +59,9 @@ import glucowatch.core.ImportedConfiguration
 import glucowatch.core.formatAmount
 import glucowatch.core.lastDelta
 import glucowatch.core.link.LinkSource
+import java.time.LocalDate
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.CancellationException
@@ -100,11 +114,20 @@ class MainActivity : Activity() {
     private lateinit var modelForecastNote: TextView
     private lateinit var modelInput: EditText
     private lateinit var modelToken: EditText
+    private lateinit var otherModelToken: EditText
+    private lateinit var modelMenu: LinearLayout
+    private var modelPage = "menu"
+    private var modelInstalling = false
+    private var modelImport: Job? = null
     private var modelLookup: Job? = null
     private var configurationImport: Job? = null
     private lateinit var configUrl: EditText
     private lateinit var configStatus: TextView
     private lateinit var modelFiles: LinearLayout
+    private lateinit var ownFiles: LinearLayout
+    private lateinit var importCard: LinearLayout
+    private lateinit var catalogPanel: LinearLayout
+    private lateinit var ownPanel: LinearLayout
     private lateinit var removeButton: Button
     private lateinit var sections: List<LinearLayout>
     private lateinit var tabs: List<LinearLayout>
@@ -117,6 +140,8 @@ class MainActivity : Activity() {
     private lateinit var nightscoutToken: EditText
     private lateinit var nightscoutApi: RadioGroup
     private lateinit var unit: RadioGroup
+    private lateinit var latestDevice: RadioGroup
+    private lateinit var deviceSince: EditText
     private lateinit var predictor: RadioGroup
     private lateinit var result: TextView
     private lateinit var shareFields: List<View>
@@ -140,6 +165,22 @@ class MainActivity : Activity() {
 
     /** Where the camera app is writing the meal photo being taken, if any. */
     private var pendingPhoto: File? = null
+
+    /** Bytes waiting for the system save dialog, and the sentence to show once they are written. */
+    private var pendingExport: ByteArray? = null
+    private var pendingExportNote: String = ""
+    private data class HistoryExport(val window: ExportWindow, val pdf: Boolean, val settings: PhoneSettings,
+        var dexcom: List<ExportRow>? = null, var carelink: List<ExportRow>? = null)
+    private var historyExport: HistoryExport? = null
+    private var historyImportSource = ""
+    private var historyInputPlan: HistoryExport? = null
+    private var historyPortalSource: String? = null
+    private var historyStatus: TextView? = null
+    private var historyDialog: AlertDialog? = null
+    private var historyActions: View? = null
+    private var historyWriting = false
+    private val historyLookups = mutableMapOf<String, Job>()
+    private val historyTempFiles = mutableSetOf<File>()
 
     /** Heart rate for the chart's track and the current value: Health Connect, or demo data. */
     private var heartSamples: List<HeartSample> = emptyList()
@@ -226,6 +267,10 @@ class MainActivity : Activity() {
             }
         }
         setContentView(root)
+        if (Build.VERSION.SDK_INT >= 33) onBackInvokedDispatcher.registerOnBackInvokedCallback(
+            android.window.OnBackInvokedDispatcher.PRIORITY_DEFAULT,
+            android.window.OnBackInvokedCallback { if (!navigateModelBack()) finish() },
+        )
         showSection(0)
         updateModelStatus()
 
@@ -269,13 +314,15 @@ class MainActivity : Activity() {
 
     private fun showOverflow(anchor: View) = PopupMenu(this, anchor).apply {
         menu.add(0, MENU_REFRESH, 0, "Refresh now")
-        menu.add(0, MENU_CHECK, 1, "Check prediction")
-        menu.add(0, MENU_HISTORY, 2, "Prediction history")
-        menu.add(0, MENU_PRIVACY, 3, "Heart-rate privacy")
-        menu.add(0, MENU_ABOUT, 4, "About ${getString(R.string.app_name)}")
+        menu.add(0, MENU_EXPORT, 1, "Export data")
+        menu.add(0, MENU_CHECK, 2, "Check prediction")
+        menu.add(0, MENU_HISTORY, 3, "Prediction history")
+        menu.add(0, MENU_PRIVACY, 4, "Heart-rate privacy")
+        menu.add(0, MENU_ABOUT, 5, "About ${getString(R.string.app_name)}")
         setOnMenuItemClickListener { item ->
             when (item.itemId) {
                 MENU_REFRESH -> scope.launch { render(repository.refresh()) }
+                MENU_EXPORT -> exportData()
                 MENU_CHECK -> checkPrediction()
                 MENU_HISTORY -> startActivity(Intent(this@MainActivity, PredictionHistoryActivity::class.java))
                 MENU_PRIVACY -> startActivity(Intent(this@MainActivity, HealthPrivacyActivity::class.java))
@@ -293,6 +340,376 @@ class MainActivity : Activity() {
             true
         }
     }.show()
+
+    private fun exportData() {
+        val today = LocalDate.now()
+        val draft = getSharedPreferences("export-draft", MODE_PRIVATE)
+        val savedDays = draft.getInt("days", 14).coerceIn(1, 90)
+        val oldAnchor = runCatching { LocalDate.parse(draft.getString("anchor", null)) }.getOrDefault(today)
+        val oldEnd = if (draft.getString("anchorKind", "end") == "start") oldAnchor.plusDays(savedDays - 1L) else oldAnchor
+        val savedEnd = runCatching { LocalDate.parse(draft.getString("end", null)) }.getOrDefault(oldEnd).coerceAtMost(today)
+        var dates = runCatching {
+            ExportDates(LocalDate.parse(draft.getString("start", null)), savedEnd)
+        }.getOrElse { ExportDates.endingOn(savedEnd, savedDays) }
+        var keepStart = draft.getBoolean("keepStart", false)
+        val days = EditText(this).apply {
+            inputType = InputType.TYPE_CLASS_NUMBER; setText(dates.days.toString()); hint = "1 to 90 days"
+            contentDescription = "Number of export days"
+        }
+        val startDate = Button(this).apply { Brand.style(this, false); contentDescription = "Choose export start date" }
+        val endDate = Button(this).apply { Brand.style(this, false); contentDescription = "Choose export end date" }
+        val span = hint("")
+        var updatingDays = false
+        fun renderDates(updateDays: Boolean = false) {
+            startDate.text = dates.start.toString(); endDate.text = dates.end.toString()
+            span.text = "${dates.start} to ${dates.end} · ${dates.days} ${if (dates.days == 1) "day" else "days"}, including both dates"
+            if (updateDays) {
+                updatingDays = true
+                days.setText(dates.days.toString()); days.error = null
+                updatingDays = false
+            }
+        }
+        startDate.setOnClickListener {
+            pickDate(dates.start, dates.end.minusDays(89), dates.end.coerceAtMost(today)) {
+                dates = dates.withStart(it); keepStart = true; renderDates(updateDays = true)
+            }
+        }
+        endDate.setOnClickListener {
+            pickDate(dates.end, dates.start, dates.start.plusDays(89).coerceAtMost(today)) {
+                dates = dates.withEnd(it); keepStart = false; renderDates(updateDays = true)
+            }
+        }
+        days.addTextChangedListener(object : android.text.TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
+                if (updatingDays) return
+                val countDays = s?.toString()?.toIntOrNull()
+                if (countDays == null || countDays !in 1..90) {
+                    span.text = "Enter 1 to 90 days, or choose the dates on the calendars."
+                    return
+                }
+                dates = dates.withDays(countDays, keepStart); renderDates()
+                days.error = if (dates.end.isAfter(today)) "This interval ends after today. Choose fewer days or an earlier start." else null
+            }
+            override fun afterTextChanged(s: android.text.Editable?) {}
+        })
+        val draftContent = runCatching { ExportContent.valueOf(draft.getString("content", "").orEmpty()) }.getOrDefault(ExportContent.SENSOR_AND_PUMP)
+        val content = radios(ExportContent.entries.map { it.name to it.label }, draftContent.name)
+        val format = radios(listOf("csv" to "CSV", "pdf" to "PDF report"), if (draft.getBoolean("pdf", false)) "pdf" else "csv").apply { orientation = RadioGroup.HORIZONTAL }
+        val incomplete = CheckBox(this).apply {
+            text = "Allow incomplete data before the latest device started"
+            setTextColor(Brand.TEXT)
+            isChecked = draft.getBoolean("incomplete", false)
+            visibility = if (draftContent == ExportContent.SENSOR_AND_PUMP) View.VISIBLE else View.GONE
+        }
+        content.setOnCheckedChangeListener { _, _ -> incomplete.visibility = if (selected(content) == ExportContent.SENSOR_AND_PUMP.name) View.VISIBLE else View.GONE }
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL; setPadding(dp(22), dp(8), dp(22), dp(8))
+            addView(label("Days (1 to 90)")); addView(days)
+            addView(hint("Changing Days keeps the date you chose most recently and moves the other. Both dates are included."))
+            addView(label("Start date")); addView(startDate)
+            addView(label("End date")); addView(endDate); addView(span)
+            addView(label("Data")); addView(content); addView(incomplete)
+            addView(label("Format")); addView(format)
+        }
+        renderDates()
+        val dialog = AlertDialog.Builder(this).setTitle("Export data").setView(ScrollView(this).apply { addView(box) })
+            .setPositiveButton("Continue", null).setNegativeButton("Cancel", null).create()
+        dialog.setOnShowListener {
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                val n = days.text.toString().toIntOrNull()
+                if (n == null || n !in 1..90) { days.error = "Enter 1 to 90 whole days"; return@setOnClickListener }
+                val end = dates.end
+                if (end.isAfter(today)) { days.error = "The interval ends after today"; return@setOnClickListener }
+                val chosen = ExportContent.valueOf(selected(content))
+                val allow = incomplete.isChecked
+                val pdf = selected(format) == "pdf"
+                draft.edit().putString("start", dates.start.toString()).putString("end", dates.end.toString())
+                    .putBoolean("keepStart", keepStart)
+                    .remove("anchor").remove("anchorKind")
+                    .putInt("days", n).putString("content", chosen.name).putBoolean("pdf", pdf)
+                    .putBoolean("incomplete", allow).apply()
+                dialog.dismiss()
+                val saved = store.load()
+                fun proceed(device: LatestDevice, since: LocalDate) {
+                    when (val request = ExportWindow.resolve(device, since, end, n, today, chosen, allow)) {
+                        is ExportRequest.Refused -> exportError(request.message)
+                        is ExportRequest.Ready -> {
+                            if (chosen == ExportContent.SENSOR_AND_PUMP && !allow) rememberDevice(device, since)
+                            beginHistoryExport(request.window, pdf)
+                        }
+                    }
+                }
+                if (chosen != ExportContent.SENSOR_AND_PUMP || allow) {
+                    proceed(saved.latestDevice ?: LatestDevice.MINIMED_PUMP, saved.latestDeviceSince ?: today)
+                } else if (saved.latestDevice != null && saved.latestDeviceSince != null) {
+                    proceed(saved.latestDevice, saved.latestDeviceSince)
+                } else {
+                    askLatestDevice(saved.latestDevice) { device -> askDeviceStart(device, saved.latestDeviceSince) { proceed(device, it) } }
+                }
+            }
+        }
+        dialog.show()
+    }
+
+    private fun askLatestDevice(current: LatestDevice?, onDevice: (LatestDevice) -> Unit) {
+        AlertDialog.Builder(this).setTitle("Most recently started device")
+            .setSingleChoiceItems(LatestDevice.entries.map { it.label }.toTypedArray(), LatestDevice.entries.indexOf(current)) { d, which ->
+                d.dismiss(); onDevice(LatestDevice.entries[which])
+            }.setNegativeButton("Cancel", null).show()
+    }
+
+    private fun askDeviceStart(device: LatestDevice, current: LocalDate?, onSince: (LocalDate) -> Unit) {
+        pickDate(current ?: LocalDate.now(), onPicked = onSince)
+    }
+
+    private fun beginHistoryExport(window: ExportWindow, pdf: Boolean) {
+        if (historyExport != null) return
+        // A killed process cannot run its normal cleanup. A new export owns no previous portal downloads.
+        cacheDir.listFiles()?.filter { it.isFile && ExportPortalActivity.validFileName(it.name) }?.forEach { it.delete() }
+        historyExport = HistoryExport(window, pdf, store.load())
+        val status = hint("Enter the login and selected dates yourself on each site, then download CSV. Only downloaded data is collected; no login fields are filled. Use data for the same person.")
+        historyStatus = status
+        val actions = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            addView(actionRow(R.drawable.ic_model, "Continue portal download", Brand.TEXT) { continueHistoryDownload() })
+            addView(actionRow(R.drawable.ic_model, "Select downloaded CSV", Brand.TEXT) {
+                nextHistoryPortal()?.let { chooseHistoryCsv(it.source) }
+            })
+        }
+        historyActions = actions
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL; setPadding(dp(22), dp(8), dp(22), dp(8))
+            addView(hint("${window.content.label}: ${window.start} to ${window.end}." +
+                if (window.clipped) " Start adjusted to the latest device's first day (${window.deviceSince})." else ""))
+            addView(actions)
+            addView(status)
+        }
+        val d = AlertDialog.Builder(this).setTitle("Export sources").setView(ScrollView(this).apply { addView(box) })
+            .setPositiveButton("Export", null).setNeutralButton("Use phone cache", null).setNegativeButton("Cancel", null).create()
+        historyDialog = d
+        d.setOnShowListener {
+            d.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener { scope.launch { finishHistoryExport(useCache = false) } }
+            d.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener { scope.launch { finishHistoryExport(useCache = true) } }
+        }
+        d.setOnDismissListener {
+            historyLookups.values.forEach { it.cancel() }; historyLookups.clear()
+            historyExport = null; historyStatus = null; historyDialog = null; historyActions = null
+            historyInputPlan = null; historyPortalSource = null
+            historyTempFiles.forEach { it.delete() }; historyTempFiles.clear()
+        }
+        d.show()
+        continueHistoryDownload()
+    }
+
+    private fun nextHistoryPortal(): ExportPortal? {
+        val plan = historyExport ?: return null
+        return ExportPortal.sequence(plan.window.content, plan.settings.latestDevice ?: plan.window.device)
+            .firstOrNull { if (it == ExportPortal.CARELINK) plan.carelink == null else plan.dexcom == null }
+    }
+
+    private fun continueHistoryDownload() {
+        if (historyWriting || historyInputPlan != null || historyLookups.values.any { it.isActive }) return
+        val plan = historyExport ?: return
+        if (!validPlan(plan)) { exportError("Sources changed. Start a new export."); return }
+        val portal = nextHistoryPortal()
+        historyActions?.visibility = if (portal == null) View.GONE else View.VISIBLE
+        historyDialog?.getButton(AlertDialog.BUTTON_POSITIVE)?.isEnabled = portal == null
+        if (portal == null) {
+            historyStatus?.text = "Downloads ready: ${plan.window.start} to ${plan.window.end}. Select Export to save the ${if (plan.pdf) "PDF report" else "CSV"}."
+            return
+        }
+        historyInputPlan = plan; historyPortalSource = portal.source
+        historyStatus?.text = "Waiting for ${portal.label} CSV (${plan.window.start} to ${plan.window.end})."
+        val portalIntent = Intent(this, ExportPortalActivity::class.java)
+            .putExtra("portal", portal.name).putExtra("country", plan.settings.carelinkCountry)
+            .putExtra("region", plan.settings.region.name).putExtra("start", plan.window.start.toString())
+            .putExtra("end", plan.window.end.toString())
+        if (BuildConfig.DEBUG && intent.getBooleanExtra("exportPortalPreview", false))
+            portalIntent.setClassName(this, "$packageName.ExportPortalPreviewActivity")
+        startActivityForResult(portalIntent, REQUEST_HISTORY_PORTAL)
+    }
+
+    private fun validPlan(plan: HistoryExport): Boolean = historyExport === plan &&
+        store.load().let { current ->
+            current.configurationKey == plan.settings.configurationKey &&
+                current.region == plan.settings.region && current.username == plan.settings.username &&
+                current.keyOf(LinkSource.CARELINK) == plan.settings.keyOf(LinkSource.CARELINK) &&
+                current.carelinkCountry == plan.settings.carelinkCountry
+        }
+
+    private fun chooseHistoryCsv(source: String) {
+        if (historyWriting || historyInputPlan != null || historyLookups.values.any { it.isActive }) return
+        historyInputPlan = historyExport ?: return
+        historyImportSource = source
+        startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE); type = "*/*"
+            putExtra(android.provider.DocumentsContract.EXTRA_INITIAL_URI, android.net.Uri.parse("content://com.android.providers.downloads.documents/root/downloads"))
+        }, REQUEST_HISTORY_CSV)
+    }
+
+    private fun readExportBytes(stream: java.io.InputStream): ByteArray {
+        val output = java.io.ByteArrayOutputStream()
+        val buffer = ByteArray(8192)
+        while (true) {
+            val n = stream.read(buffer); if (n < 0) break
+            require(output.size() + n <= HistoricalCsv.MAX_BYTES) { "CSV exceeds 20 MB" }
+            output.write(buffer, 0, n)
+        }
+        return output.toByteArray()
+    }
+
+    private fun importHistoryCsv(read: () -> String, source: String, cleanup: () -> Unit = {}) {
+        val plan = historyExport ?: run { cleanup(); return }
+        val zone = java.time.ZoneId.systemDefault()
+        fun parse(order: HistoricalCsv.DateOrder) {
+            historyLookups[source]?.cancel()
+            historyLookups[source] = scope.launch {
+                var imported = false
+                try {
+                    val rows = withContext(Dispatchers.IO) { HistoricalCsv.parse(read(), source, zone, order).filter { plan.window.contains(it.timeMillis, zone) } }
+                    if (!validPlan(plan)) return@launch
+                    require(rows.isNotEmpty()) { "This CSV has no events in ${plan.window.start} to ${plan.window.end}. Download the selected dates on the site." }
+                    require(rows.any(plan.window.content::includes)) { "This CSV has no selected ${plan.window.content.label.lowercase()} events. Choose the site's data export." }
+                    if (source == ExportRow.SOURCE_CARELINK) plan.carelink = rows else plan.dexcom = rows
+                    historyStatus?.text = "${if (source == ExportRow.SOURCE_CARELINK) "CareLink" else "Clarity"} ready: ${rows.size} events. Times use ${zone.id}."
+                    imported = true
+                } catch (e: CancellationException) { throw e }
+                catch (e: Exception) { if (validPlan(plan)) historyStatus?.text = e.message ?: "CSV import failed" }
+                finally { cleanup() }
+                if (imported && validPlan(plan)) window.decorView.post { if (validPlan(plan)) continueHistoryDownload() }
+            }
+        }
+        if (source == ExportRow.SOURCE_CARELINK) AlertDialog.Builder(this).setTitle("CareLink CSV dates")
+            .setMessage("For dates such as 01/02, which comes first? Times will use ${zone.id}.")
+            .setPositiveButton("Day / month") { _, _ -> parse(HistoricalCsv.DateOrder.DAY_FIRST) }
+            .setNegativeButton("Month / day") { _, _ -> parse(HistoricalCsv.DateOrder.MONTH_FIRST) }
+            .setNeutralButton("Cancel") { _, _ -> cleanup() }.setOnCancelListener { cleanup() }.show()
+        else parse(HistoricalCsv.DateOrder.DAY_FIRST)
+    }
+
+    private suspend fun finishHistoryExport(useCache: Boolean) {
+        if (historyWriting) return
+        if (historyInputPlan != null) return
+        if (historyLookups.values.any { it.isActive }) {
+            historyStatus?.text = "Wait for the current download or import to finish."
+            return
+        }
+        val plan = historyExport ?: return
+        if (!validPlan(plan)) { exportError("Sources changed. Start a new export."); return }
+        if (!useCache && ((plan.window.content.pump && plan.carelink == null) ||
+            (plan.window.content.sensor && plan.dexcom == null && plan.carelink == null))) {
+            historyStatus?.text = "Download or import the selected data first, or choose Use phone cache."
+            return
+        }
+        val cached = if (useCache) repository.exportTables(plan.window) else PhoneExport.empty(java.time.ZoneId.systemDefault())
+        if (!validPlan(plan)) return
+        val dexcom = plan.dexcom
+        val carelink = plan.carelink
+        val tables = withContext(Dispatchers.Default) { cached.withHistory(dexcom, carelink).within(plan.window).select(plan.window.content) }
+        if (tables.rows.isEmpty()) { historyStatus?.text = "No selected events in this interval."; return }
+        val coverage = tables.coverage(plan.window)
+        val save: () -> Unit = {
+            scope.launch {
+                if (validPlan(plan) && !historyWriting && historyLookups.values.none { it.isActive } && plan.dexcom === dexcom && plan.carelink === carelink) {
+                    historyWriting = true
+                    try {
+                        val bytes = withContext(Dispatchers.Default) {
+                            if (plan.pdf) ReportPdf.render(tables.report(plan.window)) else ExportCsv.bytes(ExportCsv.write(tables.rows, tables.zone))
+                        }
+                        if (validPlan(plan)) {
+                            val name = "glucowatch-${plan.window.content.name.lowercase()}-${plan.window.start}_${plan.window.end}.${if (plan.pdf) "pdf" else "csv"}"
+                            val mime = if (plan.pdf) "application/pdf" else "text/csv"
+                            historyDialog?.dismiss()
+                            val saved = runCatching { saveToDownloads(name, mime, bytes) }.isSuccess
+                            if (saved) AlertDialog.Builder(this@MainActivity).setTitle("Export saved").setMessage("$coverage\n\nSaved to Downloads as $name.")
+                                .setPositiveButton("Close", null).show()
+                            else {
+                                pendingExport = bytes; pendingExportNote = coverage
+                                startActivityForResult(Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
+                                    addCategory(Intent.CATEGORY_OPENABLE); type = mime; putExtra(Intent.EXTRA_TITLE, name)
+                                }, REQUEST_EXPORT)
+                            }
+                        }
+                    } catch (e: CancellationException) { throw e }
+                    catch (_: Exception) { exportError("Could not generate the export. Try a smaller interval.") }
+                    finally { historyWriting = false }
+                }
+            }
+        }
+        // Even after both devices started, uploads can be missing. Never claim that dates guarantee coverage.
+        if (!plan.window.allowIncomplete && tables.hasGaps(plan.window)) {
+            AlertDialog.Builder(this).setTitle("Incomplete coverage").setMessage("$coverage\nSome days have no selected data. Export the available rows?")
+                .setPositiveButton("Export available data") { _, _ -> save() }.setNegativeButton("Back", null).show()
+        } else save()
+    }
+
+    private fun exportError(message: String) {
+        AlertDialog.Builder(this).setTitle("Export").setMessage(message).setPositiveButton("Close", null).show()
+    }
+
+    /** Writes an export into the shared Downloads collection. No storage permission on API 29+. */
+    private fun saveToDownloads(name: String, type: String, bytes: ByteArray) {
+        val values = ContentValues().apply {
+            put(MediaStore.Downloads.DISPLAY_NAME, name)
+            put(MediaStore.Downloads.MIME_TYPE, type)
+            put(MediaStore.Downloads.IS_PENDING, 1)
+        }
+        val uri = contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
+            ?: error("Downloads is not available")
+        val wrote = runCatching {
+            contentResolver.openOutputStream(uri)?.use { it.write(bytes) } ?: error("Could not write $name")
+        }
+        if (wrote.isFailure) {
+            contentResolver.delete(uri, null, null)
+            throw wrote.exceptionOrNull() ?: error("Could not write $name")
+        }
+        values.clear()
+        values.put(MediaStore.Downloads.IS_PENDING, 0)
+        contentResolver.update(uri, values, null, null)
+    }
+
+    private fun rememberDevice(device: LatestDevice, since: LocalDate) {
+        store.save(store.load().copy(latestDevice = device, latestDeviceSince = since))
+        if (::latestDevice.isInitialized) {
+            LatestDevice.entries.forEachIndexed { index, item ->
+                (latestDevice.getChildAt(index) as? RadioButton)?.isChecked = item == device
+            }
+            deviceSince.setText(since.toString())
+        }
+    }
+
+    private fun pickDate(initial: LocalDate, minimum: LocalDate? = null,
+                         maximum: LocalDate = LocalDate.now(), onPicked: (LocalDate) -> Unit) {
+        val today = LocalDate.now()
+        val day = if (initial.isAfter(today)) today else initial
+        DatePickerDialog(this, android.R.style.Theme_Material_Dialog_Alert, { _, year, month, dayOfMonth ->
+            onPicked(LocalDate.of(year, month + 1, dayOfMonth))
+        }, day.year, day.monthValue - 1, day.dayOfMonth).apply {
+            val cal = java.util.Calendar.getInstance()
+            cal.set(maximum.year, maximum.monthValue - 1, maximum.dayOfMonth, 23, 59, 59)
+            datePicker.maxDate = cal.timeInMillis
+            minimum?.let {
+                cal.set(it.year, it.monthValue - 1, it.dayOfMonth, 0, 0, 0)
+                datePicker.minDate = cal.timeInMillis
+            }
+            show()
+        }
+    }
+
+    private fun carelinkNote(exported: PhoneExport): String = when {
+        !exported.hasCareLink -> "CareLink is not selected in Connect. The file has column headers only."
+        exported.carelinkRows.isEmpty() -> "No CareLink data is cached yet. The file has column headers only."
+        else -> "${exported.carelinkRows.size} CareLink rows. Times are UTC and this phone's time zone. A basal rate is a setting, not a dose."
+    }
+
+    private fun combinedNote(exported: PhoneExport): String = buildString {
+        append("${exported.carelinkRows.size} CareLink rows, ${exported.dexcomRows.size} Dexcom rows.")
+        if (!exported.hasCareLink) append(" CareLink is not selected.")
+        if (!exported.hasDexcom) append(" Dexcom is not the glucose source.")
+    }
+
+    private data class ExportChoice(val name: String, val type: String, val bytes: ByteArray, val note: String)
 
     private fun bottomNavigation(): View {
         val bar = LinearLayout(this).apply {
@@ -624,6 +1041,8 @@ class MainActivity : Activity() {
             }
         }
         unit = radios(GlucoseUnit.entries.map { it.name to it.label }, s.unit.name)
+        latestDevice = radios(LatestDevice.entries.map { it.name to it.label }, s.latestDevice?.name.orEmpty())
+        deviceSince = field("yyyy-MM-dd", s.latestDeviceSince?.toString().orEmpty(), 0)
         result = TextView(this).apply { textSize = 14f; setTextColor(Brand.TEXT); setPadding(0, dp(10), 0, 0) }
 
         shareFields = listOf(label("Account"), username, password, showPassword, label("Region"), region,
@@ -642,7 +1061,12 @@ class MainActivity : Activity() {
                         .putExtra("country", carelinkCountry.text.toString().trim().uppercase()))
                 }
             },
-            hint("Your CareLink username and password are entered only on Medtronic's browser page and are never stored by GlucoPhone. The country selects your account's regional login server. Sign in with a care partner account linked to the patient. To share the combined chart, choose Phone app on the watch."),
+            hint(
+                if (BuildConfig.DEBUG && BuildConfig.DEV_CARELINK_PASSWORD.isNotEmpty())
+                    "This debug build fills the CareLink username and password on Medtronic's page. GlucoPhone does not save that password. Solve the captcha there. The country selects the account's regional login server."
+                else
+                    "Your CareLink username and password are entered only on Medtronic's browser page and are never stored by GlucoPhone. The country selects your account's regional login server. Sign in with a care partner account linked to the patient. To share the combined chart, choose Phone app on the watch.",
+            ),
         )
         configUrl = field("https://your-site.example/config.yaml", "", InputType.TYPE_TEXT_VARIATION_URI)
         configUrl.isSaveEnabled = false
@@ -682,6 +1106,10 @@ class MainActivity : Activity() {
             nightscoutFields.forEach(::addView)
             carelinkFields.forEach(::addView)
             addView(label("Units")); addView(unit)
+            addView(label("Latest device"))
+            addView(hint("Combined exports start on this day unless you allow incomplete data. Sensor-only or pump-only exports can use earlier dates."))
+            addView(latestDevice)
+            addView(label("Device start date")); addView(deviceSince)
             addView(Button(this@MainActivity).apply { text = "Save & test"; Brand.style(this, true); setOnClickListener { saveAndTest() } })
             addView(result)
         })
@@ -689,59 +1117,70 @@ class MainActivity : Activity() {
 
     private fun buildModel(model: LinearLayout, s: PhoneSettings) {
         predictor = radios(Predictors.all.map { it.id to it.displayName } + (OnnxPredictor.ID to "Imported ONNX"), s.predictorId)
-        predictor.setOnCheckedChangeListener { _, _ -> saveModelChoice() }
-        modelInput = field("Model name, owner/model, or link", s.modelAddress, InputType.TYPE_TEXT_VARIATION_URI)
-        modelToken = field("hf_… (optional for public models)", s.huggingFaceToken,
-            InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD)
-        modelToken.isSaveEnabled = false
+        modelInput = field("owner/model or Hugging Face link", s.modelAddress, InputType.TYPE_TEXT_VARIATION_URI)
+        modelToken = field("Optional access token", s.huggingFaceToken, InputType.TYPE_TEXT_VARIATION_PASSWORD)
+        otherModelToken = field("Optional access token", s.otherModelToken, InputType.TYPE_TEXT_VARIATION_PASSWORD)
+        listOf(modelToken, otherModelToken).forEach {
+            it.textSize = 16f; it.typeface = Typeface.DEFAULT
+            it.isSaveEnabled = false
+            it.importantForAutofill = View.IMPORTANT_FOR_AUTOFILL_NO
+        }
         modelFiles = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        ownFiles = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         modelStatus = hint("")
         modelForecastNote = hint("")
-
         model.addView(card().apply {
             addView(cardTitle("Glucose prediction"))
-            addView(hint("The phone forecasts with this model, for itself and for a paired watch. " +
-                "The watch must choose “Phone app model” for its forecast."))
+            addView(hint("Choose Linear trend or an imported ONNX model. Paired watches can use this forecast by selecting Phone app model."))
             addView(predictor)
-            addView(modelStatus)
             addView(modelForecastNote)
         })
-        model.addView(card().apply {
-            addView(cardTitle("Your own ONNX model"))
-            addView(hint("Search by part of a model name, enter owner/model, or paste a link. The phone finds " +
-                "its ONNX files for you. Nothing is downloaded until you choose a file."))
-            addView(label("Hugging Face model"))
-            addView(modelInput)
-            addView(label("Hugging Face access token"))
+        modelMenu = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            addView(actionRow(R.drawable.ic_model, "GlucoseDao organization", Brand.TEXT) { showCatalog() })
+            addView(actionRow(R.drawable.ic_model, "Import another model", Brand.TEXT) { showOwn() })
+        }
+        catalogPanel = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            visibility = View.GONE
+            addView(modelBackRow())
+            addView(label("GlucoseDao access token (optional)"))
             addView(modelToken)
-            addView(hint("Saved privately on this phone and sent only to huggingface.co to download models. Glucose data stays on your devices."))
+            addView(hint("Uses your existing HF token. Leave blank for public models. Change it, then refresh the list."))
             addView(Button(this@MainActivity).apply {
-                text = "Save model settings"; Brand.style(this, false)
-                setOnClickListener { saveModelSettings(); modelStatus.text = "Model address and access token saved." }
-            })
-            addView(LinearLayout(this@MainActivity).apply {
-                addView(Button(this@MainActivity).apply {
-                    text = "Find model"; Brand.style(this, true); setOnClickListener { findModels() }
-                }, weight())
-                addView(Button(this@MainActivity).apply {
-                    text = "Import a file"; Brand.style(this, false); setOnClickListener { chooseModelFile() }
-                }, weight())
-            })
-            addView(Button(this@MainActivity).apply {
-                text = "GlucoseDao models"; Brand.style(this, false)
+                text = "Refresh models"; Brand.style(this, false)
                 setOnClickListener { listGlucoseDao() }
             })
-            addView(hint("Loads the ONNX models published under GlucoseDao, newest first. Tap a name, then tap its file. " +
-                "A paired watch shows that forecast when its source is Phone app and its forecast is Phone app model."))
             addView(modelFiles)
-            addView(hint("Repository imports use the model’s metadata and scalers to prepare inputs and show its maximum forecast horizon. " +
-                "Standalone files support small dense models taking float32 [1,12] or [1,24] five-minute mg/dL values " +
-                "and returning [1,1–24] future mg/dL values."))
+        }
+        ownPanel = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            visibility = View.GONE
+            addView(modelBackRow())
+            addView(label("Model address")); addView(modelInput)
+            addView(label("Repository access token (optional)")); addView(otherModelToken)
+            addView(hint("Separate from your GlucoseDao token. Leave blank for public repositories. Tokens stay in private phone storage and are sent only to huggingface.co."))
+            addView(Button(this@MainActivity).apply {
+                text = "Find ONNX model"; Brand.style(this, true); setOnClickListener { findModels() }
+            })
+            addView(ownFiles)
+            addView(Button(this@MainActivity).apply {
+                text = "Import downloaded ONNX file"; Brand.style(this, false); setOnClickListener { chooseModelFile() }
+            })
+            addView(hint("Repository downloads also import the model and its metadata/scalers. Local imports need no token."))
+        }
+        importCard = card().apply {
+            addView(cardTitle("Imported ONNX"))
+            addView(modelMenu); addView(catalogPanel); addView(ownPanel)
+            addView(modelStatus)
             removeButton = Button(this@MainActivity).apply {
                 text = "Remove imported model"; Brand.style(this, false); setOnClickListener { removeModel() }
             }
             addView(removeButton)
-        })
+        }
+        model.addView(importCard)
+        predictor.setOnCheckedChangeListener { _, _ -> saveModelChoice() }
+        importCard.visibility = if (s.predictorId == OnnxPredictor.ID) View.VISIBLE else View.GONE
     }
 
     private fun buildWatch(watch: LinearLayout) {
@@ -768,79 +1207,156 @@ class MainActivity : Activity() {
 
     // ---------------------------------------------------------------- model import
 
+    private fun showModelMenu() {
+        if (modelInstalling) return
+        saveModelSettings()
+        modelLookup?.cancel()
+        modelPage = "menu"
+        modelMenu.visibility = View.VISIBLE
+        catalogPanel.visibility = View.GONE
+        ownPanel.visibility = View.GONE
+        updateModelStatus()
+    }
+
+    private fun showCatalog() {
+        if (modelInstalling) return
+        modelPage = "catalog"
+        modelMenu.visibility = View.GONE
+        catalogPanel.visibility = View.VISIBLE
+        ownPanel.visibility = View.GONE
+        listGlucoseDao()
+    }
+
+    private fun showOwn() {
+        if (modelInstalling) return
+        modelLookup?.cancel()
+        modelPage = "own"
+        modelMenu.visibility = View.GONE
+        catalogPanel.visibility = View.GONE
+        ownPanel.visibility = View.VISIBLE
+        modelStatus.text = modelStore.origin?.let { "Current model: $it" }.orEmpty()
+    }
+
+    private fun modelBackRow() = actionRow(R.drawable.ic_chevron, "Back to model sources", Brand.TEXT) { showModelMenu() }.apply {
+        getChildAt(0).rotation = 180f
+        getChildAt(childCount - 1).visibility = View.GONE
+    }
+
+    private fun navigateModelBack(): Boolean {
+        if (modelInstalling) return true
+        if (sections[2].visibility != View.VISIBLE || modelPage == "menu") return false
+        showModelMenu()
+        return true
+    }
+
+    @Deprecated("Legacy dispatch for Android 10-12; Android 13+ uses OnBackInvokedDispatcher")
+    override fun onBackPressed() {
+        if (!navigateModelBack()) super.onBackPressed()
+    }
+
     private fun findModels() {
+        if (modelInstalling) return
         val settings = saveModelSettings()
         val typed = settings.modelAddress
-        modelFiles.removeAllViews()
+        ownFiles.removeAllViews()
+        if (typed.isBlank()) {
+            modelStatus.text = "Enter a model address first."
+            return
+        }
         modelStatus.text = "Looking up $typed…"
         modelLookup?.cancel()
         modelLookup = scope.launch {
             try {
                 if (HuggingFaceModel.isSearch(typed)) {
-                    val models = modelStore.searchHuggingFace(typed, settings.huggingFaceToken)
+                    val models = modelStore.searchHuggingFace(typed, settings.otherModelToken)
                     if (!isActive) return@launch
+                    ownFiles.removeAllViews()
                     modelStatus.text = if (models.isEmpty()) "No matching models. Try another name or enter owner/model."
                         else "Choose a repository to find its ONNX files."
                     models.forEach { model ->
-                        modelFiles.addView(actionRow(R.drawable.ic_model, model.repo, Brand.TEXT) { findRepo(model.repo) })
+                        ownFiles.addView(actionRow(R.drawable.ic_model, model.repo, Brand.TEXT) { findRepo(model.repo, ownFiles) })
                     }
                 } else {
-                    val listing = modelStore.listHuggingFace(typed, settings.huggingFaceToken)
-                    if (isActive) showFiles(listing)
+                    val listing = modelStore.listHuggingFace(typed, settings.otherModelToken)
+                    if (isActive) showFiles(ownFiles, listing)
                 }
             } catch (error: Exception) {
-                if (isActive) modelStatus.text = error.message ?: "Could not find that model"
+                if (isActive) {
+                    modelStatus.text = error.message ?: "Could not find that model"
+                }
             }
         }
     }
 
     private fun listGlucoseDao() {
+        if (modelInstalling) return
         val settings = saveModelSettings()
-        modelFiles.removeAllViews()
-        modelStatus.text = "Checking GlucoseDao…"
+        val known = HuggingFaceModel.glucoseDaoChoices()
+        showGlucoseDao(known)
+        modelStatus.text = "Choose a model. Nothing is downloaded until you tap its file."
         modelLookup?.cancel()
         modelLookup = scope.launch {
             try {
-                val models = modelStore.listOrganization("GlucoseDao", settings.huggingFaceToken)
-                if (!isActive) return@launch
-                modelStatus.text = if (models.isEmpty()) "GlucoseDao has no ONNX model this token can read."
-                    else "Choose a model. Nothing is downloaded until you tap its file."
-                val counts = models.groupingBy { HuggingFaceModel.choiceLabel(it.repo) }.eachCount()
-                models.forEach { model ->
-                    val label = HuggingFaceModel.choiceLabel(model.repo)
-                    val shown = if (counts[label] == 1) label else model.repo.substringAfter('/')
-                    modelFiles.addView(actionRow(R.drawable.ic_model, shown, Brand.TEXT) { findRepo(model.repo) })
-                }
+                val live = modelStore.listOrganization("GlucoseDao", settings.huggingFaceToken)
+                if (!isActive || live.isEmpty()) return@launch
+                val seen = live.map { it.repo }.toSet()
+                showGlucoseDao(live + known.filter { it.repo !in seen })
             } catch (error: Exception) {
-                if (isActive) modelStatus.text = error.message ?: "Could not list GlucoseDao models"
+                if (isActive && known.isEmpty()) modelStatus.text = error.message ?: "Could not list GlucoseDao models"
             }
         }
     }
 
-    private fun findRepo(repo: String) {
-        modelInput.setText(repo)
-        findModels()
+    private fun showGlucoseDao(models: List<HuggingFaceModel>) {
+        modelFiles.removeAllViews()
+        val counts = models.groupingBy { HuggingFaceModel.choiceLabel(it.repo) }.eachCount()
+        models.forEach { model ->
+            val label = HuggingFaceModel.choiceLabel(model.repo)
+            val shown = if (counts[label] == 1) label else model.repo.substringAfter('/')
+            modelFiles.addView(actionRow(R.drawable.ic_model, shown, Brand.TEXT) { findRepo(model.repo, modelFiles) })
+        }
+    }
+
+    private fun findRepo(repo: String, target: LinearLayout) {
+        if (target === ownFiles) modelInput.setText(repo)
+        val settings = saveModelSettings()
+        target.removeAllViews()
+        modelStatus.text = "Looking up ${HuggingFaceModel.choiceLabel(repo)}…"
+        modelLookup?.cancel()
+        modelLookup = scope.launch {
+            try {
+                val listing = modelStore.listHuggingFace(repo, if (target === modelFiles) settings.huggingFaceToken else settings.otherModelToken)
+                if (isActive) showFiles(target, listing)
+            } catch (error: Exception) {
+                if (isActive) {
+                    modelStatus.text = error.message ?: "Could not find that model"
+                }
+            }
+        }
     }
 
     private fun saveModelSettings(): PhoneSettings = store.load().copy(
         modelAddress = modelInput.text.toString().trim(),
         huggingFaceToken = modelToken.text.toString().trim(),
+        otherModelToken = otherModelToken.text.toString().trim(),
     ).also(store::save)
 
-    private fun showFiles(listing: PhoneModelStore.Listing) {
-        modelStatus.text = "${listing.model.label}: ${listing.files.size} .onnx file" +
+    private fun showFiles(target: LinearLayout, listing: PhoneModelStore.Listing) {
+        target.removeAllViews()
+        modelStatus.text = "${HuggingFaceModel.choiceLabel(listing.model.repo)}: ${listing.files.size} .onnx file" +
             (if (listing.files.size == 1) "" else "s") + ". Tap one to import it."
         listing.files.take(MAX_LISTED_FILES).forEach { file ->
-            modelFiles.addView(actionRow(R.drawable.ic_model, file, Brand.TEXT) {
+            target.addView(actionRow(R.drawable.ic_model, "Download & import $file", Brand.TEXT) {
                 modelStatus.text = "Downloading and checking $file…"
-                modelFiles.removeAllViews()
+                target.removeAllViews()
                 val settings = saveModelSettings()
-                scope.launch { installModel { modelStore.importHuggingFace(listing.model, file, settings.huggingFaceToken) } }
+                modelImport = scope.launch { installModel { modelStore.importHuggingFace(listing.model, file, if (target === modelFiles) settings.huggingFaceToken else settings.otherModelToken) } }
             })
         }
     }
 
     private fun chooseModelFile() {
+        if (modelInstalling) return
         val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
             addCategory(Intent.CATEGORY_OPENABLE)
             type = "*/*"
@@ -851,11 +1367,11 @@ class MainActivity : Activity() {
     }
 
     private suspend fun installModel(action: suspend () -> String) {
-        val outcome = runCatching { action() }
-        modelStatus.text = outcome.fold(
-            onSuccess = { "Ready: $it" },
-            onFailure = { "Could not use this model: ${it.message ?: it.javaClass.simpleName}" },
-        )
+        if (modelInstalling) return
+        modelInstalling = true
+        val outcome = try {
+            runCatching { action() }.onFailure { if (it is CancellationException) throw it }
+        } finally { modelInstalling = false }
         removeButton.visibility = if (modelStore.available) View.VISIBLE else View.GONE
         if (outcome.isSuccess) {
             for (i in 0 until predictor.childCount) {
@@ -865,16 +1381,20 @@ class MainActivity : Activity() {
             store.save(store.load().copy(predictorId = OnnxPredictor.ID))
             render(repository.state())
         }
+        modelStatus.text = outcome.fold(
+            onSuccess = { "Ready: $it" },
+            onFailure = { "Could not use this model: ${it.message ?: it.javaClass.simpleName}" },
+        )
     }
 
     private fun saveModelChoice() {
         val selected = selected(predictor)
-        if (selected == OnnxPredictor.ID && !modelStore.available) {
-            modelStatus.text = "Import a compatible ONNX file first."
-            (predictor.getChildAt(0) as RadioButton).isChecked = true
-            return
-        }
         store.save(store.load().copy(predictorId = selected))
+        val imported = selected == OnnxPredictor.ID
+        val opening = imported && importCard.visibility != View.VISIBLE
+        importCard.visibility = if (imported) View.VISIBLE else View.GONE
+        if (!imported) { modelLookup?.cancel(); modelImport?.cancel() }
+        if (opening) showModelMenu()
         render(repository.state())
     }
 
@@ -889,6 +1409,7 @@ class MainActivity : Activity() {
         (predictor.getChildAt(0) as RadioButton).isChecked = true
         store.save(store.load().copy(predictorId = Predictors.all.first().id))
         modelFiles.removeAllViews()
+        ownFiles.removeAllViews()
         updateModelStatus()
         render(repository.state())
     }
@@ -915,6 +1436,7 @@ class MainActivity : Activity() {
     override fun onDestroy() {
         PairingWindow.listener = null
         scope.cancel()
+        historyTempFiles.forEach { it.delete() }; historyTempFiles.clear()
         super.onDestroy()
     }
 
@@ -937,6 +1459,33 @@ class MainActivity : Activity() {
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
         when (requestCode) {
+            REQUEST_HISTORY_PORTAL -> {
+                val plan = historyInputPlan
+                val source = historyPortalSource
+                historyInputPlan = null; historyPortalSource = null
+                if (resultCode != RESULT_OK) return
+                val name = data?.getStringExtra("csvFile")?.takeIf(ExportPortalActivity::validFileName) ?: return
+                val file = cacheDir.resolve(name)
+                if (plan == null || !validPlan(plan) || source != data.getStringExtra("source")) { file.delete(); return }
+                if (file.isFile && source != null) {
+                    historyTempFiles += file
+                    importHistoryCsv({ file.inputStream().use { readExportBytes(it).toString(Charsets.UTF_8) } }, source) {
+                        file.delete(); historyTempFiles -= file
+                    }
+                }
+            }
+            REQUEST_HISTORY_CSV -> {
+                val plan = historyInputPlan
+                historyInputPlan = null
+                val uri = data?.data?.takeIf { resultCode == RESULT_OK } ?: return
+                if (plan == null || !validPlan(plan)) return
+                val selectedSource = historyImportSource
+                importHistoryCsv({
+                    contentResolver.openInputStream(uri)?.use { stream ->
+                        readExportBytes(stream).toString(Charsets.UTF_8)
+                    } ?: error("Could not open CSV")
+                }, selectedSource)
+            }
             REQUEST_CONFIG -> {
                 val uri = data?.data?.takeIf { resultCode == RESULT_OK } ?: return
                 importConfiguration { PhoneConfigurationImport(this@MainActivity).file(uri) }
@@ -944,14 +1493,35 @@ class MainActivity : Activity() {
             REQUEST_MODEL -> {
                 val uri = data?.data?.takeIf { resultCode == RESULT_OK } ?: return
                 modelStatus.text = "Checking model…"
-                modelFiles.removeAllViews()
-                scope.launch { installModel { modelStore.importFile(uri) } }
+                val target = if (ownPanel.visibility == View.VISIBLE) ownFiles else modelFiles
+                target.removeAllViews()
+                modelImport = scope.launch { installModel { modelStore.importFile(uri) } }
             }
             REQUEST_FOOD_PHOTO -> {
                 val photo = pendingPhoto
                 pendingPhoto = null
                 if (resultCode == RESULT_OK && photo != null && photo.isFile) askCarbs(photo)
                 else photo?.delete()
+            }
+            REQUEST_EXPORT -> {
+                val bytes = pendingExport
+                pendingExport = null
+                val uri = data?.data?.takeIf { resultCode == RESULT_OK }
+                if (bytes == null || uri == null) {
+                    pendingExportNote = ""
+                    return
+                }
+                val wrote = runCatching {
+                    contentResolver.openOutputStream(uri)?.use { it.write(bytes) } ?: error("The phone could not open the file")
+                }.isSuccess
+                val note = pendingExportNote
+                pendingExportNote = ""
+                AlertDialog.Builder(this)
+                    .setTitle(if (wrote) "Export saved" else "Export failed")
+                    .setMessage(if (wrote) "$note\n\nThe file is health data. Keep it private."
+                        else "The phone could not write that file.")
+                    .setPositiveButton("Close", null)
+                    .show()
             }
         }
     }
@@ -1115,16 +1685,16 @@ class MainActivity : Activity() {
             forecastValue.text = forecast?.let { u.format(it.mgdl) } ?: "—"
             forecastValue.setTextColor(forecast?.let { Brand.glucoseColor(it.mgdl.toInt()) } ?: Brand.TEXT)
         }
-        if (state.settings.predictorId == OnnxPredictor.ID && !modelStore.available) {
-            modelStatus.text = "Import a compatible ONNX model to forecast with it."
-        }
-        if (state.settings.predictorId == OnnxPredictor.ID) {
-            (modelStore.predictor() as? glucowatch.core.GlucoseDaoPredictor)?.let { model ->
-                modelForecastNote.text = listOfNotNull(model.displayName,
+        modelForecastNote.text = if (state.settings.predictorId == OnnxPredictor.ID) {
+            val model = modelStore.predictor() as? glucowatch.core.GlucoseDaoPredictor
+            when {
+                model != null -> listOfNotNull(model.displayName,
                     "Supports ${model.contract.horizonSteps * 5} min · showing ${model.defaultHorizonMinutes} min",
                     model.lastProblem).joinToString(" · ")
+                modelStore.available -> "Imported model is ready."
+                else -> "Imported ONNX stays selected. Choose a GlucoseDao model or your own file."
             }
-        }
+        } else ""
         state.lastError?.takeIf { state.settings.source != LinkSource.DEMO }?.let { sourceLine.append("\n⚠ $it") }
     }
 
@@ -1178,8 +1748,14 @@ class MainActivity : Activity() {
         carelinkStatus.text = PhoneCareLinkStore(this).load()?.let { "Signed in (${it.country})" } ?: "Not signed in"
     }
 
-    private fun connectionSettings(): PhoneSettings {
+    private fun connectionSettings(): PhoneSettings? {
         val old = store.load()
+        val sinceText = deviceSince.text.toString().trim()
+        val since = if (sinceText.isEmpty()) null else runCatching { LocalDate.parse(sinceText) }.getOrElse {
+            result.text = "Device start date must be yyyy-MM-dd."
+            return null
+        }
+        val deviceName = latestDevice.findViewById<RadioButton>(latestDevice.checkedRadioButtonId)?.tag as? String
         return old.copy(
             source = LinkSource.valueOf(selected(source)),
             dexcomNotifications = dexcomNotifications.isChecked,
@@ -1190,6 +1766,8 @@ class MainActivity : Activity() {
             nightscoutToken = nightscoutToken.text.toString().trim(),
             nightscoutApi = NightscoutApi.valueOf(selected(nightscoutApi)),
             unit = GlucoseUnit.valueOf(selected(unit)),
+            latestDevice = deviceName?.let { runCatching { LatestDevice.valueOf(it) }.getOrNull() },
+            latestDeviceSince = since,
             alsoFrom = therapySources.filterValues { it.isChecked }.keys.toSet(),
             carelinkCountry = carelinkCountry.text.toString().trim().uppercase(),
         )
@@ -1197,7 +1775,7 @@ class MainActivity : Activity() {
 
     private fun saveAndTest() {
         val old = store.load()
-        val new = connectionSettings()
+        val new = connectionSettings() ?: return
         val providerChanged = old.glucoseProvider != new.glucoseProvider &&
             old.source != LinkSource.DEMO && new.source != LinkSource.DEMO
         if (providerChanged) {
@@ -1344,7 +1922,7 @@ class MainActivity : Activity() {
         username.setText(s.username); password.setText(s.password)
         nightscoutUrl.setText(s.nightscoutUrl); nightscoutToken.setText(s.nightscoutToken)
         carelinkCountry.setText(s.carelinkCountry)
-        modelInput.setText(s.modelAddress); modelToken.setText(s.huggingFaceToken)
+        modelInput.setText(s.modelAddress); modelToken.setText(s.huggingFaceToken); otherModelToken.setText(s.otherModelToken)
         checkRadio(source, s.source.name); checkRadio(region, s.region.name)
         checkRadio(nightscoutApi, s.nightscoutApi.name); checkRadio(unit, s.unit.name)
         dexcomNotifications.isChecked = s.dexcomNotifications
@@ -1532,6 +2110,9 @@ class MainActivity : Activity() {
         const val REQUEST_HEART = 3
         const val REQUEST_FOOD_PHOTO = 4
         const val REQUEST_CONFIG = 5
+        const val REQUEST_EXPORT = 6
+        const val REQUEST_HISTORY_CSV = 7
+        const val REQUEST_HISTORY_PORTAL = 8
 
         /** The period presets under the chart; pinching moves freely between them. */
         val PERIODS = listOf(3, 6, 12, 24)
@@ -1540,6 +2121,7 @@ class MainActivity : Activity() {
         const val HEART_HOURS = 48
 
         const val MENU_REFRESH = 1
+        const val MENU_EXPORT = 6
         const val MENU_CHECK = 2
         const val MENU_HISTORY = 3
         const val MENU_PRIVACY = 4
