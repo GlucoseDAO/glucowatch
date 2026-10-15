@@ -16,7 +16,7 @@ import sys
 import time
 from pathlib import Path
 
-from emulator_tools import ROOT, emulator_command, sdk_dir, sdk_tool, start_emulator
+from emulator_tools import ROOT, emulator_command, sdk_dir, sdk_tool, start_emulator, wait_until_closed
 
 PACKAGES = {
     'phone': 'io.github.antonkulaga.glucowatch.phone',
@@ -134,6 +134,7 @@ def main():
                 device('emu', 'kill', timeout=10)
             except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
                 process.terminate()
+            wait_until_closed(port)
         raise
     print(f'[run] App ready on {serial}. Leave the window open and rerun this command after editing.', flush=True)
     print(f'[run] Close the emulator window to stop it, or run: "{adb}" -s {serial} emu kill', flush=True)

@@ -1,5 +1,7 @@
 """Launch safeguards, tested without booting a VM or contacting a data source."""
+import socket
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -72,6 +74,61 @@ class EmulatorLaunchTests(unittest.TestCase):
             popen.assert_not_called()
             self.assertEqual(mocked_socket.return_value.close.call_count, 2)
 
+    def test_live_listener_is_refused_without_waiting(self):
+        # create_server listens with SO_REUSEADDR on POSIX, as the emulator's sockets may.
+        with socket.create_server(('127.0.0.1', 0)) as server, \
+                patch.object(tools.time, 'sleep', side_effect=AssertionError('waited for a live port')):
+            port = server.getsockname()[1]
+            self.assertTrue(tools.port_in_use(port))
+            with self.assertRaisesRegex(RuntimeError, f'{port} is occupied'):
+                tools.wait_for_port(port)
+
+    def test_connections_left_by_a_closed_listener_are_not_a_live_emulator(self):
+        for reuse in (True, False):
+            with self.subTest(reuse=reuse):
+                port = left_in_time_wait(reuse)
+                self.assertFalse(tools.port_listening(port))
+                try:
+                    tools.wait_for_port(port, timeout=0)
+                except RuntimeError as error:
+                    self.assertIn('closed connections', str(error))
+
+    @unittest.skipIf(sys.platform == 'win32', 'Windows binds over TIME_WAIT without a reuse flag')
+    def test_probe_passes_over_time_wait_of_a_reusable_listener(self):
+        port = left_in_time_wait(reuse=True)
+        with socket.socket() as plain:
+            # The probe this replaced: refused for about a minute after an emulator closed.
+            self.assertRaises(OSError, plain.bind, ('127.0.0.1', port))
+        self.assertFalse(tools.port_in_use(port))
+
+    def test_closed_connections_are_waited_out_once_and_then_launch_proceeds(self):
+        with patch.object(tools, 'port_in_use', side_effect=[True, True, False]), \
+                patch.object(tools, 'port_listening', return_value=False), \
+                patch.object(tools.time, 'sleep') as sleep, patch('builtins.print') as printed:
+            tools.wait_for_port(5580)
+        self.assertEqual(sleep.call_count, 2)
+        self.assertEqual(printed.call_count, 1)
+
+    def test_closed_connections_that_outlast_the_timeout_stop_the_launch(self):
+        with patch.object(tools, 'port_in_use', return_value=True), \
+                patch.object(tools, 'port_listening', return_value=False), \
+                patch.object(tools.time, 'sleep'), patch('builtins.print'):
+            with self.assertRaisesRegex(RuntimeError, '5581 is still held by closed connections'):
+                tools.wait_for_port(5581, timeout=0)
+
+    def test_closing_waits_until_the_emulator_stops_listening(self):
+        with patch.object(tools, 'port_listening', side_effect=[True, False, False]) as listening, \
+                patch.object(tools.time, 'sleep') as sleep:
+            self.assertTrue(tools.wait_until_closed(5580))
+        self.assertEqual(sleep.call_count, 1)
+        self.assertEqual([c.args[0] for c in listening.call_args_list], [5580, 5580, 5581])
+
+    def test_closing_gives_up_with_a_message_instead_of_hanging(self):
+        with patch.object(tools, 'port_listening', return_value=True), \
+                patch.object(tools.time, 'sleep'), patch('builtins.print') as printed:
+            self.assertFalse(tools.wait_until_closed(5554, timeout=0))
+        self.assertIn('5554 is still running', printed.call_args.args[0])
+
     def test_log_is_retained_in_private_output_directory(self):
         with tempfile.TemporaryDirectory() as folder:
             with patch.object(tools, 'ROOT', Path(folder)), patch.object(tools.socket, 'socket'), \
@@ -82,6 +139,23 @@ class EmulatorLaunchTests(unittest.TestCase):
             self.assertEqual(log.parent, Path(folder) / 'data/output/emulator')
             self.assertEqual(popen.call_args.kwargs['stderr'], subprocess.STDOUT)
             self.assertNotEqual(popen.call_args.kwargs['stdout'], subprocess.DEVNULL)
+
+
+def left_in_time_wait(reuse):
+    """A loopback port whose listener closed after the server side ended a connection first,
+    which leaves that side in TIME_WAIT, as a killed emulator leaves its console and adb ports."""
+    server = socket.socket()
+    if reuse:
+        server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    server.bind(('127.0.0.1', 0))
+    server.listen()
+    port = server.getsockname()[1]
+    client = socket.create_connection(('127.0.0.1', port))
+    accepted, _ = server.accept()
+    accepted.close()
+    client.close()
+    server.close()
+    return port
 
 
 if __name__ == '__main__':

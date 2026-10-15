@@ -84,8 +84,12 @@ The watch console ports are 5580, 5582 and 5584, keeping every adb port (console
 the emulator's recommended range. On Windows, both capture scripts use software graphics,
 two virtual CPU cores, and disable Guest ANGLE. Turning off Guest ANGLE alone still allowed
 the emulator to select host Vulkan/OpenGL on a machine with repeated Windows freezes.
-Startup logs stay under gitignored `data/output/emulator/`; occupied ports fail before a second
-VM starts. For a visible window and interactive testing, use
+Startup logs stay under gitignored `data/output/emulator/`. A port that a running or offline
+emulator still listens on stops the launch before a second VM starts. A port held only by
+connections a closed emulator left behind (TIME_WAIT, about a minute on Linux) is waited for,
+with a message, instead. The scripts that close an emulator wait until it has exited, so a run
+started straight after does not find it half closed and try to reuse it. For a visible window
+and interactive testing, use
 `uv run scripts/run_emulator.py phone` or `uv run scripts/run_emulator.py watch`.
 
 ### Prediction captures

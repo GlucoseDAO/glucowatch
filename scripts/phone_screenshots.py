@@ -19,7 +19,7 @@ from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont
 
 from screenshots import dotenv, sdk_dir, install_model_bundle
-from emulator_tools import sdk_tool, start_emulator
+from emulator_tools import sdk_tool, start_emulator, wait_until_closed
 
 ROOT = Path(__file__).resolve().parent.parent
 SDK = sdk_dir()
@@ -233,6 +233,7 @@ def main():
     finally:
         if not args.keep:
             adb('emu', 'kill', check=False)
+            wait_until_closed(PORT)
 
 
 if __name__ == '__main__':

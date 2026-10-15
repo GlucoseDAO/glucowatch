@@ -49,7 +49,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from emulator_tools import sdk_dir, sdk_tool, start_emulator
+from emulator_tools import sdk_dir, sdk_tool, start_emulator, wait_until_closed
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -460,6 +460,7 @@ def capture_watch(watch, plans, out, build, keep, model_bundle=None, phone_snaps
     finally:
         if started and not keep:
             adb('emu', 'kill', check=False)
+            wait_until_closed(PORT)
 
 if __name__ == '__main__':
     main()

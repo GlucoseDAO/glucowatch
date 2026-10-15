@@ -4,6 +4,7 @@ import ipaddress
 import socket
 import subprocess
 import sys
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -79,23 +80,74 @@ def emulator_command(sdk, avd, port, *, headless=True, disable_guest_angle=False
     return command
 
 
+def port_in_use(number):
+    """True when the port cannot be bound, which a live emulator always causes."""
+    probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        if sys.platform == 'win32':
+            # Refuse any socket bound to the port. Windows already lets a bind pass over
+            # TIME_WAIT, and SO_REUSEADDR there would let the probe share a live port.
+            probe.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+        else:
+            # Linux and macOS refuse a plain bind for about a minute after an emulator
+            # closes, while its connections wait in TIME_WAIT. SO_REUSEADDR passes over
+            # those when the closed listener allowed reuse, as the emulator's do, and
+            # still refuses a port that a running emulator listens on.
+            probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        probe.bind(('127.0.0.1', number))
+        return False
+    except OSError:
+        return True
+    finally:
+        probe.close()
+
+
+def port_listening(number):
+    """True when something accepts connections on the port, as a running or offline emulator does."""
+    try:
+        with socket.create_connection(('127.0.0.1', number), timeout=2):
+            return True
+    except OSError:
+        return False
+
+
+def wait_for_port(number, timeout=240):
+    """Refuses a port a live emulator holds at once; waits out connections a closed one left.
+
+    The probe passes over those leftovers only when the closed listener allowed reuse, so a
+    port that refuses the bind but accepts no connection is waited for, not reported busy.
+    """
+    deadline = time.monotonic() + timeout
+    waiting = False
+    while port_in_use(number):
+        if port_listening(number):
+            raise RuntimeError(f'Emulator port {number} is occupied; close the existing emulator first')
+        if time.monotonic() >= deadline:
+            raise RuntimeError(f'Emulator port {number} is still held by closed connections after {timeout} s; try again shortly')
+        if not waiting:
+            print(f'[emulator] port {number} is held by connections from a closed emulator; waiting for its release', flush=True)
+            waiting = True
+        time.sleep(1)
+
+
+def wait_until_closed(port, timeout=60):
+    """`adb emu kill` returns while the emulator is still shutting down. Wait until it stops
+    listening, so a run started next does not find it half closed and try to reuse it."""
+    deadline = time.monotonic() + timeout
+    while port_listening(port) or port_listening(port + 1):
+        if time.monotonic() >= deadline:
+            print(f'[emulator] the emulator on port {port} is still running {timeout} s after it was told to close', flush=True)
+            return False
+        time.sleep(0.5)
+    return True
+
+
 def start_emulator(sdk, avd, port, *, headless=True, disable_guest_angle=False):
     command = emulator_command(sdk, avd, port, headless=headless, disable_guest_angle=disable_guest_angle)
     # An offline emulator still owns its ports. Do not spawn a second copy just
     # because `adb devices` did not report it as ready.
-    sockets = []
-    try:
-        for number in (port, port + 1):
-            probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            sockets.append(probe)
-            if sys.platform == 'win32':
-                probe.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
-            probe.bind(('127.0.0.1', number))
-    except OSError as error:
-        raise RuntimeError(f'Emulator port {number} is occupied; close the existing emulator first') from error
-    finally:
-        for probe in sockets:
-            probe.close()
+    for number in (port, port + 1):
+        wait_for_port(number)
     folder = ROOT / 'data/output/emulator'
     folder.mkdir(parents=True, exist_ok=True)
     log_path = folder / f'{avd}-{port}-{datetime.now():%Y%m%d-%H%M%S}.log'
