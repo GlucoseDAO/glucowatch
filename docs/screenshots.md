@@ -26,6 +26,29 @@ The files are unmodified copies of these generated captures:
 | `watch-app.png` | `watch6-classic-43/demo-app.png` |
 | `phone-today.png` | `phone-galaxy-s22/demo-today.png` |
 | `phone-log.png` | `phone-galaxy-s22/demo-today-bottom.png` |
+| `report-overview.png` | page 1 of `standard-14-sensor_and_pump.pdf` (see below) |
+| `report-daily.png` | page 6 of `standard-14-sensor_and_pump.pdf` (see below) |
+
+The phone images were refreshed on 2026-10-15 from the code after `09fac18`, when the
+Today header gained **Downloads**. The watch images were not recaptured: no watch code
+changed since 0.1.12.
+
+The report pages come from the debug-only `ReportPreviewActivity`, which renders entirely
+synthetic data with the production `ReportPdf` (no account, network or personal data).
+With the phone emulator still running (`phone_screenshots.py demo --keep`):
+
+```bash
+P=io.github.antonkulaga.glucowatch.phone
+adb -s emulator-5554 shell am start -S -W --activity-clear-task -n $P/.ReportPreviewActivity --ez all_cases true
+# wait until the screen says "Synthetic reports ready in private cache."
+adb -s emulator-5554 exec-out run-as $P cat cache/standard-14-sensor_and_pump.pdf > data/output/report.pdf
+pdftoppm -r 150 -png -singlefile -f 1 -l 1 data/output/report.pdf docs/images/screenshots/report-overview
+pdftoppm -r 150 -png -singlefile -f 6 -l 6 data/output/report.pdf docs/images/screenshots/report-daily
+```
+
+`pdftoppm` is from Poppler. The page numbers assume the 14-day fixture in `ReportPreviewData`;
+check the pages after it changes. Page 3 (time of day) is left out on purpose: the synthetic
+days repeat, so its hourly ranges are flat and do not show what the chart does with real data.
 
 To refresh them, run those two commands, inspect the resulting images, and copy only
 the files listed above. Do not copy an overview from a real-data run. Avoid the phone's

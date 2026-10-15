@@ -76,9 +76,24 @@ There is no GlucoWatch server and no Google Play Services dependency.
   a file or Hugging Face. Inference runs on the phone. See the [prediction guide](docs/prediction.md).
 - **Easier watch setup:** relay readings and forecasts over Bluetooth, or copy your Dexcom
   or Nightscout login to the watch so you can avoid its keyboard.
+- **Exports and PDF reports:** save 1 to 90 days of sensor and pump history as a CSV or a
+  printable report with an overview, glucose and insulin by time of day, and a page per day.
+  See [export files](docs/export.md).
+
+<table>
+  <tr>
+    <th>Report overview</th>
+    <th>A day in the report</th>
+  </tr>
+  <tr>
+    <td><img src="docs/images/screenshots/report-overview.png" width="300" alt="PDF report overview page with average glucose, time in range, coverage, insulin totals and time-of-day charts"></td>
+    <td><img src="docs/images/screenshots/report-daily.png" width="300" alt="PDF report daily page with the glucose trace, bolus and basal layers, daily totals and the recorded events"></td>
+  </tr>
+</table>
 
 All screenshots above use **synthetic demo data**, captured on Galaxy Watch6 Classic
 43 mm and Galaxy S22-sized emulators. Demo heart rates and forecasts are illustrative.
+The report pages are from a synthetic 14-day report rendered by the phone app's own PDF code.
 
 > GlucoWatch and GlucoPhone are not medical devices. Do not use them for treatment decisions.
 > Keep using your CGM's official app and alarms.
