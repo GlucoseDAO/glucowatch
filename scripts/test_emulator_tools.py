@@ -35,6 +35,7 @@ class EmulatorLaunchTests(unittest.TestCase):
         self.assertEqual(command[command.index('-gpu') + 1], 'software')
         self.assertIn('-no-snapshot', command)
         self.assertIn('-GuestAngle', command)
+        self.assertIn('-Vulkan', command)
         self.assertNotIn('-no-window', command)
         self.assertNotIn('host', command)
 
@@ -48,6 +49,7 @@ class EmulatorLaunchTests(unittest.TestCase):
             command = tools.emulator_command(Path('sdk'), 'watch', 5580)
         self.assertIn('-no-window', command)
         self.assertNotIn('-gpu', command)
+        self.assertNotIn('-Vulkan', command)
 
     def test_phone_guest_angle_workaround_is_kept_on_linux(self):
         with patch.object(tools.sys, 'platform', 'linux'):

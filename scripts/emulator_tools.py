@@ -69,6 +69,9 @@ def emulator_command(sdk, avd, port, *, headless=True, disable_guest_angle=False
         # Auto selected host Vulkan/OpenGL on the machine with repeated full
         # Windows freezes. Disabling GuestAngle alone did not bypass that path.
         command += ['-gpu', 'software', '-cores', '2']
+        # Software mode still advertises guest Vulkan. Avoid that browser rendering
+        # path too: a CareLink Firefox ANR was followed by a stuck display/shutdown.
+        command += ['-feature', '-Vulkan']
     if sys.platform == 'win32' or disable_guest_angle:
         command += ['-feature', '-GuestAngle']
     if headless:

@@ -58,6 +58,29 @@ Index,Date,Time,Sensor Glucose (mg/dL),Bolus Volume Delivered (U),Basal Rate (U/
         assertFailsWith<IllegalArgumentException> { HistoricalCsv.records("a,\"unfinished") }
     }
 
+    @Test fun `CareLink year first slash dates and repeated device headings are imported`() {
+        val header = "Index;Date;Time;Bolus Volume Delivered (U);Sensor Glucose (mg/dL);Raw-Type"
+        val csv = "Synthetic metadata\n$header\n1,00000;2026/10/13;12:00:00;1.5;;Bolus\n\n" +
+            "Synthetic device;Synthetic model;Synthetic serial;Synthetic firmware;Synthetic type\n" +
+            "$header\n2,00000;2026/10/13;12:05:00;;125;Sensor\n"
+        assertEquals(ExportRow.SOURCE_CARELINK, HistoricalCsv.source(csv))
+        assertFalse(HistoricalCsv.inspectDateOrder(csv).remember)
+        for (order in HistoricalCsv.DateOrder.entries) {
+            val rows = HistoricalCsv.parse(csv, ExportRow.SOURCE_CARELINK, ZoneOffset.UTC, order)
+            assertEquals(2, rows.size)
+            assertEquals(1.5, rows.first().insulinU)
+            assertEquals(125, rows.last().glucoseMgdl)
+            assertEquals(LocalDate.of(2026, 10, 13).atTime(12, 0).toInstant(ZoneOffset.UTC).toEpochMilli(), rows.first().timeMillis)
+        }
+    }
+
+    @Test fun `invalid indexed CareLink event before repeated header is never treated as metadata`() {
+        val header = "Index;Date;Time;Bolus Volume Delivered (U);Sensor Glucose (mg/dL);Raw-Type"
+        assertFailsWith<IllegalArgumentException> {
+            HistoricalCsv.parse("$header\n1,00000;2026/02/31;12:00:00\n$header\n2,00000;2026/10/13;12:05:00;;125;Sensor", ExportRow.SOURCE_CARELINK, ZoneOffset.UTC)
+        }
+    }
+
     @Test fun `report denominators and empty days use requested window including pump only`() {
         val w = window(ExportContent.PUMP)
         val time = since.atStartOfDay(ZoneOffset.UTC).toInstant().toEpochMilli()

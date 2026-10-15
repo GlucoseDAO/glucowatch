@@ -51,6 +51,9 @@ open class ExportPortalActivity : Activity() {
     private var downloading = false
     private var finalizing = false
     private var returned = false
+    private var externalLaunched = false
+    private var pickerOpen = false
+    private val browserPreferences by lazy { getSharedPreferences("export-browser", MODE_PRIVATE) }
     private var blobOutput: java.io.OutputStream? = null
     private var blobBytes = 0
     private val downloadFile by lazy { cacheDir.resolve("$FILE_PREFIX${java.util.UUID.randomUUID()}.csv") }
@@ -90,24 +93,12 @@ open class ExportPortalActivity : Activity() {
                 setOnCheckedChangeListener { _, checked -> fitToScreen = checked; fitPage(activeWeb()) }
             }, LinearLayout.LayoutParams(0, -2, 1f))
             })
-            addView(LinearLayout(this@ExportPortalActivity).apply {
-                addView(Button(this@ExportPortalActivity).apply {
-                    text = "Open in browser"; Brand.style(this, false)
-                    setOnClickListener { openBrowser(address) }
-                }, LinearLayout.LayoutParams(0, -2, 1f))
-                addView(Button(this@ExportPortalActivity).apply {
-                    text = "Select downloaded CSV"; Brand.style(this, false)
-                    setOnClickListener {
-                        if (!downloading) startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
-                            addCategory(Intent.CATEGORY_OPENABLE); type = "*/*"
-                            putExtra(DocumentsContract.EXTRA_INITIAL_URI, Uri.parse("content://com.android.providers.downloads.documents/root/downloads"))
-                        }, REQUEST_CSV)
-                    }
-                }, LinearLayout.LayoutParams(0, -2, 1f))
-            })
             addView(Button(this@ExportPortalActivity).apply {
                 text = "Reload page"; Brand.style(this, false)
-                setOnClickListener { reloadPortal(address) }
+                setOnClickListener {
+                    if (preferExternalBrowser()) { if (!openBrowser(address)) reloadPortal(address) }
+                    else reloadPortal(address)
+                }
             })
             addView(webContainer, LinearLayout.LayoutParams(-1, 0, 1f))
             setOnApplyWindowInsetsListener { v, insets ->
@@ -118,7 +109,22 @@ open class ExportPortalActivity : Activity() {
                 insets
             }
         })
+        if (preferExternalBrowser() && openBrowser(address)) return
         loadPortal(web, address)
+    }
+
+    protected open fun preferExternalBrowser() = javaClass == ExportPortalActivity::class.java &&
+        browserPreferences.getBoolean("external.${portal.name}", true)
+    protected open fun externalAddress(address: String) = address
+
+    private fun selectBrowserCsv() {
+        if (pickerOpen || downloading || returned) return
+        pickerOpen = true
+        status.text = "Select the CSV you just downloaded. The next source opens after import."
+        startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE); type = "*/*"
+            putExtra(DocumentsContract.EXTRA_INITIAL_URI, Uri.parse("content://com.android.providers.downloads.documents/root/downloads"))
+        }, REQUEST_CSV)
     }
 
     private fun activeWeb() = popupOrigins.keys.lastOrNull() ?: web
@@ -159,7 +165,10 @@ open class ExportPortalActivity : Activity() {
                     if (request.url.scheme == "blob") { requestCsv(view, request.url.toString()); return true }
                     if (request.url.toString() == "about:blank" && view in popupOrigins) return false
                     val allowed = portal.permits(request.url.toString(), country, region)
-                    if (!allowed) status.text = "This link is outside ${portal.label}. Open the site in your browser, then select the downloaded CSV below."
+                    if (!allowed) {
+                        status.text = "This link needs a full browser. Opening ${portal.label}."
+                        if (javaClass == ExportPortalActivity::class.java) openBrowser(initialAddress)
+                    }
                     return !allowed
                 }
                 override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? =
@@ -174,20 +183,25 @@ open class ExportPortalActivity : Activity() {
                     handler.postDelayed({ if (view.parent != null) fitPage(view) }, 750)
                 }
                 override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
-                    if (request.isForMainFrame) status.text = "${portal.label} could not load (browser error ${error.errorCode}). Check the connection or open it in your browser."
+                    if (request.isForMainFrame) {
+                        status.text = "${portal.label} could not load (browser error ${error.errorCode}). Check the connection."
+                        if (javaClass == ExportPortalActivity::class.java) openBrowser(initialAddress)
+                    }
                 }
                 override fun onRenderProcessGone(view: WebView, detail: RenderProcessGoneDetail): Boolean {
                     if (blobWeb === view) failBlob("The portal renderer closed during CSV capture.")
                     csvCapture.remove(view)
                     popupOrigins.remove(view); gestures.remove(view)
                     (view.parent as? ViewGroup)?.removeView(view); view.destroy()
-                    status.text = "The portal page stopped. Tap Reload page to reopen it. Your export dates are kept."
+                    status.text = "The portal page stopped. Opening the browser. Your export dates are kept."
+                    if (javaClass == ExportPortalActivity::class.java) openBrowser(initialAddress)
                     return true
                 }
             }
             webViewRenderProcessClient = object : WebViewRenderProcessClient() {
                 override fun onRenderProcessUnresponsive(view: WebView, renderer: WebViewRenderProcess?) {
-                    status.text = "The portal page is not responding. Tap Reload page or use a full browser. Your export dates are kept."
+                    status.text = "The portal page is not responding. Opening the browser. Your export dates are kept."
+                    if (javaClass == ExportPortalActivity::class.java) openBrowser(initialAddress)
                 }
                 override fun onRenderProcessResponsive(view: WebView, renderer: WebViewRenderProcess?) {}
             }
@@ -223,7 +237,8 @@ open class ExportPortalActivity : Activity() {
         }
         status.text = "Collecting the CSV from the signed-in page…"
         if (!csvCapture.request(view, address)) {
-            status.text = "CSV capture needs a newer Android System WebView. Update WebView or use a full browser, then select the file from Downloads."
+            status.text = "CSV capture needs a newer Android System WebView. Opening the browser."
+            if (javaClass == ExportPortalActivity::class.java) openBrowser(portal.url(country, region))
         }
     }
 
@@ -301,21 +316,15 @@ open class ExportPortalActivity : Activity() {
         """.trimIndent(), null)
     }
 
-    private fun openBrowser(address: String) {
-        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(address)).addCategory(Intent.CATEGORY_BROWSABLE)
-        // Query a neutral HTTPS site so provider-specific deep-link apps are not mistaken for browsers.
-        val browserIntent = Intent(Intent.ACTION_VIEW, Uri.parse("https://example.com")).addCategory(Intent.CATEGORY_BROWSABLE)
-        val browsers = packageManager.queryIntentActivities(browserIntent, 0).filter {
-            it.activityInfo.packageName != "org.chromium.webview_shell" && it.activityInfo.packageName != packageName
-        }
-        if (browsers.isEmpty()) {
-            status.text = "No full browser is available. The WebView test browser cannot save downloads. Use CSV capture here, or install a full browser. Browser files are in Downloads, not automatically in GlucoPhone."
-            return
-        }
-        val preferred = packageManager.resolveActivity(browserIntent, android.content.pm.PackageManager.MATCH_DEFAULT_ONLY)?.activityInfo?.packageName
-        val browser = browsers.firstOrNull { it.activityInfo.packageName == preferred } ?: browsers.first()
-        runCatching { startActivity(intent.setPackage(browser.activityInfo.packageName)) }
-            .onFailure { status.text = "The browser could not open. Use CSV capture here or select an existing downloaded CSV." }
+    private fun openBrowser(address: String): Boolean {
+        if (externalLaunched || returned || downloading) return externalLaunched
+        val opened = ExportBrowser.open(this, externalAddress(address), REQUEST_BROWSER, preferChromium = portal == ExportPortal.CARELINK)
+        if (opened) {
+            externalLaunched = true
+            browserPreferences.edit().putBoolean("external.${portal.name}", true).apply()
+            status.text = "Download ${portal.label} CSV in the browser, then open or share that CSV with GlucoPhone. Closing the browser opens the file picker directly."
+        } else status.text = "A full browser is needed for downloads. The WebView test shell cannot save files; using the built-in portal."
+        return opened
     }
 
     private fun reloadPortal(address: String) {
@@ -359,7 +368,8 @@ open class ExportPortalActivity : Activity() {
 
     private fun failBlob(reason: String) {
         closeBlob(); downloadFile.delete(); downloading = false
-        status.text = "$reason Open the site in your browser, download CSV, then select it below."
+        status.text = reason
+        if (!isFinishing && javaClass == ExportPortalActivity::class.java) openBrowser(portal.url(country, region))
     }
 
     private fun collect(read: suspend () -> Unit) {
@@ -414,7 +424,7 @@ open class ExportPortalActivity : Activity() {
     /** Scoped-storage download owned by this app; no broad storage permission is needed. */
     private suspend fun saveDownloadedCsv(): String {
         val prefix = if (BuildConfig.DEBUG && javaClass.simpleName == "ExportPortalPreviewActivity") "synthetic-" else ""
-        val provider = if (portal == ExportPortal.CARELINK) "carelink" else "clarity"
+        val provider = if (HistoricalCsv.source(downloadFile.readText()) == ExportPortal.CARELINK.source) "carelink" else "clarity"
         val name = "$prefix$provider-history-${java.time.LocalDateTime.now().format(java.time.format.DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss"))}-${java.util.UUID.randomUUID().toString().take(8)}.csv"
         val values = ContentValues().apply {
             put(MediaStore.Downloads.DISPLAY_NAME, name)
@@ -446,6 +456,12 @@ open class ExportPortalActivity : Activity() {
     @Deprecated("One foreground document import")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == REQUEST_BROWSER && externalLaunched) {
+            externalLaunched = false
+            selectBrowserCsv()
+            return
+        }
+        if (requestCode == REQUEST_CSV) pickerOpen = false
         if (requestCode == REQUEST_CSV && resultCode == RESULT_OK) {
             val uri = data?.data ?: return
             collect {
@@ -468,6 +484,7 @@ open class ExportPortalActivity : Activity() {
 
     companion object {
         private const val REQUEST_CSV = 1
+        private const val REQUEST_BROWSER = 2
         const val FILE_PREFIX = "portal-export-"
         fun validFileName(value: String) = value.matches(Regex("portal-export-[0-9a-fA-F-]{36}\\.csv"))
     }

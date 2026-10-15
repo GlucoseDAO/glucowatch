@@ -31,6 +31,7 @@ import android.widget.RadioGroup
 import android.widget.ScrollView
 import android.widget.TextView
 import androidx.core.content.FileProvider
+import glucowatch.core.ExportCollection
 import glucowatch.core.ExportContent
 import glucowatch.core.ExportDates
 import glucowatch.core.ExportRow
@@ -69,6 +70,8 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlin.coroutines.resume
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -83,6 +86,9 @@ class MainActivity : Activity() {
     private val scope = MainScope()
     private var foregroundRefresh: Job? = null
     private val store by lazy { PhoneSettingsStore(this) }
+    private val historyStore by lazy { HistoryExportStore(this) }
+    private val exportDownloadFolder by lazy { ExportDownloadFolder(this) }
+    private var folderWatch: Job? = null
     private val repository by lazy { PhoneRepository(this) }
     private val watches by lazy { PairedWatches(this) }
     private val modelStore by lazy { PhoneModelStore(this) }
@@ -170,9 +176,13 @@ class MainActivity : Activity() {
     private var pendingExport: ByteArray? = null
     private var pendingExportNote: String = ""
     private data class HistoryExport(val window: ExportWindow, val pdf: Boolean, val settings: PhoneSettings,
-        var dexcom: List<ExportRow>? = null, var carelink: List<ExportRow>? = null)
+        var dexcom: List<ExportRow>? = null, var carelink: List<ExportRow>? = null,
+        val startedAt: Long = System.currentTimeMillis()) {
+        val collection = ExportCollection(window.content, settings.latestDevice ?: window.device)
+    }
     private var historyExport: HistoryExport? = null
-    private var historyImportSource = ""
+    private var restoringHistory = false
+    private var queuedHistoryUri: android.net.Uri? = null
     private var historyInputPlan: HistoryExport? = null
     private var historyPortalSource: String? = null
     private var historyStatus: TextView? = null
@@ -285,9 +295,74 @@ class MainActivity : Activity() {
         updatePairing()
 
         render(repository.state())
+        if (intent.action == CsvImportActivity.ACTION_IMPORT) {
+            queuedHistoryUri = intent.data
+            setIntent(Intent(intent).setAction(Intent.ACTION_MAIN).setData(null))
+        }
+        restoreHistoryExport()
         refreshHeartRate()
         // Ask for Nearby devices only once a watch is paired; pairing asks too.
         if (watches.all().isNotEmpty()) withBluetooth { LinkService.update(this) }
+    }
+
+    override fun onNewIntent(next: Intent) {
+        super.onNewIntent(next)
+        if (BuildConfig.DEBUG && intent.getBooleanExtra("exportPortalPreview", false)) {
+            next.putExtra("exportPortalPreview", true).putExtra("externalFixture", intent.getBooleanExtra("externalFixture", false))
+                .putExtra("fixtureBase", intent.getStringExtra("fixtureBase"))
+        }
+        setIntent(next)
+        if (next.action == CsvImportActivity.ACTION_IMPORT) {
+            queuedHistoryUri = next.data
+            setIntent(Intent(next).setAction(Intent.ACTION_MAIN).setData(null))
+            if (historyExport == null) restoreHistoryExport() else consumeSharedHistoryCsv()
+        }
+    }
+
+    private fun restoreHistoryExport() {
+        if (restoringHistory || historyExport != null) return
+        restoringHistory = true
+        scope.launch {
+            try {
+                val settings = store.load()
+                val restored = withContext(Dispatchers.IO) {
+                    historyStore.load(settings)?.let { saved ->
+                        val rows = saved.files.mapValues { (portal, file) ->
+                            HistoricalCsv.parse(file.first, portal.source, java.time.ZoneId.systemDefault(), file.second)
+                                .filter { saved.window.contains(it.timeMillis, java.time.ZoneId.systemDefault()) }
+                        }
+                        saved to rows
+                    }
+                }
+                if (restored != null && historyExport == null && !isFinishing) {
+                    beginHistoryExport(restored.first.window, restored.first.pdf, restored.second, resumeOnly = true, startedAt = restored.first.createdAt)
+                }
+            } catch (e: CancellationException) { throw e }
+            catch (_: Exception) { historyStore.clear() }
+            finally {
+                restoringHistory = false
+                if (isActive) {
+                    if (queuedHistoryUri != null) consumeSharedHistoryCsv()
+                    else if (historyExport != null) continueHistoryDownload()
+                }
+            }
+        }
+    }
+
+    private fun consumeSharedHistoryCsv() {
+        val uri = queuedHistoryUri ?: return
+        queuedHistoryUri = null
+        if (historyExport == null) { exportError("Start an export before opening or sharing a portal CSV."); return }
+        historyInputPlan = null; historyPortalSource = null
+        importHistoryCsv({ contentResolver.openInputStream(uri)?.use { readExportBytes(it).toString(Charsets.UTF_8) }
+            ?: error("Could not open CSV") })
+    }
+
+    private fun openDownloads() {
+        val folder = android.net.Uri.parse("content://com.android.externalstorage.documents/document/primary%3ADownload%2FGlucoPhone")
+        runCatching { startActivity(Intent(Intent.ACTION_VIEW).setDataAndType(folder, "vnd.android.document/directory")) }
+            .recoverCatching { startActivity(Intent(android.app.DownloadManager.ACTION_VIEW_DOWNLOADS)) }
+            .onFailure { exportError("No file manager can open Downloads on this device.") }
     }
 
     // ---------------------------------------------------------------- chrome
@@ -303,6 +378,10 @@ class MainActivity : Activity() {
             text = getString(R.string.app_name); textSize = 24f
             setTextColor(Brand.TEXT); typeface = Typeface.DEFAULT_BOLD
         }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        addView(Button(this@MainActivity).apply {
+            text = "Downloads"; textSize = 12f; contentDescription = "Open Downloads folder"
+            Brand.style(this, false); setOnClickListener { openDownloads() }
+        }, LinearLayout.LayoutParams(-2, dp(44)))
         addView(ImageView(this@MainActivity).apply {
             setImageResource(R.drawable.ic_more)
             imageTintList = android.content.res.ColorStateList.valueOf(Brand.MUTED)
@@ -463,19 +542,25 @@ class MainActivity : Activity() {
         pickDate(current ?: LocalDate.now(), onPicked = onSince)
     }
 
-    private fun beginHistoryExport(window: ExportWindow, pdf: Boolean) {
+    private fun beginHistoryExport(window: ExportWindow, pdf: Boolean,
+                                   restored: Map<ExportPortal, List<ExportRow>>? = null, resumeOnly: Boolean = false, startedAt: Long = System.currentTimeMillis()) {
         if (historyExport != null) return
         // A killed process cannot run its normal cleanup. A new export owns no previous portal downloads.
         cacheDir.listFiles()?.filter { it.isFile && ExportPortalActivity.validFileName(it.name) }?.forEach { it.delete() }
-        historyExport = HistoryExport(window, pdf, store.load())
+        val plan = HistoryExport(window, pdf, store.load(), startedAt = startedAt)
+        restored?.forEach { (portal, rows) ->
+            if (portal == ExportPortal.CARELINK) plan.carelink = rows else plan.dexcom = rows
+            plan.collection.accept(portal)
+        }
+        if (restored == null) historyStore.begin(window, pdf, plan.settings, plan.startedAt)
+        historyExport = plan
         val status = hint("Enter the login and selected dates yourself on each site, then download CSV. Only downloaded data is collected; no login fields are filled. Use data for the same person.")
         historyStatus = status
         val actions = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            addView(actionRow(R.drawable.ic_model, "Continue portal download", Brand.TEXT) { continueHistoryDownload() })
-            addView(actionRow(R.drawable.ic_model, "Select downloaded CSV", Brand.TEXT) {
-                nextHistoryPortal()?.let { chooseHistoryCsv(it.source) }
-            })
+            addView(actionRow(R.drawable.ic_model, "Resume next download", Brand.TEXT) { continueHistoryDownload() })
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S)
+                addView(actionRow(R.drawable.ic_model, "Automatic download folder", Brand.TEXT) { chooseExportDownloadFolder() })
         }
         historyActions = actions
         val box = LinearLayout(this).apply {
@@ -493,19 +578,103 @@ class MainActivity : Activity() {
             d.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener { scope.launch { finishHistoryExport(useCache = true) } }
         }
         d.setOnDismissListener {
-            historyLookups.values.forEach { it.cancel() }; historyLookups.clear()
+            historyLookups.values.toList().forEach { it.cancel() }; historyLookups.clear()
+            stopExportDownloadWatch()
+            historyStore.clear()
             historyExport = null; historyStatus = null; historyDialog = null; historyActions = null
             historyInputPlan = null; historyPortalSource = null
             historyTempFiles.forEach { it.delete() }; historyTempFiles.clear()
         }
         d.show()
-        continueHistoryDownload()
+        watchExportDownloadFolder(plan)
+        if (!resumeOnly) continueHistoryDownload()
+    }
+
+    private fun chooseExportDownloadFolder() {
+        AlertDialog.Builder(this).setTitle("Automatic browser downloads")
+            .setMessage("Choose Downloads/GlucoPhone in device storage once, and set your browser's download location to the same folder. New CSVs will be checked and imported during an active export, then the next source opens. If Android cannot confirm a file is ready, use Open or Share in the browser to send it to GlucoPhone.")
+            .setPositiveButton("Choose folder") { _, _ ->
+                startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).apply {
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)
+                    putExtra(android.provider.DocumentsContract.EXTRA_INITIAL_URI,
+                        android.net.Uri.parse("content://com.android.externalstorage.documents/document/primary%3ADownload%2FGlucoPhone"))
+                }, REQUEST_EXPORT_FOLDER)
+            }.setNegativeButton("Cancel", null).show()
+    }
+
+    private fun watchExportDownloadFolder(plan: HistoryExport) {
+        stopExportDownloadWatch()
+        if (exportDownloadFolder.tree() == null) return
+        runCatching { ExportDownloadService.start(this) }.onFailure {
+            historyStatus?.text = "Keep GlucoPhone open or share the downloaded CSV if Android stops collection."
+        }
+        folderWatch = scope.launch {
+            try {
+                val observed = mutableMapOf<String, Long>()
+                val handled = mutableSetOf<String>()
+                while (isActive && validPlan(plan) && !plan.collection.ready) {
+                    try {
+                        val files = withContext(Dispatchers.IO) { exportDownloadFolder.csvFiles(plan.startedAt) }
+                        val live = files.map { it.fingerprint }.toSet()
+                        observed.keys.retainAll(live)
+                        for (file in files) {
+                            if (historyLookups.values.any { it.isActive } || queuedHistoryUri != null) break
+                            if (file.fingerprint in handled) continue
+                            val firstSeen = observed.getOrPut(file.fingerprint) { android.os.SystemClock.elapsedRealtime() }
+                            if (android.os.SystemClock.elapsedRealtime() - firstSeen < 500) continue
+                            // A stalled transfer can contain valid CSV rows. Require Android's
+                            // indexed size/mtime before reading, as well as stable document metadata.
+                            if (!withContext(Dispatchers.IO) { exportDownloadFolder.indexed(file) }) continue
+                            val portal = try { withContext(Dispatchers.IO) {
+                                val text = exportDownloadFolder.read(file)
+                                val source = HistoricalCsv.source(text)
+                                val portal = ExportPortal.entries.single { it.source == source }
+                                require(portal in plan.collection.portals)
+                                val order = if (portal == ExportPortal.CARELINK)
+                                    HistoricalCsv.inferDateOrder(text, plan.window.start, plan.window.end)
+                                        ?: historyStore.learnedOrder(plan.settings) ?: HistoricalCsv.DateOrder.DAY_FIRST
+                                    else HistoricalCsv.DateOrder.DAY_FIRST
+                                val zone = java.time.ZoneId.systemDefault()
+                                val rows = HistoricalCsv.parse(text, source, zone, order).filter { plan.window.contains(it.timeMillis, zone) }
+                                val required = if (portal == ExportPortal.CARELINK) ExportContent.PUMP else ExportContent.SENSOR
+                                require(rows.any(required::includes)) { "No selected events in the shared CSV." }
+                                require(exportDownloadFolder.csvFiles(plan.startedAt).any { it.fingerprint == file.fingerprint } &&
+                                    exportDownloadFolder.indexed(file))
+                                portal
+                            } } catch (e: CancellationException) { throw e }
+                            catch (_: Exception) { handled += file.fingerprint; continue }
+                            handled += file.fingerprint
+                            if (!validPlan(plan) || plan.collection.contains(portal)) continue
+                            queuedHistoryUri = file.uri
+                            try {
+                                startActivity(Intent(this@MainActivity, MainActivity::class.java)
+                                    .setAction(CsvImportActivity.ACTION_IMPORT).setData(file.uri)
+                                    .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP))
+                            } catch (e: Exception) {
+                                queuedHistoryUri = null
+                                handled.remove(file.fingerprint)
+                                throw e
+                            }
+                            break
+                        }
+                    } catch (e: CancellationException) { throw e }
+                    catch (_: Exception) { /* A growing file or a revoked folder can be retried; never mark a source complete. */ }
+                    delay(500)
+                }
+            } finally {
+                if (folderWatch === kotlin.coroutines.coroutineContext[Job]) ExportDownloadService.stop(this@MainActivity)
+            }
+        }
+    }
+
+    private fun stopExportDownloadWatch() {
+        folderWatch?.cancel(); folderWatch = null
+        ExportDownloadService.stop(this)
     }
 
     private fun nextHistoryPortal(): ExportPortal? {
         val plan = historyExport ?: return null
-        return ExportPortal.sequence(plan.window.content, plan.settings.latestDevice ?: plan.window.device)
-            .firstOrNull { if (it == ExportPortal.CARELINK) plan.carelink == null else plan.dexcom == null }
+        return plan.collection.next
     }
 
     private fun continueHistoryDownload() {
@@ -516,7 +685,9 @@ class MainActivity : Activity() {
         historyActions?.visibility = if (portal == null) View.GONE else View.VISIBLE
         historyDialog?.getButton(AlertDialog.BUTTON_POSITIVE)?.isEnabled = portal == null
         if (portal == null) {
-            historyStatus?.text = "Downloads ready: ${plan.window.start} to ${plan.window.end}. Select Export to save the ${if (plan.pdf) "PDF report" else "CSV"}."
+            stopExportDownloadWatch()
+            historyStatus?.text = "Downloads ready. Creating the ${if (plan.pdf) "PDF report" else "CSV"}…"
+            scope.launch { finishHistoryExport(useCache = false) }
             return
         }
         historyInputPlan = plan; historyPortalSource = portal.source
@@ -527,7 +698,10 @@ class MainActivity : Activity() {
             .putExtra("end", plan.window.end.toString())
         if (BuildConfig.DEBUG && intent.getBooleanExtra("exportPortalPreview", false))
             portalIntent.setClassName(this, "$packageName.ExportPortalPreviewActivity")
-        startActivityForResult(portalIntent, REQUEST_HISTORY_PORTAL)
+        if (BuildConfig.DEBUG && intent.getBooleanExtra("externalFixture", false)) {
+            portalIntent.putExtra("externalFixture", true).putExtra("fixtureBase", intent.getStringExtra("fixtureBase"))
+        }
+        startActivityForResult(portalIntent, REQUEST_HISTORY_PORTAL + portal.ordinal * 100)
     }
 
     private fun validPlan(plan: HistoryExport): Boolean = historyExport === plan &&
@@ -537,16 +711,6 @@ class MainActivity : Activity() {
                 current.keyOf(LinkSource.CARELINK) == plan.settings.keyOf(LinkSource.CARELINK) &&
                 current.carelinkCountry == plan.settings.carelinkCountry
         }
-
-    private fun chooseHistoryCsv(source: String) {
-        if (historyWriting || historyInputPlan != null || historyLookups.values.any { it.isActive }) return
-        historyInputPlan = historyExport ?: return
-        historyImportSource = source
-        startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
-            addCategory(Intent.CATEGORY_OPENABLE); type = "*/*"
-            putExtra(android.provider.DocumentsContract.EXTRA_INITIAL_URI, android.net.Uri.parse("content://com.android.providers.downloads.documents/root/downloads"))
-        }, REQUEST_HISTORY_CSV)
-    }
 
     private fun readExportBytes(stream: java.io.InputStream): ByteArray {
         val output = java.io.ByteArrayOutputStream()
@@ -559,114 +723,189 @@ class MainActivity : Activity() {
         return output.toByteArray()
     }
 
-    private fun importHistoryCsv(read: () -> String, source: String, cleanup: () -> Unit = {}) {
+    private fun importHistoryCsv(read: () -> String, cleanup: () -> Unit = {}) {
         val plan = historyExport ?: run { cleanup(); return }
-        val zone = java.time.ZoneId.systemDefault()
-        fun parse(order: HistoricalCsv.DateOrder) {
-            historyLookups[source]?.cancel()
-            historyLookups[source] = scope.launch {
-                var imported = false
-                try {
-                    val rows = withContext(Dispatchers.IO) { HistoricalCsv.parse(read(), source, zone, order).filter { plan.window.contains(it.timeMillis, zone) } }
-                    if (!validPlan(plan)) return@launch
-                    require(rows.isNotEmpty()) { "This CSV has no events in ${plan.window.start} to ${plan.window.end}. Download the selected dates on the site." }
-                    require(rows.any(plan.window.content::includes)) { "This CSV has no selected ${plan.window.content.label.lowercase()} events. Choose the site's data export." }
-                    if (source == ExportRow.SOURCE_CARELINK) plan.carelink = rows else plan.dexcom = rows
-                    historyStatus?.text = "${if (source == ExportRow.SOURCE_CARELINK) "CareLink" else "Clarity"} ready: ${rows.size} events. Times use ${zone.id}."
-                    imported = true
-                } catch (e: CancellationException) { throw e }
-                catch (e: Exception) { if (validPlan(plan)) historyStatus?.text = e.message ?: "CSV import failed" }
-                finally { cleanup() }
-                if (imported && validPlan(plan)) window.decorView.post { if (validPlan(plan)) continueHistoryDownload() }
+        if (historyLookups.values.any { it.isActive }) { cleanup(); return }
+        historyStatus?.text = "Checking downloaded CSV…"
+        historyLookups["import"] = scope.launch {
+            try {
+                val text = withContext(Dispatchers.IO) { read() }
+                val source = withContext(Dispatchers.IO) { HistoricalCsv.source(text) }
+                val portal = ExportPortal.entries.single { it.source == source }
+                require(portal in plan.collection.portals) { "This source is not selected for export." }
+                if (plan.collection.contains(portal)) {
+                    historyStatus?.text = "${portal.label} is already imported. Continuing with the remaining source."
+                    cleanup()
+                    historyLookups.remove("import")
+                    continueHistoryDownload()
+                    return@launch
+                }
+                val inferred = withContext(Dispatchers.IO) {
+                    if (portal == ExportPortal.CARELINK) HistoricalCsv.inspectDateOrder(text, plan.window.start, plan.window.end)
+                    else HistoricalCsv.DateOrderInference(HistoricalCsv.DateOrder.DAY_FIRST, false)
+                }
+                val learned = historyStore.learnedOrder(plan.settings)
+                val order = if (inferred.remember) inferred.order ?: learned else learned ?: inferred.order
+                if (order == null) {
+                    historyLookups.remove("import")
+                    AlertDialog.Builder(this@MainActivity).setTitle("Confirm this account's date format once")
+                        .setMessage("Every date in this CSV fits both formats, even within the selected interval. Choose once; the format will be remembered for this account. A longer export containing a day after the 12th can identify it automatically.")
+                        .setPositiveButton("Day / month") { _, _ -> acceptHistoryCsv(plan, portal, text, HistoricalCsv.DateOrder.DAY_FIRST, cleanup) }
+                        .setNegativeButton("Month / day") { _, _ -> acceptHistoryCsv(plan, portal, text, HistoricalCsv.DateOrder.MONTH_FIRST, cleanup) }
+                        .setNeutralButton("Cancel") { _, _ -> cleanup() }.setOnCancelListener { cleanup() }.show()
+                } else {
+                    historyLookups.remove("import")
+                    acceptHistoryCsv(plan, portal, text, order, cleanup, inferred.remember)
+                }
+            } catch (e: CancellationException) { cleanup(); throw e }
+            catch (e: Exception) { cleanup(); if (validPlan(plan)) historyStatus?.text = e.message ?: "CSV import failed" }
+        }
+    }
+
+    private fun acceptHistoryCsv(plan: HistoryExport, portal: ExportPortal, text: String,
+                                 order: HistoricalCsv.DateOrder, cleanup: () -> Unit, rememberOrder: Boolean = true) {
+        historyLookups["import"] = scope.launch {
+            var accepted = false
+            try {
+                val zone = java.time.ZoneId.systemDefault()
+                val rows = withContext(Dispatchers.IO) {
+                    HistoricalCsv.parse(text, portal.source, zone, order).filter { plan.window.contains(it.timeMillis, zone) }
+                }
+                if (!validPlan(plan)) return@launch
+                require(rows.isNotEmpty()) { "This CSV has no events in ${plan.window.start} to ${plan.window.end}. Download the selected dates." }
+                val required = if (portal == ExportPortal.CARELINK) ExportContent.PUMP else ExportContent.SENSOR
+                require(rows.any(required::includes)) { "This CSV has no ${required.label.lowercase()} events in the selected interval. Download the correct data export." }
+                withContext(Dispatchers.IO) { historyStore.record(portal, text, order) }
+                if (!validPlan(plan)) return@launch
+                if (portal == ExportPortal.CARELINK) { plan.carelink = rows; if (rememberOrder) historyStore.learn(plan.settings, order) }
+                else plan.dexcom = rows
+                plan.collection.accept(portal)
+                historyStatus?.text = "${portal.label} ready: ${rows.size} events. Times use ${zone.id}."
+                accepted = true
+            } catch (e: CancellationException) { throw e }
+            catch (e: Exception) { if (validPlan(plan)) historyStatus?.text = e.message ?: "CSV import failed" }
+            finally {
+                cleanup()
+                historyLookups.remove("import")
+                if (accepted && validPlan(plan)) continueHistoryDownload()
             }
         }
-        if (source == ExportRow.SOURCE_CARELINK) AlertDialog.Builder(this).setTitle("CareLink CSV dates")
-            .setMessage("For dates such as 01/02, which comes first? Times will use ${zone.id}.")
-            .setPositiveButton("Day / month") { _, _ -> parse(HistoricalCsv.DateOrder.DAY_FIRST) }
-            .setNegativeButton("Month / day") { _, _ -> parse(HistoricalCsv.DateOrder.MONTH_FIRST) }
-            .setNeutralButton("Cancel") { _, _ -> cleanup() }.setOnCancelListener { cleanup() }.show()
-        else parse(HistoricalCsv.DateOrder.DAY_FIRST)
     }
 
     private suspend fun finishHistoryExport(useCache: Boolean) {
-        if (historyWriting) return
-        if (historyInputPlan != null) return
+        if (historyWriting || historyInputPlan != null) return
         if (historyLookups.values.any { it.isActive }) {
             historyStatus?.text = "Wait for the current download or import to finish."
             return
         }
         val plan = historyExport ?: return
         if (!validPlan(plan)) { exportError("Sources changed. Start a new export."); return }
-        if (!useCache && ((plan.window.content.pump && plan.carelink == null) ||
-            (plan.window.content.sensor && plan.dexcom == null && plan.carelink == null))) {
-            historyStatus?.text = "Download or import the selected data first, or choose Use phone cache."
+        if (!useCache && !plan.collection.ready) {
+            historyStatus?.text = "Download the selected sources before exporting."
             return
         }
-        val cached = if (useCache) repository.exportTables(plan.window) else PhoneExport.empty(java.time.ZoneId.systemDefault())
-        if (!validPlan(plan)) return
-        val dexcom = plan.dexcom
-        val carelink = plan.carelink
-        val tables = withContext(Dispatchers.Default) { cached.withHistory(dexcom, carelink).within(plan.window).select(plan.window.content) }
-        if (tables.rows.isEmpty()) { historyStatus?.text = "No selected events in this interval."; return }
-        val coverage = tables.coverage(plan.window)
-        val save: () -> Unit = {
-            scope.launch {
-                if (validPlan(plan) && !historyWriting && historyLookups.values.none { it.isActive } && plan.dexcom === dexcom && plan.carelink === carelink) {
-                    historyWriting = true
-                    try {
-                        val bytes = withContext(Dispatchers.Default) {
-                            if (plan.pdf) ReportPdf.render(tables.report(plan.window)) else ExportCsv.bytes(ExportCsv.write(tables.rows, tables.zone))
-                        }
-                        if (validPlan(plan)) {
-                            val name = "glucowatch-${plan.window.content.name.lowercase()}-${plan.window.start}_${plan.window.end}.${if (plan.pdf) "pdf" else "csv"}"
-                            val mime = if (plan.pdf) "application/pdf" else "text/csv"
-                            historyDialog?.dismiss()
-                            val saved = runCatching { saveToDownloads(name, mime, bytes) }.isSuccess
-                            if (saved) AlertDialog.Builder(this@MainActivity).setTitle("Export saved").setMessage("$coverage\n\nSaved to Downloads as $name.")
-                                .setPositiveButton("Close", null).show()
-                            else {
-                                pendingExport = bytes; pendingExportNote = coverage
-                                startActivityForResult(Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
-                                    addCategory(Intent.CATEGORY_OPENABLE); type = mime; putExtra(Intent.EXTRA_TITLE, name)
-                                }, REQUEST_EXPORT)
-                            }
-                        }
-                    } catch (e: CancellationException) { throw e }
-                    catch (_: Exception) { exportError("Could not generate the export. Try a smaller interval.") }
-                    finally { historyWriting = false }
+        historyWriting = true
+        historyDialog?.setCancelable(false)
+        listOf(AlertDialog.BUTTON_POSITIVE, AlertDialog.BUTTON_NEUTRAL, AlertDialog.BUTTON_NEGATIVE)
+            .forEach { historyDialog?.getButton(it)?.isEnabled = false }
+        try {
+            historyStatus?.text = "Preparing the ${if (plan.pdf) "PDF report" else "CSV"}…"
+            val cached = if (useCache) repository.exportTables(plan.window) else PhoneExport.empty(java.time.ZoneId.systemDefault())
+            val tables = withContext(Dispatchers.Default) {
+                cached.withHistory(plan.dexcom, plan.carelink).within(plan.window).select(plan.window.content)
+            }
+            if (!validPlan(plan)) return
+            require(tables.rows.isNotEmpty()) { "No selected events in this interval." }
+            require(plan.window.content != ExportContent.SENSOR_AND_PUMP ||
+                (tables.dexcomRows.any(ExportContent.SENSOR::includes) && tables.carelinkRows.any(ExportContent.PUMP::includes))) {
+                "Both sensor and pump data are required. Collect the missing source before exporting."
+            }
+            val coverage = tables.coverage(plan.window)
+            if (!plan.window.allowIncomplete && tables.hasGaps(plan.window)) {
+                val approved = suspendCancellableCoroutine<Boolean> { continuation ->
+                    val dialog = AlertDialog.Builder(this).setTitle("Incomplete coverage")
+                        .setMessage("$coverage\nSome days have no selected data. Export the available rows?")
+                        .setPositiveButton("Export available data") { _, _ -> if (continuation.isActive) continuation.resume(true) }
+                        .setNegativeButton("Back") { _, _ -> if (continuation.isActive) continuation.resume(false) }
+                        .setOnCancelListener { if (continuation.isActive) continuation.resume(false) }.show()
+                    continuation.invokeOnCancellation { dialog.dismiss() }
                 }
+                if (!approved) { historyStatus?.text = "Downloads kept. Select Export to try again."; return }
+            }
+            historyStatus?.text = "Creating the ${if (plan.pdf) "PDF report" else "CSV"}…"
+            val bytes = withContext(Dispatchers.Default) {
+                if (plan.pdf) ReportPdf.render(tables.report(plan.window)) else ExportCsv.bytes(ExportCsv.write(tables.rows, tables.zone))
+            }
+            if (!validPlan(plan)) return
+            val prefix = if (BuildConfig.DEBUG && intent.getBooleanExtra("exportPortalPreview", false)) "synthetic-" else ""
+            val name = "${prefix}glucowatch-${plan.window.content.name.lowercase()}-${plan.window.start}_${plan.window.end}.${if (plan.pdf) "pdf" else "csv"}"
+            val mime = if (plan.pdf) "application/pdf" else "text/csv"
+            val saved = runCatching { withContext(Dispatchers.IO) { saveToDownloads(name, mime, bytes) } }
+                .getOrElse { error ->
+                    if (error is CancellationException) throw error
+                    pendingExport = bytes; pendingExportNote = coverage
+                    historyStatus?.text = "Choose where to save the ${if (plan.pdf) "PDF report" else "CSV"}. Downloads are kept until saving succeeds."
+                    startActivityForResult(Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
+                        addCategory(Intent.CATEGORY_OPENABLE); type = mime; putExtra(Intent.EXTRA_TITLE, name)
+                    }, REQUEST_EXPORT)
+                    return
+                }
+            if (!validPlan(plan)) return
+            historyDialog?.dismiss()
+            showExportSaved(saved, mime, "$coverage\n\nSaved to Downloads/GlucoPhone as $name.")
+        } catch (e: CancellationException) { throw e }
+        catch (e: Exception) {
+            if (validPlan(plan)) {
+                historyStatus?.text = "Export failed. Downloads kept; select Export to retry."
+                exportError("Could not create the ${if (plan.pdf) "PDF report" else "CSV"} (${e.javaClass.simpleName}). Your downloaded data is kept; select Export to retry.")
+            }
+        } finally {
+            historyWriting = false
+            if (validPlan(plan)) {
+                historyDialog?.setCancelable(true)
+                historyDialog?.getButton(AlertDialog.BUTTON_POSITIVE)?.isEnabled = plan.collection.ready
+                historyDialog?.getButton(AlertDialog.BUTTON_NEUTRAL)?.isEnabled = true
+                historyDialog?.getButton(AlertDialog.BUTTON_NEGATIVE)?.isEnabled = true
             }
         }
-        // Even after both devices started, uploads can be missing. Never claim that dates guarantee coverage.
-        if (!plan.window.allowIncomplete && tables.hasGaps(plan.window)) {
-            AlertDialog.Builder(this).setTitle("Incomplete coverage").setMessage("$coverage\nSome days have no selected data. Export the available rows?")
-                .setPositiveButton("Export available data") { _, _ -> save() }.setNegativeButton("Back", null).show()
-        } else save()
+    }
+
+    private fun showExportSaved(uri: android.net.Uri, mime: String, message: String) {
+        AlertDialog.Builder(this).setTitle("Export saved").setMessage(message)
+            .setPositiveButton(if (mime == "application/pdf") "Open PDF" else "Open CSV") { _, _ ->
+                runCatching {
+                    startActivity(Intent(Intent.ACTION_VIEW).setDataAndType(uri, mime)
+                        .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION))
+                }.onFailure { openDownloads() }
+            }
+            .setNeutralButton("Open Downloads") { _, _ -> openDownloads() }
+            .setNegativeButton("Close", null).show()
     }
 
     private fun exportError(message: String) {
         AlertDialog.Builder(this).setTitle("Export").setMessage(message).setPositiveButton("Close", null).show()
     }
 
-    /** Writes an export into the shared Downloads collection. No storage permission on API 29+. */
-    private fun saveToDownloads(name: String, type: String, bytes: ByteArray) {
+    /** Publish only a completely written export. The checkpoint is cleared after this succeeds. */
+    private fun saveToDownloads(name: String, type: String, bytes: ByteArray): android.net.Uri {
         val values = ContentValues().apply {
             put(MediaStore.Downloads.DISPLAY_NAME, name)
             put(MediaStore.Downloads.MIME_TYPE, type)
+            put(MediaStore.Downloads.RELATIVE_PATH, "${android.os.Environment.DIRECTORY_DOWNLOADS}/GlucoPhone")
             put(MediaStore.Downloads.IS_PENDING, 1)
         }
         val uri = contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
             ?: error("Downloads is not available")
-        val wrote = runCatching {
-            contentResolver.openOutputStream(uri)?.use { it.write(bytes) } ?: error("Could not write $name")
+        try {
+            contentResolver.openOutputStream(uri)?.use { it.write(bytes) } ?: error("Could not write the export")
+            require(contentResolver.update(uri, ContentValues().apply { put(MediaStore.Downloads.IS_PENDING, 0) }, null, null) == 1) {
+                "Could not publish the export"
+            }
+            return uri
+        } catch (e: Exception) {
+            runCatching { contentResolver.delete(uri, null, null) }
+            throw e
         }
-        if (wrote.isFailure) {
-            contentResolver.delete(uri, null, null)
-            throw wrote.exceptionOrNull() ?: error("Could not write $name")
-        }
-        values.clear()
-        values.put(MediaStore.Downloads.IS_PENDING, 0)
-        contentResolver.update(uri, values, null, null)
     }
 
     private fun rememberDevice(device: LatestDevice, since: LocalDate) {
@@ -1434,6 +1673,8 @@ class MainActivity : Activity() {
     }
 
     override fun onDestroy() {
+        historyDialog?.setOnDismissListener(null)
+        stopExportDownloadWatch()
         PairingWindow.listener = null
         scope.cancel()
         historyTempFiles.forEach { it.delete() }; historyTempFiles.clear()
@@ -1459,32 +1700,29 @@ class MainActivity : Activity() {
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
         when (requestCode) {
-            REQUEST_HISTORY_PORTAL -> {
+            REQUEST_EXPORT_FOLDER -> {
+                val uri = data?.data?.takeIf { resultCode == RESULT_OK } ?: return
+                runCatching {
+                    exportDownloadFolder.remember(uri, data.flags)
+                    historyExport?.let(::watchExportDownloadFolder)
+                    historyStatus?.text = "Automatic import enabled. Save browser CSVs to this same folder."
+                }.onFailure { exportError("Could not retain access to that folder. Choose Downloads/GlucoPhone again.") }
+            }
+            REQUEST_HISTORY_PORTAL, REQUEST_HISTORY_PORTAL + 100 -> {
+                val expectedPortal = ExportPortal.entries[(requestCode - REQUEST_HISTORY_PORTAL) / 100]
+                if (historyPortalSource != expectedPortal.source && resultCode != RESULT_OK) return
                 val plan = historyInputPlan
-                val source = historyPortalSource
                 historyInputPlan = null; historyPortalSource = null
                 if (resultCode != RESULT_OK) return
                 val name = data?.getStringExtra("csvFile")?.takeIf(ExportPortalActivity::validFileName) ?: return
                 val file = cacheDir.resolve(name)
-                if (plan == null || !validPlan(plan) || source != data.getStringExtra("source")) { file.delete(); return }
-                if (file.isFile && source != null) {
+                if (plan == null || !validPlan(plan)) { file.delete(); return }
+                if (file.isFile) {
                     historyTempFiles += file
-                    importHistoryCsv({ file.inputStream().use { readExportBytes(it).toString(Charsets.UTF_8) } }, source) {
+                    importHistoryCsv({ file.inputStream().use { readExportBytes(it).toString(Charsets.UTF_8) } }) {
                         file.delete(); historyTempFiles -= file
                     }
                 }
-            }
-            REQUEST_HISTORY_CSV -> {
-                val plan = historyInputPlan
-                historyInputPlan = null
-                val uri = data?.data?.takeIf { resultCode == RESULT_OK } ?: return
-                if (plan == null || !validPlan(plan)) return
-                val selectedSource = historyImportSource
-                importHistoryCsv({
-                    contentResolver.openInputStream(uri)?.use { stream ->
-                        readExportBytes(stream).toString(Charsets.UTF_8)
-                    } ?: error("Could not open CSV")
-                }, selectedSource)
             }
             REQUEST_CONFIG -> {
                 val uri = data?.data?.takeIf { resultCode == RESULT_OK } ?: return
@@ -1509,19 +1747,28 @@ class MainActivity : Activity() {
                 val uri = data?.data?.takeIf { resultCode == RESULT_OK }
                 if (bytes == null || uri == null) {
                     pendingExportNote = ""
+                    historyStatus?.text = "Save cancelled. Downloads kept; select Export to save again."
                     return
                 }
-                val wrote = runCatching {
-                    contentResolver.openOutputStream(uri)?.use { it.write(bytes) } ?: error("The phone could not open the file")
-                }.isSuccess
                 val note = pendingExportNote
                 pendingExportNote = ""
-                AlertDialog.Builder(this)
-                    .setTitle(if (wrote) "Export saved" else "Export failed")
-                    .setMessage(if (wrote) "$note\n\nThe file is health data. Keep it private."
-                        else "The phone could not write that file.")
-                    .setPositiveButton("Close", null)
-                    .show()
+                val plan = historyExport
+                scope.launch {
+                    historyWriting = true
+                    val wrote = try {
+                        withContext(Dispatchers.IO) {
+                            contentResolver.openOutputStream(uri)?.use { it.write(bytes) } ?: error("The phone could not open the file")
+                        }
+                        true
+                    } catch (e: CancellationException) { throw e }
+                    catch (_: Exception) { false }
+                    finally { historyWriting = false }
+                    if (wrote) {
+                        if (plan != null && validPlan(plan)) historyDialog?.dismiss()
+                        showExportSaved(uri, if (bytes.take(5).toByteArray().toString(Charsets.US_ASCII) == "%PDF-") "application/pdf" else "text/csv",
+                            "$note\n\nSaved to the selected location. The file is health data; keep it private.")
+                    } else exportError("The phone could not write that file. Downloads kept; select Export to retry.")
+                }
             }
         }
     }
@@ -2111,7 +2358,7 @@ class MainActivity : Activity() {
         const val REQUEST_FOOD_PHOTO = 4
         const val REQUEST_CONFIG = 5
         const val REQUEST_EXPORT = 6
-        const val REQUEST_HISTORY_CSV = 7
+        const val REQUEST_EXPORT_FOLDER = 7
         const val REQUEST_HISTORY_PORTAL = 8
 
         /** The period presets under the chart; pinching moves freely between them. */

@@ -1,634 +1,524 @@
 package io.github.antonkulaga.glucowatch.phone
 
 import android.graphics.Canvas
+import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Path
+import android.graphics.RectF
 import android.graphics.Typeface
 import android.graphics.pdf.PdfDocument
-import glucowatch.core.DayPatternHour
-import glucowatch.core.GlucoseBucket
-import glucowatch.core.GlucosePalette
-import glucowatch.core.GlucoseReport
-import glucowatch.core.RangeCounts
-import glucowatch.core.ReportDay
-import glucowatch.core.ExportRow
-import java.time.LocalDate
+import glucowatch.core.*
 import java.io.ByteArrayOutputStream
 import java.time.Instant
-import java.time.ZoneId
+import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 import java.util.Locale
+import kotlin.math.ceil
+import kotlin.math.min
 import kotlin.math.roundToInt
 
-/** A printable report in the shape of a Dexcom Clarity overview, with pump delivery added. */
+/** Production implementation of the approved rounded, layered, Clarity-style report. */
 object ReportPdf {
-    private const val PAGE_W = 595
-    private const val PAGE_H = 842
-    private const val MARGIN = 36f
-    private val INK = GlucosePalette.LIGHT_TEXT
-    private val MUTED = GlucosePalette.LIGHT_GREY
-    private val VERY_LOW = 0xFF8E1B22.toInt()
-    private val LOW = GlucosePalette.LIGHT_RED
-    private val IN_RANGE = GlucosePalette.LIGHT_GREEN
-    private val HIGH = GlucosePalette.LIGHT_YELLOW
-    private val VERY_HIGH = GlucosePalette.LIGHT_ORANGE
-    private val WHEN = DateTimeFormatter.ofPattern("EEE d MMM yyyy, HH:mm")
+    fun render(report: GlucoseReport, generatedMillis: Long = System.currentTimeMillis()): ByteArray =
+        Renderer(report, generatedMillis).render()
 
-    fun render(report: GlucoseReport, generatedMillis: Long = System.currentTimeMillis()): ByteArray {
-        val zone = runCatching { ZoneId.of(report.zoneId) }.getOrDefault(ZoneId.systemDefault())
-        val generated = WHEN.format(Instant.ofEpochMilli(generatedMillis).atZone(zone))
-        val pages = mutableListOf<(Canvas) -> Unit>()
-        val sensor = report.window?.content?.sensor ?: true
-        val pumpData = report.window?.content?.pump ?: true
-        if (report.summary.count == 0 && report.events.isEmpty()) {
-            pages += { empty(it, report.glucoseSource) }
-        } else {
-            pages += { overview(it, report) }
-            pages += { devices(it, report) }
-            if (sensor && report.summary.count > 0) {
-                pages += { patterns(it, report) }
-                pages += { pattern(it, report) }
-                report.days.chunked(7).forEach { week -> pages += { overlay(it, report, week) } }
-                pages += { compare(it, report) }
-                pages += { tablePage(it, "Daily statistics", "Each column pools matching weekdays in the requested period.", report.weekdays, weekday = true) }
-                pages += { hours(it, report.hours) }
-            }
-            if (pumpData) report.days.chunked(28).forEach { days -> pages += { pump(it, report, days) } }
-            report.days.forEach { day -> pages += { daily(it, report, day) } }
-            report.events.groupBy { it.kind }.entries.chunked(25).forEach { kinds -> pages += { categories(it, kinds) } }
-        }
-        val document = PdfDocument()
-        try {
-            pages.forEachIndexed { index, draw ->
-                val page = document.startPage(PdfDocument.PageInfo.Builder(PAGE_W, PAGE_H, index + 1).create())
-                try {
-                    page.canvas.drawColor(GlucosePalette.WHITE)
-                    draw(page.canvas)
-                    footer(page.canvas, index + 1, pages.size, generated)
-                } finally { document.finishPage(page) }
-            }
-            val out = ByteArrayOutputStream()
-            document.writeTo(out)
-            return out.toByteArray()
-        } finally { document.close() }
-    }
-
-    private fun empty(canvas: Canvas, source: String) {
-        val paint = text(18f, bold = true)
-        canvas.drawText("Glucose and pump", MARGIN, 72f, paint)
-        paint.textSize = 12f
-        paint.typeface = Typeface.create(Typeface.DEFAULT, Typeface.NORMAL)
-        paint.color = MUTED
-        canvas.drawText("Nothing is cached from $source yet.", MARGIN, 100f, paint)
-        canvas.drawText("Open GlucoPhone after the sensor and the pump have uploaded, then export again.", MARGIN, 118f, paint)
-    }
-
-    private fun overview(canvas: Canvas, report: GlucoseReport) {
-        val s = report.summary
-        var y = heading(canvas, "Overview", period(report))
-        y = line(canvas, y, if (report.window?.content?.sensor == false) "Pump records. Times are ${report.zoneId}."
-            else "Glucose from ${report.glucoseSource}. Times are ${report.zoneId}.")
-        y += 8f
-        if (report.window?.content?.sensor != false) {
-            val gap = 8f
-            val width = (PAGE_W - 2 * MARGIN - 2 * gap) / 3f
-            metric(canvas, MARGIN, y, width, s.mean?.let(::mgdl) ?: "--", "mg/dL", "Average glucose")
-            metric(canvas, MARGIN + width + gap, y, width, s.sd?.let(::mgdl) ?: "--", "mg/dL", "Standard deviation")
-            metric(canvas, MARGIN + 2 * (width + gap), y, width, s.gmi?.let { one(it) + "%" } ?: "--", "", "GMI")
-            y += 78f
-            y = line(canvas, y, "Coefficient of variation  " + (s.cv?.let { one(it) + "%" } ?: "--"))
-            y = line(canvas, y, "Time sensor active  " + (s.sensorPercent?.let { integer(it) + "%" } ?: "--") +
-                "    Days with glucose  ${s.daysWithData}/${s.spanDays.coerceAtLeast(s.daysWithData)}")
-            y += 8f
-            y = section(canvas, y, "Time in range")
-            y = line(canvas, y, "Target 70-180 mg/dL. Very low is under 54. Very high is over 250. 70 counts as in range.", 9f)
-            y += 4f
-            bar(canvas, MARGIN, y, PAGE_W - 2 * MARGIN, 18f, s.ranges)
-            y += 26f
-            y = legend(canvas, y, s.ranges)
-        }
-        y += 10f
-        if (report.window?.content?.pump != false) {
-            y = section(canvas, y, "Insulin and carbs")
-            y = line(canvas, y, "Bolus  ${one(s.bolusPerDay)} U/day     Basal delivered  ${one(s.basalPerDay)} U/day     Carbs  ${integer(s.carbsPerDay)} g/day")
-            val auto = s.automaticBolusPercent?.let { integer(it) + "% of bolus units were automatic corrections" }
-                ?: "Automatic-correction share unavailable"
-            y = line(canvas, y, "Total recorded delivery ${one(s.bolusPerDay + s.basalPerDay)} U/day; ${one(report.events.count { it.kind == ExportRow.KIND_BOLUS }.toDouble() / s.spanDays.coerceAtLeast(1))} bolus events/day")
-            y = line(canvas, y, auto)
-            y = line(canvas, y, "Temporary basal settings  ${s.tempBasalCount}    ${one(s.tempBasalMinutes / 60.0)} h set")
-        }
-        s.bestDay?.let { day ->
-            y += 6f
-            y = line(canvas, y, "Highest time in range  ${day.label}  ${integer(day.inRangePercent ?: 0.0)}%  (${day.readings} readings)", 11f, bold = true)
-        }
-        if (report.window?.content?.sensor != false) {
-            val calibrations = report.events.count { it.kind == ExportRow.KIND_CALIBRATION }
-            y = line(canvas, y, "Recorded calibrations ${one(calibrations.toDouble() / s.spanDays.coerceAtLeast(1))}/day")
-        }
-        y += 12f
-        if (report.window?.content?.pump != false) note(canvas, y, "Basal delivered is the sum of pump pulses (AUTO_BASAL_DELIVERY), divided by the requested calendar days. A reported basal rate and a temporary basal are settings, not doses, and are not included in those units. GMI is 3.31 + 0.02392 x average mg/dL. This is not a medical device.")
-        if (report.window?.content?.sensor != false && s.count > 0) {
-            val chartTop = maxOf(y + 90f, 530f)
-            if (chartTop + 180f < PAGE_H - 50f) {
-                section(canvas, chartTop - 30f, "Average day")
-                val left = MARGIN + 28f; val right = PAGE_W - MARGIN
-                drawBands(canvas, left, chartTop, right, chartTop + 160f)
-                band(canvas, report.pattern, left, right, chartTop, chartTop + 160f, { it.p25 }, { it.p75 }, GlucosePalette.withAlpha(MUTED, 65))
-                lineThrough(canvas, report.pattern, left, right, chartTop, chartTop + 160f, { it.p50 }, INK, 1.5f)
-                axisLabels(canvas, left, right, chartTop, chartTop + 160f)
-                line(canvas, chartTop + 186f, "Median and middle 50% of recorded samples, pooled by hour.", 8f)
-            }
-        }
-    }
-
-    private fun pattern(canvas: Canvas, report: GlucoseReport) {
-        var y = heading(canvas, "Glucose by time of day", "Median and percentiles pooled by hour. Recorded insulin is shown only when pump data is selected.")
-        val top = y + 8f
-        val plotBottom = top + 250f
-        val left = MARGIN + 28f
-        val right = PAGE_W - MARGIN
-        drawBands(canvas, left, top, right, plotBottom)
-        val slots = report.pattern
-        band(canvas, slots, left, right, top, plotBottom, { it.p5 }, { it.p95 }, GlucosePalette.withAlpha(MUTED, 50))
-        band(canvas, slots, left, right, top, plotBottom, { it.p25 }, { it.p75 }, GlucosePalette.withAlpha(GlucosePalette.LIGHT_GREEN, 90))
-        lineThrough(canvas, slots, left, right, top, plotBottom, { it.p50 }, INK, 2.2f)
-        axisLabels(canvas, left, right, top, plotBottom)
-        y = plotBottom + 16f
-        y = line(canvas, y, "Shaded band is the 25th-75th percentile. Grey wash is the 5th-95th. The line is the median.", 9f)
-        y += 8f
-        if (report.window?.content?.pump == false) return
-        y = section(canvas, y, "Delivered insulin by hour")
-        y = bars(canvas, y, slots.map { it.bolusU }, INK, "Bolus U")
-        y = bars(canvas, y, slots.map { it.basalU }, IN_RANGE, "Basal U")
-        note(canvas, y + 8f, "Each bar is the total units in that hour of the day, divided by the number of requested calendar days. A day with no pulse contributes zero. Rates are not drawn here.")
-    }
-
-    private fun devices(canvas: Canvas, report: GlucoseReport) {
-        var y = heading(canvas, "Devices and data availability", period(report))
-        if (report.window?.content?.sensor != false) y = line(canvas, y, "Glucose source: ${report.glucoseSource}")
-        y = line(canvas, y, "Time zone: ${report.zoneId}")
-        report.window?.let {
-            y = line(canvas, y, "Export: ${it.content.label}.")
-            if (it.content == glucowatch.core.ExportContent.SENSOR_AND_PUMP && !it.allowIncomplete)
-                y = line(canvas, y, "Latest device: ${it.device.label}; started ${it.deviceSince}.")
-            y = line(canvas, y, if (it.allowIncomplete) "Earlier incomplete data allowed." else "Combined date boundary enforced when both devices are selected.")
-        }
-        report.events.groupBy { it.source }.forEach { (source, rows) ->
-            val dates = rows.map { Instant.ofEpochMilli(it.timeMillis).atZone(ZoneId.of(report.zoneId)).toLocalDate() }.distinct()
-            y = line(canvas, y, "$source: ${rows.size} events on ${dates.size} days.")
-        }
-        y = section(canvas, y + 12f, "Device snapshots and settings")
-        val snapshots = report.events.filter { it.kind == ExportRow.KIND_DEVICE }
-        if (snapshots.isEmpty()) y = line(canvas, y, "Device identifiers and alert settings were not supplied in these data exports.")
-        else snapshots.take(3).forEach { row ->
-            y = line(canvas, y, row.detail.orEmpty().take(250), 8f)
-        }
-        note(canvas, y + 10f, "Missing days and samples are not interpolated. Portal CSV exports may omit automated basal delivery, alerts or device settings. The report includes only measured or explicitly logged events; an absent field is not zero.")
-    }
-
-    private fun patterns(canvas: Canvas, report: GlucoseReport) {
-        var y = heading(canvas, "Patterns", "Descriptive summaries of the selected data. Missing samples are not filled.")
-        val best = report.summary.bestDay
-        if (best != null) {
-            y = section(canvas, y, "Best day")
-            y = line(canvas, y, "${best.label}: ${integer(best.inRangePercent ?: 0.0)}% of recorded readings in range; ${best.readings} samples.")
-            drawSeries(canvas, report.readings.filter { dateOf(it.timeMillis, report) == best.date }, report, y + 10f, y + 190f)
-            y += 220f
-        }
-        y = section(canvas, y, "Time-of-day patterns")
-        val usable = report.hours.filter { it.n > 0 }
-        usable.maxByOrNull { it.ranges.percent(it.ranges.low + it.ranges.veryLow) }?.let {
-            y = line(canvas, y, "Most below-range samples: ${it.label}:00, ${one(it.ranges.percent(it.ranges.low + it.ranges.veryLow))}% of ${it.n} readings.")
-        }
-        usable.maxByOrNull { it.ranges.percent(it.ranges.high + it.ranges.veryHigh) }?.let {
-            y = line(canvas, y, "Most above-range samples: ${it.label}:00, ${one(it.ranges.percent(it.ranges.high + it.ranges.veryHigh))}% of ${it.n} readings.")
-        }
-        note(canvas, y + 12f, "Best day requires at least 24 samples and compares the share of recorded readings, not full-day coverage. These summaries do not diagnose patterns or make treatment recommendations.")
-    }
-
-    private fun overlay(canvas: Canvas, report: GlucoseReport, days: List<ReportDay>) {
-        val top = heading(canvas, "Weekly overlay", "${days.first().date} to ${days.last().date}. Each trace is a recorded day; gaps over 15 minutes break the line.") + 12f
-        drawBands(canvas, MARGIN + 28f, top, PAGE_W - MARGIN, top + 270f)
-        axisLabels(canvas, MARGIN + 28f, PAGE_W - MARGIN, top, top + 270f)
-        days.forEachIndexed { i, day ->
-            val shade = 45 + i * 25
-            val color = android.graphics.Color.rgb(shade, shade, shade)
-            drawTrace(canvas, report.readings.filter { dateOf(it.timeMillis, report) == day.date }, report, top, top + 270f, color)
-            canvas.drawText(day.date.toString(), MARGIN + (i % 4) * 130f, top + 310f + (i / 4) * 20f, text(10f).apply { this.color = color })
-        }
-    }
-
-    private fun compare(canvas: Canvas, report: GlucoseReport) {
-        var y = heading(canvas, "Compare", "First and second halves of the requested period. This comparison does not fetch or invent a previous period.")
-        if (report.days.size < 2) { line(canvas, y, "Choose at least two days to compare."); return }
-        val halves = report.days.chunked((report.days.size + 1) / 2)
-        halves.forEachIndexed { i, days ->
-            val points = report.readings.filter { dateOf(it.timeMillis, report) in days.map { it.date }.toSet() }
-            y = section(canvas, y, "${if (i == 0) "First" else "Second"} half: ${days.first().date} to ${days.last().date}")
-            y = line(canvas, y, "${points.size} readings; mean ${if (points.isEmpty()) "unavailable" else mgdl(points.map { it.mgdl.toDouble() }.average()) + " mg/dL"}.")
-            val ranges = points.fold(RangeCounts()) { a, p -> a + RangeCounts.of(p.mgdl) }
-            bar(canvas, MARGIN, y, PAGE_W - 2 * MARGIN, 18f, ranges)
-            y = legend(canvas, y + 30f, ranges) + 20f
-        }
-    }
-
-    private fun daily(canvas: Canvas, report: GlucoseReport, day: ReportDay) {
-        var y = heading(canvas, "Daily", day.label)
-        if (report.window?.content?.sensor != false) {
-            val points = report.readings.filter { dateOf(it.timeMillis, report) == day.date }
-            if (points.isEmpty()) y = line(canvas, y, "No sensor samples for this day.")
-            else {
-                drawSeries(canvas, points, report, y + 5f, y + 195f)
-                y += 225f
-                y = line(canvas, y, "${day.readings} readings; mean ${day.mean?.let(::mgdl)} mg/dL; ${day.inRangePercent?.let(::integer)}% of samples in range.")
-            }
-        }
-        if (report.window?.content?.pump != false)
-            y = line(canvas, y, "Recorded delivery: bolus ${one(day.bolusU)} U; basal pulses ${one(day.basalU)} U; carbs ${integer(day.carbsG)} g.")
-        val rows = report.events.filter { dateOf(it.timeMillis, report) == day.date && it.kind != ExportRow.KIND_GLUCOSE }
-        y = section(canvas, y, "Events")
-        if (rows.isEmpty()) { line(canvas, y, "No event data supplied for this day."); return }
-        rows.groupingBy { it.kind }.eachCount().forEach { (kind, count) -> y = line(canvas, y, "${kind.replace('_', ' ')}: $count", 9f) }
-        y += 8f
-        val clock = DateTimeFormatter.ofPattern("HH:mm").withZone(ZoneId.of(report.zoneId))
-        val significant = rows.filter { it.kind !in setOf(ExportRow.KIND_BASAL_DELIVERY, ExportRow.KIND_DEVICE, ExportRow.KIND_IOB) }
-        significant.take(15).forEach { row ->
-            val description = listOfNotNull(row.insulinU?.let { "${one(it)} U" }, row.carbsG?.let { "${integer(it)} g" },
-                row.basalRateUPerH?.let { "${one(it)} U/h" }, row.basalPercent?.let { "${one(it)}%" }, row.durationMin?.let { "${one(it)} min" },
-                row.value?.let { "${one(it)} ${row.valueUnit.orEmpty()}" }).joinToString(", ")
-            if (y < 740f) y = line(canvas, y, "${clock.format(Instant.ofEpochMilli(row.timeMillis))}  ${row.kind.replace('_', ' ')}  $description", 9f)
-        }
-        note(canvas, 772f, "Event counts include every row. Up to 15 event summaries shown; CSV preserves event fields. Unreported doses and settings stay unknown.")
-    }
-
-    private fun categories(canvas: Canvas, kinds: List<Map.Entry<String, List<ExportRow>>>) {
-        var y = heading(canvas, "Event categories", "Every supplied category, including alarms, calibrations, settings and unfamiliar events. Raw details remain in CSV.")
-        kinds.forEach { (kind, rows) ->
-            y = line(canvas, y, "${kind.replace('_', ' ')}: ${rows.size} rows", 11f, true)
-        }
-    }
-
-    private fun dateOf(time: Long, report: GlucoseReport) = Instant.ofEpochMilli(time).atZone(ZoneId.of(report.zoneId)).toLocalDate()
-
-    private fun drawSeries(canvas: Canvas, points: List<glucowatch.core.GlucoseReading>, report: GlucoseReport, top: Float, bottom: Float) {
-        drawBands(canvas, MARGIN + 28f, top, PAGE_W - MARGIN, bottom)
-        axisLabels(canvas, MARGIN + 28f, PAGE_W - MARGIN, top, bottom)
-        drawTrace(canvas, points, report, top, bottom, INK)
-    }
-
-    private fun drawTrace(canvas: Canvas, points: List<glucowatch.core.GlucoseReading>, report: GlucoseReport, top: Float, bottom: Float, color: Int) {
-        val path = Path()
-        var previous: Long? = null
-        val left = MARGIN + 28f
-        val right = PAGE_W - MARGIN
-        points.sortedBy { it.timeMillis }.forEach { p ->
-            val local = Instant.ofEpochMilli(p.timeMillis).atZone(ZoneId.of(report.zoneId))
-            val x = left + (right - left) * local.toLocalTime().toSecondOfDay() / 86400f
-            val y = yOf(p.mgdl.toDouble(), top, bottom)
-            if (previous == null || p.timeMillis - previous!! > 15 * 60_000L) path.moveTo(x, y) else path.lineTo(x, y)
-            previous = p.timeMillis
-        }
-        canvas.drawPath(path, Paint(Paint.ANTI_ALIAS_FLAG).apply { this.color = color; style = Paint.Style.STROKE; strokeWidth = 1.2f })
-    }
-
-    private fun hours(canvas: Canvas, buckets: List<GlucoseBucket>) {
-        var y = heading(canvas, "By hour", "Pooled across every day. 00 is midnight to 1am in the phone's time zone.")
-        y = statTable(canvas, y, buckets.take(12), hourHeader = true)
-        y += 16f
-        statTable(canvas, y, buckets.drop(12), hourHeader = true)
-    }
-
-    private fun pump(canvas: Canvas, report: GlucoseReport, days: List<ReportDay>) {
+    private class Renderer(val report: GlucoseReport, val generated: Long) {
+        val model = ReportPresentation.build(report)
         val sensor = report.window?.content?.sensor != false
-        var y = heading(canvas, "Pump by day", if (sensor) "Bolus units, basal pulses and carb grams. In range uses that day's glucose."
-            else "Recorded delivery and carbs. Missing data does not confirm zero delivery.")
-        if (report.days.isEmpty()) {
-            line(canvas, y, "No pump events or glucose days are cached.")
-            return
-        }
-        val paint = text(8.5f, bold = true)
-        val cols = if (sensor) floatArrayOf(MARGIN, 150f, 210f, 270f, 340f, 400f, 470f)
-            else floatArrayOf(MARGIN, 230f, 340f, 450f)
-        val headers = if (sensor) listOf("Day", "Readings", "Mean", "In range", "Bolus U", "Basal U", "Carbs g")
-            else listOf("Day", "Bolus U", "Basal U", "Carbs g")
-        headers.forEachIndexed { i, header -> canvas.drawText(header, cols[i], y, paint) }
-        y += 6f
-        canvas.drawLine(MARGIN, y, PAGE_W - MARGIN, y, rule())
-        y += 14f
-        paint.typeface = Typeface.create(Typeface.DEFAULT, Typeface.NORMAL)
-        paint.color = INK
-        days.forEach { day ->
-            val cells = listOf(day.label) + (if (sensor) listOf(day.readings.toString(),
-                day.mean?.let(::mgdl) ?: "--", day.inRangePercent?.let { integer(it) + "%" } ?: "--") else emptyList()) +
-                listOf(one(day.bolusU), one(day.basalU), integer(day.carbsG))
-            cells.forEachIndexed { i, cell -> canvas.drawText(cell, cols[i], y, paint) }
-            y += 14f
-        }
-        note(canvas, y + 10f, "All requested days are included across pages. Zero means no delivered units were recorded, not confirmed zero delivery. Basal rates are settings; they are not counted as doses.")
-    }
+        val pump = report.window?.content?.pump != false
+        val left = ReportStyle.MARGIN
+        val right = ReportStyle.WIDTH - left
+        val width = right - left
+        val plotLeft = 60f
+        val plotRight = 490f
+        val plotWidth = plotRight - plotLeft
+        val generatedLabel = DateTimeFormatter.ofPattern("d MMM yyyy, HH:mm").format(Instant.ofEpochMilli(generated).atZone(model.zone))
+        fun date(time: Long) = Instant.ofEpochMilli(time).atZone(model.zone).toLocalDate()
+        fun start(day: LocalDate) = day.atStartOfDay(model.zone).toInstant().toEpochMilli()
+        fun clock(time: Long): Double = Instant.ofEpochMilli(time).atZone(model.zone).let { it.hour + it.minute / 60.0 + it.second / 3600.0 }
+        fun x(hour: Double) = plotLeft + plotWidth * hour.toFloat() / 24f
+        fun glucoseY(value: Double, top: Float, height: Float) = top + height - ((value - 39) / 362).coerceIn(0.0, 1.0).toFloat() * height
+        fun fmt(value: Double?, decimals: Int = 1) = value?.let { String.format(Locale.US, "%.${decimals}f", it) } ?: "--"
+        fun pct(count: Int, total: Int): String = if (total == 0) "--" else (100.0 * count / total).let { if (count > 0 && it < 1) "<1" else fmt(it, 0) }
 
-    private fun tablePage(canvas: Canvas, title: String, subtitle: String, buckets: List<GlucoseBucket>, weekday: Boolean) {
-        val y = heading(canvas, title, subtitle)
-        statTable(canvas, y, buckets, hourHeader = !weekday)
-    }
-
-    private fun statTable(canvas: Canvas, top: Float, buckets: List<GlucoseBucket>, hourHeader: Boolean): Float {
-        if (buckets.isEmpty()) return top
-        val labelW = 78f
-        val colW = (PAGE_W - 2 * MARGIN - labelW) / buckets.size
-        var y = top
-        val head = text(7.5f, bold = true)
-        buckets.forEachIndexed { index, bucket ->
-            val label = if (hourHeader) hourLabel(bucket.label.toIntOrNull() ?: index) else bucket.label
-            canvas.drawText(label, MARGIN + labelW + index * colW, y, head)
-        }
-        y += 5f
-        canvas.drawLine(MARGIN, y, PAGE_W - MARGIN, y, rule())
-        y += 12f
-        val rows = listOf(
-            "Very high %" to { b: GlucoseBucket -> if (b.n == 0) "--" else pct(b.ranges.veryHigh, b.ranges.n) },
-            "High %" to { b: GlucoseBucket -> if (b.n == 0) "--" else pct(b.ranges.high, b.ranges.n) },
-            "In range %" to { b: GlucoseBucket -> if (b.n == 0) "--" else pct(b.ranges.inRange, b.ranges.n) },
-            "Low %" to { b: GlucoseBucket -> if (b.n == 0) "--" else pct(b.ranges.low, b.ranges.n) },
-            "Very low %" to { b: GlucoseBucket -> if (b.n == 0) "--" else pct(b.ranges.veryLow, b.ranges.n) },
-            "Readings" to { b: GlucoseBucket -> if (b.n == 0) "--" else b.n.toString() },
-            "Min" to { b: GlucoseBucket -> b.min?.toString() ?: "--" },
-            "Max" to { b: GlucoseBucket -> b.max?.toString() ?: "--" },
-            "Mean" to { b: GlucoseBucket -> b.mean?.let(::mgdl) ?: "--" },
-            "Std. dev." to { b: GlucoseBucket -> b.sd?.let(::mgdl) ?: "--" },
-            "Quartile 25" to { b: GlucoseBucket -> b.p25?.let(::mgdl) ?: "--" },
-            "Median" to { b: GlucoseBucket -> b.p50?.let(::mgdl) ?: "--" },
-            "Quartile 75" to { b: GlucoseBucket -> b.p75?.let(::mgdl) ?: "--" },
-            "IQR" to { b: GlucoseBucket -> b.iqr?.let(::mgdl) ?: "--" },
-            "CV %" to { b: GlucoseBucket -> b.cv?.let(::integer) ?: "--" },
-        )
-        val paint = text(8f)
-        rows.forEach { (name, value) ->
-            paint.color = MUTED
-            canvas.drawText(name, MARGIN, y, paint)
-            paint.color = INK
-            buckets.forEachIndexed { index, bucket ->
-                canvas.drawText(value(bucket), MARGIN + labelW + index * colW, y, paint)
+        fun render(): ByteArray {
+            val pages = mutableListOf<(Canvas) -> Unit>()
+            pages += { overview(it) }
+            if (sensor && report.readings.isNotEmpty()) {
+                pages += { patterns(it) }
             }
-            y += 13f
-        }
-        return y
-    }
-
-    private fun heading(canvas: Canvas, title: String, subtitle: String): Float {
-        val paint = text(20f, bold = true)
-        canvas.drawText(title, MARGIN, 52f, paint)
-        paint.textSize = 9.5f
-        paint.typeface = Typeface.create(Typeface.DEFAULT, Typeface.NORMAL)
-        paint.color = MUTED
-        val wrapped = wrap(subtitle, paint, PAGE_W - 2 * MARGIN)
-        var y = 70f
-        wrapped.forEach { canvas.drawText(it, MARGIN, y, paint); y += 12f }
-        return y + 8f
-    }
-
-    private fun section(canvas: Canvas, y: Float, title: String): Float {
-        val paint = text(12f, bold = true)
-        canvas.drawText(title, MARGIN, y + 12f, paint)
-        return y + 28f
-    }
-
-    private fun line(canvas: Canvas, y: Float, value: String, size: Float = 10.5f, bold: Boolean = false): Float {
-        val paint = text(size, bold)
-        var at = y
-        wrap(value, paint, PAGE_W - 2 * MARGIN).forEach { canvas.drawText(it, MARGIN, at, paint); at += size + 6f }
-        return at
-    }
-
-    private fun note(canvas: Canvas, y: Float, value: String) {
-        val paint = text(8.5f)
-        paint.color = MUTED
-        var at = y
-        wrap(value, paint, PAGE_W - 2 * MARGIN).forEach { canvas.drawText(it, MARGIN, at, paint); at += 11f }
-    }
-
-    private fun metric(canvas: Canvas, x: Float, y: Float, w: Float, value: String, unit: String, label: String) {
-        val fill = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFFF4F7F6.toInt(); style = Paint.Style.FILL }
-        canvas.drawRoundRect(x, y, x + w, y + 64f, 8f, 8f, fill)
-        val valuePaint = text(18f, bold = true)
-        canvas.drawText(value, x + 10f, y + 28f, valuePaint)
-        val unitPaint = text(9f).apply { color = MUTED }
-        if (unit.isNotEmpty()) canvas.drawText(unit, x + 14f + valuePaint.measureText(value), y + 28f, unitPaint)
-        canvas.drawText(label, x + 10f, y + 48f, unitPaint)
-    }
-
-    private fun bar(canvas: Canvas, x: Float, y: Float, w: Float, h: Float, ranges: RangeCounts) {
-        val parts = listOf(
-            ranges.veryLow to VERY_LOW,
-            ranges.low to LOW,
-            ranges.inRange to IN_RANGE,
-            ranges.high to HIGH,
-            ranges.veryHigh to VERY_HIGH,
-        )
-        val total = ranges.n.coerceAtLeast(1)
-        var at = x
-        parts.forEach { (count, color) ->
-            val span = w * count / total
-            if (span > 0f) canvas.drawRect(at, y, at + span, y + h, Paint().apply { this.color = color })
-            at += span
-        }
-        if (ranges.n == 0) canvas.drawRect(x, y, x + w, y + h, Paint().apply { color = 0xFFE4EAE8.toInt() })
-    }
-
-    private fun legend(canvas: Canvas, y: Float, ranges: RangeCounts): Float {
-        val items = listOf(
-            "Very low ${pct(ranges.veryLow, ranges.n)}%" to VERY_LOW,
-            "Low ${pct(ranges.low, ranges.n)}%" to LOW,
-            "In range ${pct(ranges.inRange, ranges.n)}%" to IN_RANGE,
-            "High ${pct(ranges.high, ranges.n)}%" to HIGH,
-            "Very high ${pct(ranges.veryHigh, ranges.n)}%" to VERY_HIGH,
-        )
-        val paint = text(9f)
-        var x = MARGIN
-        items.forEach { (label, color) ->
-            canvas.drawRect(x, y - 8f, x + 8f, y, Paint().apply { this.color = color })
-            paint.color = INK
-            canvas.drawText(label, x + 12f, y, paint)
-            x += paint.measureText(label) + 28f
-        }
-        return y + 16f
-    }
-
-    private fun drawBands(canvas: Canvas, left: Float, top: Float, right: Float, bottom: Float) {
-        fun rect(low: Double, high: Double, color: Int) {
-            canvas.drawRect(left, yOf(high, top, bottom), right, yOf(low, top, bottom), Paint().apply { this.color = color })
-        }
-        rect(40.0, 54.0, GlucosePalette.withAlpha(VERY_LOW, 28))
-        rect(54.0, 70.0, GlucosePalette.withAlpha(LOW, 28))
-        rect(70.0, 180.0, GlucosePalette.withAlpha(IN_RANGE, 28))
-        rect(180.0, 250.0, GlucosePalette.withAlpha(HIGH, 36))
-        rect(250.0, 400.0, GlucosePalette.withAlpha(VERY_HIGH, 28))
-        val grid = Paint().apply { color = 0xFFD5DEE2.toInt(); strokeWidth = 1f }
-        listOf(54.0, 70.0, 180.0, 250.0).forEach { level ->
-            val y = yOf(level, top, bottom)
-            canvas.drawLine(left, y, right, y, grid)
-        }
-    }
-
-    private fun band(
-        canvas: Canvas,
-        slots: List<DayPatternHour>,
-        left: Float,
-        right: Float,
-        top: Float,
-        bottom: Float,
-        low: (DayPatternHour) -> Double?,
-        high: (DayPatternHour) -> Double?,
-        color: Int,
-    ) {
-        val path = Path()
-        val usable = slots.mapIndexedNotNull { index, slot ->
-            val a = low(slot)
-            val b = high(slot)
-            if (a == null || b == null) null else Triple(index, a, b)
-        }
-        val segments = mutableListOf<MutableList<Triple<Int, Double, Double>>>()
-        usable.forEach { point ->
-            if (segments.isEmpty() || segments.last().last().first + 1 != point.first) segments += mutableListOf(point)
-            else segments.last() += point
-        }
-        segments.filter { it.size >= 2 }.forEach { segment ->
-            path.moveTo(xOf(segment.first().first, left, right), yOf(segment.first().second, top, bottom))
-            segment.drop(1).forEach { path.lineTo(xOf(it.first, left, right), yOf(it.second, top, bottom)) }
-            segment.asReversed().forEach { path.lineTo(xOf(it.first, left, right), yOf(it.third, top, bottom)) }
-            path.close()
-        }
-        canvas.drawPath(path, Paint(Paint.ANTI_ALIAS_FLAG).apply { this.color = color; style = Paint.Style.FILL })
-    }
-
-    private fun lineThrough(
-        canvas: Canvas,
-        slots: List<DayPatternHour>,
-        left: Float,
-        right: Float,
-        top: Float,
-        bottom: Float,
-        value: (DayPatternHour) -> Double?,
-        color: Int,
-        width: Float,
-    ) {
-        val path = Path()
-        var started = false
-        slots.forEachIndexed { index, slot ->
-            val v = value(slot)
-            if (v == null) {
-                started = false
-            } else if (!started) {
-                path.moveTo(xOf(index, left, right), yOf(v, top, bottom))
-                started = true
-            } else {
-                path.lineTo(xOf(index, left, right), yOf(v, top, bottom))
+            if (report.readings.isNotEmpty() || pump) pages += { profiles(it) }
+            if (sensor && report.readings.isNotEmpty()) {
+                report.days.chunked(7).asReversed().forEach { days -> pages += { overlay(it, days) } }
             }
+            report.days.asReversed().forEach { day ->
+                val events = dailyEvents(day.date)
+                pages += { daily(it, day, events.take(18)) }
+                events.drop(18).chunked(32).forEach { rows -> pages += { eventPage(it, day, rows) } }
+            }
+            if (sensor && report.readings.isNotEmpty()) {
+                pages += { statistics(it, "Daily Statistics", report.weekdays) }
+                pages += { hourly(it) }
+            }
+            if (pump) report.days.chunked(20).forEach { days -> pages += { pumpTable(it, days) } }
+            if (sensor && report.days.size >= 2 && report.readings.isNotEmpty()) pages += { compare(it) }
+            pages += { definitions(it) }
+            val pdf = PdfDocument()
+            return try {
+                pages.forEachIndexed { i, draw ->
+                    val page = pdf.startPage(PdfDocument.PageInfo.Builder(ReportStyle.WIDTH, ReportStyle.HEIGHT, i + 1).create())
+                    try { page.canvas.drawColor(Color.WHITE); draw(page.canvas); footer(page.canvas, i + 1, pages.size) }
+                    finally { pdf.finishPage(page) }
+                }
+                ByteArrayOutputStream().also(pdf::writeTo).toByteArray()
+            } finally { pdf.close() }
         }
-        canvas.drawPath(path, Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            this.color = color
-            style = Paint.Style.STROKE
-            strokeWidth = width
-        })
-    }
 
-    private fun axisLabels(canvas: Canvas, left: Float, right: Float, top: Float, bottom: Float) {
-        val paint = text(8f)
-        paint.color = MUTED
-        listOf(40, 70, 180, 250, 400).forEach { level ->
-            canvas.drawText(level.toString(), MARGIN, yOf(level.toDouble(), top, bottom) + 3f, paint)
+        fun paint(size: Float = 9f, bold: Boolean = false, color: Int = ReportStyle.INK) = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            this.color = color; textSize = size; typeface = Typeface.create("sans-serif", if (bold) Typeface.BOLD else Typeface.NORMAL)
         }
-        listOf(0, 6, 12, 18, 23).forEach { hour ->
-            canvas.drawText(hourLabel(hour), xOf(hour, left, right) - 8f, bottom + 12f, paint)
+        fun text(c: Canvas, x: Float, y: Float, value: String, size: Float = 9f, bold: Boolean = false, color: Int = ReportStyle.INK) =
+            c.drawText(value, x, y, paint(size, bold, color))
+        fun rightText(c: Canvas, x: Float, y: Float, value: String, size: Float = 9f, color: Int = ReportStyle.INK) {
+            val p = paint(size, color = color); c.drawText(value, x - p.measureText(value), y, p)
         }
-    }
-
-    private fun bars(canvas: Canvas, y: Float, values: List<Double>, color: Int, label: String): Float {
-        val paint = text(8f)
-        paint.color = MUTED
-        canvas.drawText(label, MARGIN, y + 10f, paint)
-        val max = values.maxOrNull()?.takeIf { it > 0 } ?: 0.0
-        val left = MARGIN + 52f
-        val width = (PAGE_W - MARGIN - left) / values.size.coerceAtLeast(1)
-        values.forEachIndexed { index, value ->
-            val h = if (max == 0.0) 0f else (28f * value / max).toFloat()
-            val x = left + index * width
-            canvas.drawRect(x + 1f, y + 28f - h, x + width - 2f, y + 28f, Paint().apply { this.color = color })
+        fun line(c: Canvas, x1: Float, y1: Float, x2: Float, y2: Float, color: Int = ReportStyle.GRID, stroke: Float = .4f) =
+            c.drawLine(x1, y1, x2, y2, Paint(Paint.ANTI_ALIAS_FLAG).apply { this.color = color; strokeWidth = stroke })
+        fun rect(c: Canvas, box: RectF, color: Int, alpha: Int = 255) =
+            c.drawRect(box, Paint().apply { this.color = color; this.alpha = alpha })
+        fun rounded(c: Canvas, box: RectF, color: Int, alpha: Int = 255, radius: Float = ReportStyle.RADIUS) {
+            if (box.width() <= 0 || box.height() <= 0) return
+            val r = min(radius, min(box.width(), box.height()) / 2)
+            c.drawRoundRect(box, r, r, Paint(Paint.ANTI_ALIAS_FLAG).apply { this.color = color; this.alpha = alpha })
         }
-        if (max == 0.0) canvas.drawText("none", left, y + 18f, paint)
-        return y + 40f
-    }
-
-    private fun footer(canvas: Canvas, page: Int, pages: Int, generated: String) {
-        val paint = text(8f)
-        paint.color = MUTED
-        val y = PAGE_H - 22f
-        canvas.drawText("GlucoWatch | not a medical device | $generated", MARGIN, y, paint)
-        val mark = "$page of $pages"
-        canvas.drawText(mark, PAGE_W - MARGIN - paint.measureText(mark), y, paint)
-    }
-
-    private fun period(report: GlucoseReport): String {
-        val zone = runCatching { ZoneId.of(report.zoneId) }.getOrDefault(ZoneId.systemDefault())
-        val start = report.summary.startMillis
-        val end = report.summary.endMillis
-        if (start == null || end == null) return "No glucose in this export"
-        val format = DateTimeFormatter.ofPattern("EEE d MMM yyyy")
-        val a = format.format(Instant.ofEpochMilli(start).atZone(zone))
-        val b = format.format(Instant.ofEpochMilli(end).atZone(zone))
-        val days = report.summary.spanDays
-        return "$days day" + (if (days == 1) "" else "s") + " | $a - $b | Requested dates; unavailable samples stay missing."
-    }
-
-    private fun yOf(mgdl: Double, top: Float, bottom: Float): Float {
-        val t = ((mgdl - 40.0) / 360.0).coerceIn(0.0, 1.0)
-        return bottom - (bottom - top) * t.toFloat()
-    }
-
-    private fun xOf(hour: Int, left: Float, right: Float): Float = left + (right - left) * (hour + 0.5f) / 24f
-
-    private fun hourLabel(hour: Int) = when (hour) {
-        0 -> "12a"
-        12 -> "12p"
-        in 1..11 -> "${hour}a"
-        else -> "${hour - 12}p"
-    }
-
-    private fun wrap(value: String, paint: Paint, width: Float): List<String> {
-        val lines = mutableListOf<String>()
-        var line = ""
-        value.split(Regex("\\s+")).filter(String::isNotEmpty).forEach { word ->
-            val next = if (line.isEmpty()) word else "$line $word"
-            if (paint.measureText(next) <= width) line = next
-            else {
-                if (line.isNotEmpty()) { lines += line; line = "" }
-                // IDs and compact JSON can be a single long word. Break only at code-point boundaries.
-                word.codePoints().toArray().forEach { codePoint ->
-                    val character = String(Character.toChars(codePoint))
-                    if (line.isNotEmpty() && paint.measureText(line + character) > width) { lines += line; line = "" }
-                    line += character
+        fun roundedPath(box: RectF) = Path().apply {
+            val radius = min(ReportStyle.RADIUS, min(box.width(), box.height()) / 2)
+            addRoundRect(box, radius, radius, Path.Direction.CW)
+        }
+        fun layers(c: Canvas, baseline: RectF, overlay: RectF, color: Int = ReportStyle.BASAL) {
+            rounded(c, overlay, color, ReportStyle.LAYER_ALPHA)
+            val save = c.save()
+            try {
+                c.clipPath(roundedPath(baseline)); c.clipPath(roundedPath(overlay))
+                rect(c, overlay, color, ReportStyle.INTERSECTION_ALPHA)
+            } finally { c.restoreToCount(save) }
+        }
+        fun wrap(value: String, size: Float, available: Float): List<String> {
+            val p = paint(size); val result = mutableListOf<String>(); var pending = ""
+            value.split(Regex("\\s+")).filter(String::isNotEmpty).forEach { word ->
+                val next = if (pending.isEmpty()) word else "$pending $word"
+                if (p.measureText(next) <= available) pending = next else {
+                    if (pending.isNotEmpty()) result += pending
+                    pending = ""
+                    word.codePoints().toArray().forEach { cp ->
+                        val s = String(Character.toChars(cp))
+                        if (pending.isNotEmpty() && p.measureText(pending + s) > available) { result += pending; pending = "" }
+                        pending += s
+                    }
                 }
             }
+            if (pending.isNotEmpty()) result += pending
+            return result
         }
-        if (line.isNotEmpty()) lines += line
-        return lines
-    }
+        fun paragraph(c: Canvas, y: Float, value: String, size: Float = 8f, x: Float = left, available: Float = width, color: Int = ReportStyle.INK): Float {
+            var at = y + size
+            wrap(value, size, available).forEach { text(c, x, at, it, size, color = color); at += size * 1.35f }
+            return at
+        }
+        fun title(c: Canvas, value: String, subtitle: String? = null) {
+            var size = 18f
+            while (paint(size, true).measureText(value) > 440 && size > 12) size -= .5f
+            text(c, left, 53f, value, size, true)
+            text(c, left, 65f, period(), 7.3f, true)
+            rightText(c, right, 44f, "GlucoPhone report", 8f)
+            rightText(c, right, 56f, "Private health data", 7f, ReportStyle.GREY)
+            if (subtitle != null) text(c, left, 90f, subtitle, 10f, true)
+        }
+        fun period(): String {
+            val a = report.days.firstOrNull()?.date ?: return "No data in requested interval"
+            val b = report.days.last().date
+            val f = DateTimeFormatter.ofPattern("EEE d MMM yyyy")
+            return "${model.coverage.requestedDays} days | ${f.format(a)} - ${f.format(b)}"
+        }
+        fun section(c: Canvas, y: Float, label: String, w: Float = width) { text(c, left, y, label, 11f, true); line(c, left, y + 6, left + w, y + 6, ReportStyle.INK, .5f) }
+        fun footer(c: Canvas, page: Int, pages: Int) {
+            line(c, left, 751f, right, 751f, ReportStyle.GREY)
+            text(c, left, 764f, "GlucoPhone | ${report.zoneId} | $generatedLabel", 6.1f)
+            rightText(c, right, 764f, "$page of $pages", 6.1f)
+            text(c, left, 775f, "Not a medical device. Reconstructed basal settings and programmed amounts are not measured delivery.", 5.7f)
+        }
 
-    private fun text(size: Float, bold: Boolean = false) = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = INK
-        textSize = size
-        typeface = Typeface.create(Typeface.DEFAULT, if (bold) Typeface.BOLD else Typeface.NORMAL)
-    }
+        fun overview(c: Canvas) {
+            title(c, "Overview")
+            val s = report.summary
+            if (sensor) {
+                text(c, left, 88f, "Glucose", 15f, true); line(c, left, 103f, right, 103f, ReportStyle.INK, .5f)
+                text(c, left, 117f, "Average glucose", 10f, true)
+                val avg = fmt(s.mean, 0); text(c, left - 1, 163f, avg, 45f, true)
+                text(c, left + paint(45f, true).measureText(avg) + 5, 163f, "mg/dL", 8f)
+                text(c, 245f, 117f, "Time in Range", 10f, true); verticalRange(c, s.ranges)
+                text(c, left, 222f, "Standard deviation", 8f, true); text(c, left, 242f, fmt(s.sd, 0), 21f, true)
+                text(c, 55f, 242f, "mg/dL", 7.5f)
+                text(c, 128f, 222f, "GMI", 8f, true); text(c, 128f, 242f, fmt(s.gmi), 21f, true); text(c, 164f, 242f, "%", 8f)
+                text(c, 245f, 235f, "Target Range:", 8f, true); text(c, 245f, 247f, "70-180 mg/dL", 8f)
+            }
+            text(c, 467f, 117f, "Coverage (days)", 10f, true)
+            listOf("Sensor" to model.coverage.sensorDays, "Pump" to model.coverage.pumpDays, "Both" to model.coverage.bothDays).forEachIndexed { i, (name, count) ->
+                text(c, 467f, 137f + i * 42, name, 8f, true); text(c, 467f, 156f + i * 42, "$count / ${model.coverage.requestedDays}", 17f, true)
+            }
+            text(c, 467f, 254f, "Days with any data.", 6.1f)
+            val insulinY = if (sensor) 270f else 110f
+            if (pump) {
+                section(c, insulinY, "Insulin", 342f)
+                rect(c, RectF(left, insulinY + 13, left + 28, insulinY + 40), ReportStyle.BOLUS)
+                rect(c, RectF(left, insulinY + 45, left + 28, insulinY + 72), ReportStyle.BASAL)
+                text(c, 62f, insulinY + 23, "Bolus - delivered", 10f, true)
+                text(c, 62f, insulinY + 37, "${fmt(s.bolusPerDay)} U/day recorded", 9f)
+                text(c, 62f, insulinY + 55, if (model.programmedBasal) "Basal - inferred schedule" else "Basal - recorded delivery", 9.5f, true)
+                text(c, 62f, insulinY + 69, when {
+                    model.programmedBasal -> "${fmt(model.scheduledDailyUnits, 2)} U/day programmed"
+                    model.basalPulses.isNotEmpty() -> "${fmt(s.basalPerDay)} U/day recorded"
+                    else -> "Unavailable"
+                }, 9f)
+                text(c, 245f, insulinY + 22, "Total recorded delivery", 8f, true)
+                text(c, 245f, insulinY + 39, if (model.basalPulses.isEmpty()) "Unavailable" else "${fmt(s.bolusPerDay + s.basalPerDay)} U/day", 13f, true)
+                val carbsX = if (sensor) 423f else 245f
+                val carbsY = if (sensor) insulinY + 22 else insulinY + 100
+                text(c, carbsX, carbsY, "Logged carbs", 8f, true); text(c, carbsX, carbsY + 17, "${fmt(s.carbsPerDay, 0)} g/day", 13f, true)
+                paragraph(c, insulinY + 53, if (model.basalPulses.isEmpty()) "Basal doses are not supplied. Programmed settings remain separate from delivery." else "Only recorded doses contribute to these totals.", 7.2f, 245f, 310f)
+            }
+            if (sensor) {
+                report.summary.bestDay?.let { best ->
+                    text(c, left, 375f, "Top Patterns", 13f)
+                    rounded(c, RectF(225f, 363f, 231f, 385f), ReportStyle.GREEN, radius = 3f)
+                    text(c, 244f, 374f, "Best recorded glucose day: ${best.date}", 10f, true)
+                    text(c, 244f, 386f, "${fmt(best.inRangePercent, 0)}% of recorded samples in range; ${best.readings} readings.", 7f)
+                }
+                text(c, left, 415f, "This graph shows your glucose averaged over the requested interval", 7.5f)
+                glucoseProfile(c, 431f, 92f)
+            }
+            if (pump) {
+                val redTop = if (sensor) 568f else 300f
+                text(c, left, redTop - 11, "Bolus", 9f, true, ReportStyle.BOLUS)
+                text(c, 95f, redTop - 11, "Delivered hourly totals - min, median and max across observed hours", 7.1f)
+                distribution(c, model.bolusProfile, redTop, if (sensor) 44f else 110f, ReportStyle.BOLUS, false, false)
+                val blueTop = if (sensor) 655f else 495f
+                text(c, left, blueTop - 11, "Basal", 9f, true, ReportStyle.BASAL)
+                text(c, 95f, blueTop - 11, if (model.programmedBasal) "Programmed U per hour - scheduled and adjusted ranges" else "Recorded delivered U per hour", 7.1f)
+                distribution(c, model.basalProfile, blueTop, if (sensor) 43f else 110f, ReportStyle.BASAL, model.programmedBasal, true)
+            }
+            paragraph(c, 726f, "Coverage counts days with any data. Missing hours stay unavailable." + if (pump) " Insulin rectangles show min-max; black strokes mark medians." else " Glucose bars show the 15th-75th percentiles; the black line marks the mean.", 6.3f)
+        }
 
-    private fun rule() = Paint().apply { color = 0xFFD5DEE2.toInt(); strokeWidth = 1f }
+        fun verticalRange(c: Canvas, ranges: RangeCounts) {
+            val counts = listOf(ranges.veryHigh, ranges.high, ranges.inRange, ranges.low, ranges.veryLow)
+            val colors = listOf(ReportStyle.ORANGE, ReportStyle.YELLOW, ReportStyle.GREEN, ReportStyle.LOW, ReportStyle.VERY_LOW)
+            val labels = listOf("Very High", "High", "In Range", "Low", "Very Low")
+            var y = 130f
+            counts.forEachIndexed { i, count -> val h = 92f * count / ranges.n.coerceAtLeast(1); rect(c, RectF(245f, y, 273f, y + h), colors[i]); line(c, 245f, y, 273f, y, Color.WHITE, .7f); y += h }
+            labels.forEachIndexed { i, label -> text(c, 278f, 137f + i * 18, "${pct(counts[i], ranges.n)}% $label", 9.2f, true) }
+        }
 
-    private fun mgdl(value: Double) = value.roundToInt().toString()
-    private fun one(value: Double) = String.format(Locale.US, "%.1f", value)
-    private fun integer(value: Double) = value.roundToInt().toString()
+        fun timeLabels(c: Canvas, y: Float) {
+            (0..24 step 3).forEach { hour -> text(c, x(hour.toDouble()) - 7, y, when (hour) { 0, 24 -> "12am"; 12 -> "12pm"; else -> (hour % 12).toString() }, 6.5f) }
+        }
+        fun glucoseAxes(c: Canvas, top: Float, height: Float) {
+            (50..400 step 50).forEach { value -> val yy = glucoseY(value.toDouble(), top, height); line(c, plotLeft, yy, plotRight, yy); text(c, plotRight + 2, yy + 2, "$value", 6f, color = ReportStyle.GREY) }
+            line(c, plotLeft, top, plotRight, top, ReportStyle.GREY); line(c, plotLeft, top + height, plotRight, top + height, ReportStyle.GREY)
+            line(c, plotLeft, top, plotLeft, top + height, ReportStyle.GREY)
+            listOf(180 to ReportStyle.HIGH_RULE, 70 to ReportStyle.LOW_RULE).forEach { (value, color) ->
+                val yy = glucoseY(value.toDouble(), top, height); line(c, plotLeft, yy, plotRight, yy, color, 1f)
+                rounded(c, RectF(30f, yy - 5, 60f, yy + 5), color, radius = 5f); text(c, 38f, yy + 2.7f, "$value", 7f, true, Color.WHITE)
+            }
+            timeLabels(c, top + height + 16); text(c, plotRight + 2, top + height + 10, "mg/dL", 5.7f, color = ReportStyle.GREY)
+        }
+        fun glucoseProfile(c: Canvas, top: Float, height: Float) {
+            glucoseAxes(c, top, height)
+            val path = Path(); var previous = false
+            model.glucoseProfile.forEachIndexed { i, value ->
+                if (value == null) { previous = false; return@forEachIndexed }
+                val xx = plotLeft + plotWidth * (i + .5f) / 96
+                fun stroke(lo: Double, hi: Double, color: Int) {
+                    if (hi <= lo) return
+                    c.drawLine(xx, glucoseY(lo, top, height), xx, glucoseY(hi, top, height), Paint(Paint.ANTI_ALIAS_FLAG).apply { this.color = color; strokeWidth = 2.6f; strokeCap = Paint.Cap.ROUND })
+                }
+                stroke(value.p15, value.p75, 0xFFBDBDBD.toInt())
+                if (value.p75 > 180) stroke(maxOf(180.0, value.p15), value.p75, ReportStyle.YELLOW)
+                if (value.p15 < 70) stroke(value.p15, minOf(70.0, value.p75), ReportStyle.LOW)
+                val yy = glucoseY(value.mean, top, height)
+                if (previous) path.lineTo(xx, yy) else path.moveTo(xx, yy)
+                previous = true
+            }
+            c.drawPath(path, Paint(Paint.ANTI_ALIAS_FLAG).apply { color = ReportStyle.INK; style = Paint.Style.STROKE; strokeWidth = .6f })
+            listOf("ABOVE HIGH" to 9f, "THRESHOLD" to 17f, "75TH" to 33f, "PERCENTILE" to 40f, "AVERAGE" to 48f, "15TH" to 58f, "PERCENTILE" to 65f, "BELOW LOW" to 80f, "THRESHOLD" to 88f).forEach { (label, dy) -> text(c, 528f, top + dy, label, 5.3f, true) }
+            line(c, 518f, top + 4, 518f, top + 20, ReportStyle.YELLOW, 3f); line(c, 518f, top + 30, 518f, top + 58, 0xFFBDBDBD.toInt(), 3f)
+            c.drawCircle(518f, top + 45, 1.4f, paint()); line(c, 518f, top + 75, 518f, top + 91, ReportStyle.LOW, 3f)
+        }
+        fun grid(c: Canvas, top: Float, height: Float, max: Double, blue: Boolean = false) {
+            var step = if (max <= 4) .5 else if (max <= 8) 1.0 else 2.0
+            while (max / step > 9) step *= 2
+            var value = 0.0
+            while (value <= max + .001) {
+                val y = top + height - (value / max).toFloat() * height
+                line(c, plotLeft, y, plotRight, y)
+                text(c, plotRight + 3, y + 1.8f, fmt(value, if (step < 1) 1 else 0), if (height >= 70) 6f else 5.2f, color = if (blue) ReportStyle.BASAL else ReportStyle.GREY)
+                value += step
+            }
+        }
+        fun distribution(c: Canvas, ranges: List<ReportRange?>, top: Float, height: Float, color: Int, baseline: Boolean, labels: Boolean) {
+            val scheduledMax = if (baseline) (0..23).mapNotNull { model.scheduledUnits(it) }.maxOrNull() ?: 0.0 else 0.0
+            val maximum = maxOf(1.0, ceil(maxOf(scheduledMax, ranges.mapNotNull { it?.maximum }.maxOrNull() ?: 1.0) * 1.08))
+            fun y(value: Double) = top + height - (value / maximum).toFloat() * height
+            grid(c, top, height, maximum); text(c, plotRight + 3, top - 6, "U", 6f, color = ReportStyle.GREY)
+            val w = plotWidth / 24 * .62f
+            ranges.forEachIndexed { hour, range ->
+                val xx = x(hour + .5)
+                val base = range?.let { model.scheduledUnits(hour) }?.let { RectF(xx - w / 2, y(it), xx + w / 2, top + height) }
+                if (baseline && base != null) rounded(c, base, color, ReportStyle.LAYER_ALPHA)
+                if (range == null) return@forEachIndexed
+                val box = RectF(xx - w / 2, y(range.maximum), xx + w / 2, maxOf(y(range.minimum), y(range.maximum) + .35f))
+                if (baseline && base != null) layers(c, base, box, color) else rounded(c, box, color, 230)
+                line(c, xx - w * .35f, y(range.median), xx + w * .35f, y(range.median), ReportStyle.INK, .9f)
+            }
+            if (ranges.all { it == null }) text(c, plotLeft + 8, top + height / 2, "Unavailable for the observed interval", 8f, color = ReportStyle.GREY)
+            rounded(c, RectF(517f, top + 3, 524f, top + 23), color, if (baseline) 128 else 230)
+            line(c, 518f, top + 13, 523f, top + 13, ReportStyle.INK, 1f)
+            listOf("MAX", "MEDIAN", "MIN").forEachIndexed { i, label -> text(c, 530f, top + 7 + i * 9, label, 5.5f, true) }
+            if (baseline) { rounded(c, RectF(517f, top + 33, 524f, top + 38), color, ReportStyle.LAYER_ALPHA); text(c, 530f, top + 38, "SCHEDULED", 5.2f, true) }
+            if (labels) timeLabels(c, top + height + 14)
+        }
 
-    private fun pct(part: Int, n: Int): String {
-        if (n == 0 || part == 0) return "0"
-        val percent = 100.0 * part / n
-        return if (percent < 1) "<1" else percent.roundToInt().toString()
+        fun profiles(c: Canvas) {
+            title(c, if (sensor && pump) "Glucose and insulin by time of day" else if (sensor) "Glucose by time of day" else "Insulin by time of day")
+            if (sensor) { text(c, left, 101f, "Glucose", 11f, true); glucoseProfile(c, 118f, if (pump) 215f else 430f) }
+            if (pump) {
+                val red = if (sensor) 395f else 145f
+                text(c, left, red - 17, "Bolus - recorded delivered units per hour", 11f, true, ReportStyle.BOLUS)
+                distribution(c, model.bolusProfile, red, 101f, ReportStyle.BOLUS, false, true)
+                val blue = if (sensor) 557f else 390f
+                text(c, left, blue - 17, if (model.programmedBasal) "Basal - programmed units per hour" else "Basal - recorded delivered units per hour", 11f, true, ReportStyle.BASAL)
+                distribution(c, model.basalProfile, blue, 101f, ReportStyle.BASAL, model.programmedBasal, true)
+            }
+            paragraph(c, 699f, if (pump) "Insulin rectangles span min-max hourly totals across observed days; black strokes mark medians. Pale blue is the inferred scheduled amount. Programmed basal units use exact rate settings and interval durations; they are separate from recorded delivery." else "Glucose bars show the 15th-75th percentiles in fifteen-minute bins. The black line marks the mean. Missing intervals break the line.", 7.4f)
+        }
+
+        fun trace(c: Canvas, readings: List<GlucoseReading>, top: Float, height: Float, color: Int = ReportStyle.INK) {
+            val path = Path(); var previous: GlucoseReading? = null
+            readings.forEach { value ->
+                val xx = x(clock(value.timeMillis)); val yy = glucoseY(value.mgdl.toDouble(), top, height)
+                if (previous == null || value.timeMillis - previous!!.timeMillis > 900_000) path.moveTo(xx, yy) else path.lineTo(xx, yy)
+                previous = value
+            }
+            c.drawPath(path, Paint(Paint.ANTI_ALIAS_FLAG).apply { this.color = color; style = Paint.Style.STROKE; strokeWidth = .8f })
+        }
+        fun patterns(c: Canvas) {
+            title(c, "Patterns", "Best Day")
+            val best = report.summary.bestDay ?: run { paragraph(c, 125f, "No day has the 24 recorded samples needed for a best-day comparison.", 10f); return }
+            text(c, left, 119f, "Best recorded glucose day: ${best.label}", 12f, true)
+            text(c, left, 136f, "${fmt(best.inRangePercent)}% of recorded samples in the 70-180 mg/dL target range.", 9f)
+            glucoseAxes(c, 180f, 216f); trace(c, report.readings.filter { date(it.timeMillis) == best.date }, 180f, 216f)
+            section(c, 446f, "Statistics for this day")
+            listOf("Average glucose" to "${fmt(best.mean, 0)} mg/dL", "Readings" to best.readings.toString(), "In range" to "${fmt(best.inRangePercent)}%").forEachIndexed { i, (name, value) -> text(c, left + i * 176, 476f, name, 9f, true); text(c, left + i * 176, 504f, value, 20f, true) }
+            paragraph(c, 550f, "Best day compares recorded samples, not complete-day coverage. These descriptive summaries do not diagnose patterns or suggest treatment.", 9f)
+        }
+        fun overlay(c: Canvas, days: List<ReportDay>) {
+            title(c, "Overlay", "${days.first().date} - ${days.last().date}")
+            val colors = listOf(ReportStyle.INK, 0xFF5E5E5E.toInt(), 0xFF2E6D28.toInt(), 0xFF8D7512.toInt(), 0xFF713B78.toInt(), 0xFFA44F27.toInt(), 0xFF497E93.toInt())
+            days.forEachIndexed { i, day -> text(c, left + i * 80, 119f, DateTimeFormatter.ofPattern("EEE d MMM").format(day.date), 8f, true, colors[i]) }
+            glucoseAxes(c, 145f, 350f)
+            days.forEachIndexed { i, day -> trace(c, report.readings.filter { date(it.timeMillis) == day.date }, 145f, 350f, colors[i]) }
+            paragraph(c, 548f, "Each line is one recorded day. Missing spans longer than 15 minutes break the trace. Orange and red rules mark 180 and 70 mg/dL.", 9f)
+        }
+
+        fun dailyEvents(day: LocalDate) = report.events.filter { date(it.timeMillis) == day && when (it.kind) {
+            ExportRow.KIND_BOLUS -> it.insulinU != null
+            ExportRow.KIND_MEAL -> it.carbsG != null
+            ExportRow.KIND_CALIBRATION, ExportRow.KIND_METER -> true
+            else -> false
+        } }.distinctBy { it.source + it.identity() }.sortedBy { it.timeMillis }
+
+        fun daily(c: Canvas, day: ReportDay, events: List<ExportRow>) {
+            title(c, "Daily", day.label)
+            if (sensor) {
+                val height = if (pump) 150f else 300f
+                glucoseAxes(c, 120f, height)
+                val readings = report.readings.filter { date(it.timeMillis) == day.date }
+                if (readings.isEmpty()) text(c, plotLeft + 8, 190f, "No sensor samples for this day.", 9f) else trace(c, readings, 120f, height)
+            }
+            if (pump) {
+                val dy = if (sensor) 0f else -190f
+                text(c, left, 309f + dy, "Insulin", 9f, true)
+                text(c, 94f, 309f + dy, "Bolus: U (red, left) | Basal: ${if (model.programmedBasal || model.basalPulses.isEmpty()) "U/h" else "U"} (blue, right)", 7.2f)
+                if (model.programmedBasal) {
+                    val scheduled = RectF(60f, 322f + dy, 70f, 328f + dy); rounded(c, scheduled, ReportStyle.BASAL, ReportStyle.LAYER_ALPHA); text(c, 75f, 328f + dy, "Scheduled 25%", 7f)
+                    rounded(c, RectF(174f, 322f + dy, 184f, 328f + dy), ReportStyle.BASAL, ReportStyle.LAYER_ALPHA); text(c, 189f, 328f + dy, "Temporary 25%", 7f)
+                    val overlap = RectF(294f, 322f + dy, 304f, 328f + dy); rounded(c, overlap, ReportStyle.BASAL, ReportStyle.LAYER_ALPHA); layers(c, overlap, overlap); text(c, 309f, 328f + dy, "Overlap 50%", 7f)
+                    repeat(3) { i -> line(c, 405f + i * 4, 328f + dy, 411f + i * 4, 322f + dy, ReportStyle.BASAL) }; text(c, 424f, 328f + dy, "Suspended", 7f)
+                } else text(c, plotLeft, 328f + dy, if (model.basalPulses.isNotEmpty()) "Recorded basal doses" else "Recorded basal rate observations; recurring schedule unavailable", 7f, color = ReportStyle.BASAL)
+                dailyInsulin(c, day.date, 341f + dy, 109f - dy)
+            }
+            val values = if (sensor) listOf("Mean" to "${fmt(day.mean, 0)} mg/dL", "In range" to "${fmt(day.inRangePercent)}%") else emptyList()
+            val metrics = values + if (pump) listOf("Bolus" to "${fmt(day.bolusU, 2)} U", "Carbs" to "${fmt(day.carbsG, 0)} g") else emptyList()
+            metrics.forEachIndexed { i, (label, value) -> val xx = left + i * width / metrics.size; text(c, xx, 495f, label, 7.5f, true); text(c, xx, 514f, value, 14f, true) }
+            text(c, left, 540f, "Recorded events", 10f, true)
+            val split = (events.size + 1) / 2
+            listOf(events.take(split), events.drop(split)).forEachIndexed { i, rows -> eventTable(c, 550f, rows, left + i * 296, true) }
+            paragraph(c, 725f, "${day.readings} sensor samples. Basal display changes round to five minutes. Event table reads down the left column, then the right; source timestamps and calculations stay exact.", 6.7f)
+        }
+
+        fun dailyInsulin(c: Canvas, day: LocalDate, top: Float, height: Float) {
+            val intervals = model.displayBasal(day, ReportStyle.DISPLAY_MINUTES)
+            val rates = model.pumpRows.filter { it.kind == ExportRow.KIND_REPORTED_BASAL && date(it.timeMillis) == day && it.basalRateUPerH != null }
+            val pulses = model.basalPulses.filter { date(it.timeMillis) == day }
+            val blueMax = if (model.programmedBasal || pulses.isEmpty()) ceil(maxOf(2.5,
+                intervals.maxOfOrNull { maxOf(it.scheduledRate, it.programmedRate) } ?: rates.maxOfOrNull { it.basalRateUPerH!! } ?: 1.0) * 2) / 2
+                else maxOf(.1, pulses.maxOfOrNull { it.insulinU!! } ?: .1)
+            fun y(value: Double) = top + height - (value / blueMax).toFloat() * height
+            val step = if (blueMax >= 2) .5 else blueMax / 4
+            var tick = 0.0
+            while (tick <= blueMax + .0001) { line(c, plotLeft, y(tick), plotRight, y(tick)); text(c, plotRight + 3, y(tick) + 2, fmt(tick, if (blueMax < 1) 2 else 1), 6f, color = ReportStyle.BASAL); tick += step }
+            val end = minOf(start(day.plusDays(1)), model.pumpEnd ?: start(day))
+            for (hour in 0..23) {
+                val a = day.atTime(hour, 0).atZone(model.zone).toInstant().toEpochMilli()
+                val b = minOf(day.atTime(hour, 0).plusHours(1).atZone(model.zone).toInstant().toEpochMilli(), end)
+                if (b <= a) continue
+                val observed = intervals.filter { it.start < b && it.end > a }
+                if (observed.isEmpty()) continue
+                val runs = mutableListOf<ReportBasalInterval>()
+                observed.forEach { interval ->
+                    val run = interval.copy(start = maxOf(a, interval.start), end = minOf(b, interval.end))
+                    val previous = runs.lastOrNull()
+                    if (previous != null && previous.end == run.start && previous.scheduledRate == run.scheduledRate)
+                        runs[runs.lastIndex] = previous.copy(end = run.end)
+                    else runs += run
+                }
+                runs.forEach runLoop@ { run ->
+                    val base = RectF(maxOf(x(hour.toDouble()) + ReportStyle.HOUR_GAP / 2, x(clock(run.start))), y(run.scheduledRate),
+                        minOf(x((hour + 1).toDouble()) - ReportStyle.HOUR_GAP / 2, if (run.end == start(day.plusDays(1))) plotRight else x(clock(run.end))), top + height)
+                    if (base.width() <= 0) return@runLoop
+                    rounded(c, base, ReportStyle.BASAL, ReportStyle.LAYER_ALPHA)
+                    observed.filter { it.start < run.end && it.end > run.start && it.change != ReportBasalChange.SCHEDULED }.forEach changeLoop@ { interval ->
+                        val lo = maxOf(run.start, interval.start); val hi = minOf(run.end, interval.end)
+                        val x1 = maxOf(base.left, x(clock(lo)))
+                        val x2 = minOf(base.right, if (hi == start(day.plusDays(1))) plotRight else x(clock(hi)))
+                        val inset = min(.25f, (x2 - x1) * .1f)
+                        if (x2 - x1 <= inset * 2) return@changeLoop
+                        if (interval.change == ReportBasalChange.TEMPORARY) layers(c, base, RectF(x1 + inset, y(interval.programmedRate), x2 - inset, top + height))
+                        else {
+                            val save = c.save()
+                            try {
+                                c.clipPath(roundedPath(base)); c.clipRect(x1, base.top, x2, base.bottom)
+                                var xx = x1 - base.height()
+                                while (xx < x2 + 4) { line(c, xx, top + height, xx + base.height(), base.top, ReportStyle.BASAL, .45f); xx += 4 }
+                            } finally { c.restoreToCount(save) }
+                        }
+                    }
+                }
+            }
+            if (!model.programmedBasal) {
+                if (pulses.isNotEmpty()) pulses.forEach { e -> val xx = x(clock(e.timeMillis)); rounded(c, RectF(xx - 1, y(e.insulinU!!), xx + 1, top + height), ReportStyle.BASAL, 180) }
+                else {
+                    rates.forEach { e -> val value = e.basalRateUPerH!!; val xx = x(clock(e.timeMillis)); line(c, xx, top + height, xx, y(value), ReportStyle.BASAL); c.drawCircle(xx, y(value), 1.2f, paint(color = ReportStyle.BASAL)) }
+                    text(c, plotLeft + 8, top + 13, "Recurring basal schedule unavailable", 7f, color = ReportStyle.GREY)
+                }
+            }
+            if (date(model.pumpEnd ?: start(day)) == day && end < start(day.plusDays(1)) && end >= start(day)) {
+                val cutoff = x(clock(end)); rect(c, RectF(cutoff, top, plotRight, top + height), 0xFFF5F5F5.toInt())
+                val clock = DateTimeFormatter.ofPattern("HH:mm").format(Instant.ofEpochMilli(end).atZone(model.zone))
+                text(c, cutoff + 5, top + height / 2, "No pump data after $clock", 6f, color = ReportStyle.GREY)
+            }
+            timeLabels(c, top + height + 14); text(c, plotRight + 3, top - 6, if (model.programmedBasal || pulses.isEmpty()) "U/h" else "U", 6f, color = ReportStyle.BASAL)
+            val boluses = model.boluses.filter { date(it.timeMillis) == day }
+            val redMax = maxOf(2.0, ceil(boluses.maxOfOrNull { it.insulinU!! } ?: 1.0))
+            (0..redMax.toInt()).forEach { v -> rightText(c, plotLeft - 7, top + height - (v / redMax).toFloat() * height + 2, "$v", 6f, ReportStyle.BOLUS) }
+            rightText(c, plotLeft - 7, top - 6, "U", 6f, ReportStyle.BOLUS)
+            boluses.forEach { e -> val xx = x(clock(e.timeMillis)); rounded(c, RectF(xx - 1.1f, top + height - (e.insulinU!! / redMax).toFloat() * height, xx + 1.1f, top + height), ReportStyle.BOLUS, 242, 1.1f) }
+        }
+
+        fun eventCells(row: ExportRow): List<String> {
+            val time = DateTimeFormatter.ofPattern("HH:mm:ss").format(Instant.ofEpochMilli(row.timeMillis).atZone(model.zone))
+            val type = row.bolusType?.replace("Dual (normal part)", "Dual normal")?.replace("Dual (square part)", "Dual square")
+            return listOf(time, when (row.kind) { ExportRow.KIND_BOLUS -> "Bolus" + (type?.let { " - $it" } ?: ""); ExportRow.KIND_MEAL -> "Carbs - logged"; ExportRow.KIND_CALIBRATION -> "Calibration"; else -> "Meter glucose" },
+                row.insulinU?.let { "${fmt(it, 2)} U" } ?: row.carbsG?.let { "${fmt(it, 0)} g" } ?: "${fmt(row.value, 0)} ${row.valueUnit.orEmpty()}")
+        }
+        fun eventTable(c: Canvas, top: Float, events: List<ExportRow>, x: Float, compact: Boolean) {
+            table(c, top, listOf("Time", "Recorded event", "Amount"), events.map(::eventCells), if (compact) listOf(52f, 157f, 63f) else listOf(100f, 335f, 133f), if (compact) 7.5f else 8f, x, if (compact) 16.5f else 17.5f, true)
+        }
+        fun eventPage(c: Canvas, day: ReportDay, rows: List<ExportRow>) { title(c, "Daily events", "${day.label} - continued"); eventTable(c, 111f, rows, left, false) }
+        fun table(c: Canvas, top: Float, headers: List<String>, rows: List<List<String>>, widths: List<Float>, size: Float = 8f, x: Float = left, rowHeight: Float = 24f, singleLine: Boolean = false): Float {
+            var y = top
+            val headerHeight = if (singleLine) 20f else 24f
+            rect(c, RectF(x, y, x + widths.sum(), y + headerHeight), 0xFFF5F5F5.toInt())
+            var xx = x
+            headers.forEachIndexed { i, head -> text(c, xx + 5, y + 14, head, size, true); xx += widths[i] }; y += headerHeight
+            rows.forEachIndexed { rowIndex, cells ->
+                val lines = cells.mapIndexed { i, value -> if (singleLine) listOf(ellipsize(value, size, widths[i] - 10)) else wrap(value, size, widths[i] - 10) }
+                val h = if (singleLine) rowHeight else maxOf(rowHeight, lines.maxOfOrNull { it.size }?.times(size * 1.3f)?.plus(9) ?: rowHeight)
+                if (rowIndex % 2 == 0) rect(c, RectF(x, y, x + widths.sum(), y + h), 0xFFFAFAFA.toInt())
+                xx = x
+                lines.forEachIndexed { i, content -> content.forEachIndexed { j, value -> text(c, xx + 5, y + 4 + size + j * size * 1.3f, value, size) }; xx += widths[i] }
+                y += h; line(c, x, y, x + widths.sum(), y)
+            }
+            return y
+        }
+        fun ellipsize(value: String, size: Float, available: Float): String {
+            val p = paint(size); if (p.measureText(value) <= available) return value
+            var result = value
+            while (result.isNotEmpty() && p.measureText("$result...") > available) result = result.dropLast(Character.charCount(result.codePointBefore(result.length)))
+            return "$result..."
+        }
+
+        fun statistics(c: Canvas, name: String, buckets: List<GlucoseBucket>) {
+            title(c, name, "Glucose by weekday")
+            val measures = listOf<Pair<String, (GlucoseBucket) -> String>>(
+                "Very High %" to { pct(it.ranges.veryHigh, it.n) }, "High %" to { pct(it.ranges.high, it.n) }, "In Range %" to { pct(it.ranges.inRange, it.n) }, "Low %" to { pct(it.ranges.low, it.n) }, "Very Low %" to { pct(it.ranges.veryLow, it.n) },
+                "Readings" to { it.n.toString() }, "Minimum" to { it.min?.toString() ?: "--" }, "Maximum" to { it.max?.toString() ?: "--" }, "Mean" to { fmt(it.mean) }, "Standard deviation" to { fmt(it.sd) },
+                "25th percentile" to { fmt(it.p25) }, "Median" to { fmt(it.p50) }, "75th percentile" to { fmt(it.p75) }, "IQR" to { fmt(it.iqr) }, "CV %" to { fmt(it.cv) })
+            table(c, 117f, listOf("Measure") + buckets.map { it.label }, measures.map { (label, value) -> listOf(label) + buckets.map(value) }, listOf(141f) + List(buckets.size) { (width - 141) / buckets.size }, 8f, rowHeight = 26f)
+            paragraph(c, 610f, "Columns pool recorded glucose by weekday. Missing samples stay missing; statistics use the selected glucose source only.", 9f)
+        }
+        fun hourly(c: Canvas) {
+            title(c, "Hourly Statistics", "Glucose by hour")
+            report.hours.chunked(12).forEachIndexed { i, buckets -> table(c, if (i == 0) 112f else 424f, listOf("Hour", "N", "Mean", "SD", "Median", "In range %", "CV %"), buckets.map {
+                listOf("${it.label}:00", it.n.toString(), fmt(it.mean), fmt(it.sd), fmt(it.p50), if (it.n == 0) "--" else fmt(it.ranges.percent(it.ranges.inRange)), fmt(it.cv))
+            }, listOf(86f, 72f, 82f, 82f, 82f, 82f, 82f), 7.8f, rowHeight = 19f) }
+        }
+        fun pumpTable(c: Canvas, days: List<ReportDay>) {
+            title(c, "Pump by day", "Recorded bolus, basal and logged carbohydrates")
+            table(c, 116f, listOf("Date", "Bolus U", if (model.programmedBasal) "Basal plan U*" else "Basal U*", "Carbs g", "Pump data"), days.map { day ->
+                val has = model.pumpRows.any { date(it.timeMillis) == day.date }
+                listOf(DateTimeFormatter.ofPattern("d MMM yyyy").format(day.date), fmt(day.bolusU, 2), if (model.programmedBasal && has) fmt(model.programmedUnits(start(day.date), start(day.date.plusDays(1))), 2) else if (model.basalPulses.isNotEmpty() && has) fmt(day.basalU, 2) else "--", fmt(day.carbsG, 0), if (has) "Present" else "Unavailable")
+            }, listOf(145f, 100f, 115f, 90f, 118f), 8.2f, rowHeight = 24f)
+            paragraph(c, 670f, "* A basal plan is reconstructed rate x exact interval duration, including temporary settings and suspension. It is not measured delivery. Missing basal doses stay unavailable; rates are never added to recorded dose totals.", 8.5f)
+        }
+        fun compare(c: Canvas) {
+            title(c, "Compare", "First and second halves of the selected interval")
+            report.days.chunked((report.days.size + 1) / 2).forEachIndexed { i, days ->
+                val dates = days.map { it.date }.toSet(); val points = report.readings.filter { date(it.timeMillis) in dates }
+                val ranges = points.fold(RangeCounts()) { a, p -> a + RangeCounts.of(p.mgdl) }
+                val y = 119f + i * 250
+                text(c, left, y, "${days.first().date} - ${days.last().date}", 11f, true)
+                table(c, y + 18, listOf("Mean glucose", "Readings", "In range"), listOf(listOf(if (points.isEmpty()) "--" else "${fmt(points.map { it.mgdl }.average())} mg/dL", "${points.size}", "${pct(ranges.inRange, ranges.n)}%")), List(3) { width / 3 }, 9f)
+                var xx = left
+                listOf(ranges.veryLow to ReportStyle.VERY_LOW, ranges.low to ReportStyle.LOW, ranges.inRange to ReportStyle.GREEN, ranges.high to ReportStyle.YELLOW, ranges.veryHigh to ReportStyle.ORANGE).forEach { (count, color) -> val w = width * count / ranges.n.coerceAtLeast(1); rect(c, RectF(xx, y + 98, xx + w, y + 118), color); xx += w }
+                paragraph(c, y + 154, "Within-period comparison; no earlier-period data is fetched or inferred.", 8.5f)
+            }
+        }
+        fun definitions(c: Canvas) {
+            title(c, "Report definitions", "Data and drawing rules")
+            table(c, 110f, listOf("Item", "Rule"), listOf(
+                listOf("Coverage", "Counts requested calendar days with any sensor data, pump events and both. Presence is not full-day continuity."),
+                listOf("Glucose", "The selected sensor is kept separate from other sources. Profile bars show 15th-75th percentiles in 15-minute bins, with a black mean line."),
+                listOf("Bolus", "Only recorded delivered doses contribute. Programmed-only values, estimates and prime/fill amounts stay separate."),
+                listOf("Basal schedule", "A recurring schedule is inferred only from historical rate snapshots repeated on multiple days. A sparse live rate does not establish a full-day schedule."),
+                listOf("Basal changes", "Percent settings multiply the scheduled rate; absolute temporary rates replace it within their duration. Recorded suspension gives zero until resumption."),
+                listOf("Basal drawing", "Rounded hourly blocks have visible gaps. Scheduled and temporary layers each use 25% opacity; the intersection is 50%. Only display boundaries snap to five minutes."),
+                listOf("Daily axes", "Red bolus spikes use the left U scale. Blue uses the right U/h scale for settings, or U when only delivered basal pulses are available."),
+                listOf("Hourly insulin", "Rounded min-max rectangles and black median strokes summarize hourly totals across observed days. Source timestamps and numeric calculations retain their exact precision."),
+                listOf("Unknown data", "Missing schedules, doses or hours remain unavailable. Inferred programmed basal units never become measured doses or normalized CSV events."),
+                listOf("Statistics", "Sample SD; GMI = 3.31 + 0.02392 x mean mg/dL; CV = 100 x SD / mean. Range bins: <54, 54-69, 70-180, 181-250, >250."),
+                listOf("Event categories", report.events.groupingBy { it.kind }.eachCount().entries.sortedBy { it.key }.joinToString("; ") { "${it.key.replace('_', ' ')}: ${it.value}" }.ifEmpty { "No event rows supplied." })
+            ), listOf(110f, 458f), 8.2f, rowHeight = 28f)
+        }
     }
 }
