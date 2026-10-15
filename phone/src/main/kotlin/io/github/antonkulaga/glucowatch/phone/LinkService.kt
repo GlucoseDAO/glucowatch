@@ -163,6 +163,11 @@ class LinkService : Service() {
         val watchdog = Timer("phone-link-watchdog", true).apply { schedule(TIMEOUT_MS) { runCatching { socket.close() } } }
         try {
             PhoneLinkServer.serve(socket.inputStream, socket.outputStream, Link(this, name))
+            // Closing right after the write can drop an answer still queued in the Bluetooth
+            // stack, and the watch then reads end of stream. The watch closes once it has read
+            // the answer, so wait for that; the watchdog still ends a watch that stays silent.
+            val input = socket.inputStream
+            while (input.read() >= 0) Unit
         } catch (e: IOException) {
             Log.d(TAG, "Connection from $name ended: ${e.message}")
         } finally {
