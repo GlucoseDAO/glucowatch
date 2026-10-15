@@ -4,6 +4,9 @@ plugins {
     id("com.android.application")
 }
 
+// LF for everything packaged byte for byte, so the APK matches F-Droid's build on any OS.
+apply { from("../gradle/line-endings.gradle.kts") }
+
 // Developer defaults from <project>/.env (see .env.example), same rules as core's DotEnv.
 // Compiled into DEBUG builds only; release builds always get empty strings.
 val dotEnv: Map<String, String> = rootProject.file(".env").takeIf { it.isFile }?.readLines().orEmpty().mapNotNull { raw ->

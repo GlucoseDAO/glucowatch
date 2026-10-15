@@ -1,0 +1,9 @@
+# Save LF on every OS. Assets and raw resources are packaged byte for byte, so an editor that
+# writes CRLF changes the release APK (see gradle/line-endings.gradle.kts).
+root = true
+
+[*]
+end_of_line = lf
+
+[*.bat]
+end_of_line = crlf

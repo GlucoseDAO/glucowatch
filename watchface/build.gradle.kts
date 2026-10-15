@@ -2,6 +2,9 @@ plugins {
     id("com.android.application")
 }
 
+// LF for everything packaged byte for byte, so the APK matches F-Droid's build on any OS.
+apply { from("../gradle/line-endings.gradle.kts") }
+
 java {
     toolchain {
         languageVersion.set(JavaLanguageVersion.of(21))

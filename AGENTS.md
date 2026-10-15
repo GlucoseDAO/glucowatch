@@ -163,10 +163,12 @@ repository root records the commit there instead, and its APK no longer matches 
 the APKs you sign for a GitHub release from inside each module, and check each signed APK against
 a fresh unsigned build with `apksigcopier compare <signed> --unsigned <built>`.
 
-Build them from a checkout with LF line endings. Raw resources and assets are packaged byte for
-byte, so a Windows checkout with CRLF changes the APK. That happened to the 0.1.13 face
-(`res/raw/watchface.xml`) and phone (the ONNX Runtime license texts). `.gitattributes` now pins
-LF, but a clone made before it keeps its CRLF files until they are checked out again.
+Assets, raw resources and Java resources are packaged byte for byte, so a CRLF copy changes the
+APK. That happened to the 0.1.13 face (`res/raw/watchface.xml`) and phone (the ONNX Runtime
+license texts), which were built on Windows. Each APK module applies
+`gradle/line-endings.gradle.kts`, which rewrites those files to LF before `preBuild`.
+`.gitattributes` keeps them LF in git and `.editorconfig` in editors. If you add another
+directory that the APK packages verbatim, add it to that script's include list.
 
 The AGP and Kotlin plugin versions are declared in the root `build.gradle.kts` and in the three
 module settings files. Change all four together.
