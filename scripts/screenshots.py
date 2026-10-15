@@ -217,7 +217,9 @@ def fetched_at():
 def configure(extras):
     """Applies settings through the debug-only adb extras of SettingsActivity and waits for the fetch."""
     before = fetched_at()
-    args = ['am', 'start', '-S', '-W', '-n', f'{PKG}/.ui.SettingsActivity']
+    # -S alone is not enough: a task left from an earlier scenario is only brought to the front
+    # (result code 2), and SettingsActivity is recreated from its old intent with the old source.
+    args = ['am', 'start', '-S', '-W', '--activity-clear-task', '-n', f'{PKG}/.ui.SettingsActivity']
     for key, value in {**extras, 'save': True}.items():
         args += ['--ez', key, str(value).lower()] if isinstance(value, bool) else ['--es', key, str(value)]
     # adb shell joins its arguments into one device shell command: quote them, or an empty value

@@ -195,6 +195,11 @@ asking the person the data belongs to.
 
 - `am start` of an activity that is already the root of its task only brings the task to the
   front and drops the new extras. The script passes `-S`, which restarts the app for each scenario.
+  That alone is not enough: a task left from an earlier scenario or run survives the force-stop,
+  `am start` only brings it to the front (`result code=2` in logcat), and Android recreates
+  `SettingsActivity` from its old intent, so the previous source is saved again. The script also
+  passes `--activity-clear-task`. Without it, runs on a reused emulator failed at random with
+  "Screenshot source/model settings did not apply" (seen on 2026-10-15).
 - `adb shell` joins its arguments into one command line for the device shell. An empty value,
   such as an empty token, vanishes and shifts every argument after it. The script shell-quotes
   every argument and fails when `am` prints an error.
