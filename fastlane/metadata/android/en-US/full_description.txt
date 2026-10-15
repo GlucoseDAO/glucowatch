@@ -6,7 +6,9 @@ For a Medtronic MiniMed pump, the watch can show CareLink glucose and insulin da
 
 With Nightscout the watch also shows insulin and carbs on board from your loop (AAPS, Trio, iAPS, Loop), boluses and carbs on the chart, the last bolus and carbs, and the loop's own forecast. Nightscout works through API v1 or v3, with an access token or none for a public site.
 
-This is not a medical device. Do not make treatment decisions from it. Keep using the official Dexcom app and its alarms.
+This is not a medical device. Do not make treatment decisions from it. Keep using your CGM's official app and alarms.
+
+Dexcom Share and CareLink are proprietary services read through undocumented interfaces, so a change on their side can stop that source until an update. Dexcom, Medtronic, MiniMed and CareLink are trademarks of their owners. GlucoWatch is not affiliated with them.
 
 Install GlucoWatch on the watch. To use its watch face, install the separate GlucoWatch face package on the watch too. The app and tiles work without that face. The watch has no F-Droid app, and installing F-Droid on a phone does not copy these packages to the watch.
 

@@ -98,6 +98,13 @@ The report pages are from a synthetic 14-day report rendered by the phone app's 
 > GlucoWatch and GlucoPhone are not medical devices. Do not use them for treatment decisions.
 > Keep using your CGM's official app and alarms.
 
+Dexcom Share and Medtronic CareLink are proprietary services. GlucoWatch reads them through
+undocumented interfaces, so a change on their side can stop that source until the app is
+updated. History exports open the Dexcom Clarity and CareLink Personal websites, where you
+sign in yourself. Nightscout and demo data need none of these services. Dexcom, Clarity,
+Medtronic, MiniMed, CareLink, Abbott and FreeStyle Libre are trademarks of their respective
+owners. GlucoWatch is not affiliated with or endorsed by them.
+
 ## Install and test from your phone
 
 You need **Android 10 or later** for GlucoPhone. To use GlucoWatch, add a watch running
@@ -273,6 +280,8 @@ set your display units and tap **Save & test**.
 | Nightscout | Your site's URL and, for a private site, a read token | Glucose, uploaded treatments, insulin/carbs on board and loop forecasts when available |
 | Dexcom G6 notifications (phone only) | Official G6 app on the same phone, Quick Glance on, notification access | New glucose readings collected locally; no Share login or glucose backfill |
 | CareLink (MiniMed) | A care partner account and the account's country | Pump data where uploaded; can also supply glucose, depending on the device |
+
+Abbott FreeStyle Libre support is planned. No release includes it yet.
 
 **Dexcom Share:** choose **Outside US (EU)**, **US**, or **Japan** for your account.
 A wrong region can look like a failed login. Share does not supply insulin or carbs.
@@ -473,3 +482,9 @@ Further details: [Nightscout APIs and freshness](docs/nightscout.md),
 [network diagnostics](docs/carrier-blocking.md),
 [local prediction](docs/prediction.md), and
 [configuration import](docs/configuration-import.md).
+
+## Authors
+
+GlucoWatch and GlucoPhone are written by [Anton Kulaga](https://github.com/antonkulaga) and
+[Livia Zaharia](https://github.com/Livia-Zaharia). Other contributors are listed on
+[GitHub](https://github.com/GlucoseDAO/glucowatch/graphs/contributors).

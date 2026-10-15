@@ -1,0 +1,5 @@
+# Release APKs must match F-Droid's Linux build byte for byte. Raw resources and assets
+# (watchface.xml, license texts) are packaged as checked out, so a CRLF checkout on Windows
+# changes the APK. Keep text files LF in every working tree.
+* text=auto eol=lf
+gradlew.bat -text

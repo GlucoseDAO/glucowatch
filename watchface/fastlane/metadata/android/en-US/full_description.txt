@@ -9,3 +9,5 @@ Download this watch-face APK and the GlucoWatch app from their separate F-Droid 
 After installing, long-press the watch face, choose Add watch face, and select GlucoWatch face. To set an empty glucose slot, open Customize, tap the slot, and choose Glucose or Glucose chart from GlucoWatch.
 
 This is not a medical device. Do not make treatment decisions from it. Keep using your CGM's official app and alarms.
+
+Dexcom, Medtronic, MiniMed and CareLink are trademarks of their owners. GlucoWatch is not affiliated with them.

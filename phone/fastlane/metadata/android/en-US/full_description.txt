@@ -13,4 +13,8 @@ For CareLink, complete Medtronic's browser sign-in on the phone. CareLink is opt
 
 Import a private .env or YAML configuration to set up your accounts and automatically download the selected prediction model. The standard phone APK runs supported ONNX models locally and can send their full forecast to a paired watch. A Hugging Face repository name is enough to find the model; an access token is optional. Glucose data stays on your devices.
 
-This is not a medical device. Do not make treatment decisions from it. Keep using the official Dexcom app and its alarms.
+Dexcom Share and CareLink are proprietary services read through undocumented interfaces, so a change on their side can stop that source until an update. History exports open the Dexcom Clarity and CareLink Personal websites, where you sign in yourself. A forecast model is a data file, not an executable. It is downloaded from Hugging Face only when you choose one or import a configuration that names one. Nightscout and demo data need none of these services.
+
+This is not a medical device. Do not make treatment decisions from it. Keep using your CGM's official app and alarms.
+
+Dexcom, Clarity, Medtronic, MiniMed and CareLink are trademarks of their owners. GlucoWatch is not affiliated with them.
