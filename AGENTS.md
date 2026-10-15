@@ -95,6 +95,9 @@ This workstation has repeatedly frozen during emulator launches that selected ho
 Vulkan/OpenGL. Do not automatically retry a failed software launch with `-gpu auto` or
 `-gpu host`. The capture scripts use the same Windows startup settings. Keep emulator console
 ports even and between 5554 and 5584 so adb's port (console + 1) stays in the recommended range.
+`uv run scripts/run_paired.py` opens both emulators bonded over the emulator's virtual Bluetooth,
+with GlucoWatch paired to GlucoPhone and syncing; `docs/phone-link.md` has what it checks and the
+one state that needs a reset of the watch emulator.
 
 For emulator-only `ERR_NAME_NOT_RESOLVED` when the host resolves the same names, use the
 diagnosis and verified local DNS workaround in `docs/emulator-dns.md`. DNS overrides require

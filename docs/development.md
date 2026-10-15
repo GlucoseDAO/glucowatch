@@ -170,6 +170,19 @@ and `--dry-run` shows the command without starting anything. The default phone A
 `glucowatch_phone`; the default watch is `Wear_OS_Large_Round` or `glucowatch_gw6c`.
 This launcher does not change the installed emulator version or Android Studio's launch settings.
 For token, calendar and CSV checks, see [phone-testing.md](phone-testing.md).
+
+To test the watch on the phone app's data, open both emulators bonded and paired:
+
+```bash
+uv run scripts/run_paired.py
+```
+
+It starts or reuses both through `run_emulator.py`, bonds the watch AVD with the phone AVD over
+the emulator's virtual Bluetooth (netsim), pairs GlucoWatch with GlucoPhone, sets the watch's
+source to **Phone app** and checks that a sync gets through. Later runs keep the bond and the
+pairing and only check the sync. `--demo` relays the phone's demo data; `--repair` pairs the
+apps again. Details and the one state it cannot repair are in
+[phone-link.md](phone-link.md#two-emulators).
 If the PC resolves a portal but the emulator reports an unknown host, follow
 [the emulator DNS guide](emulator-dns.md) for diagnosis and the local resolver override.
 Google recommends [software graphics](https://developer.android.com/studio/run/emulator-acceleration#accel-graphics)

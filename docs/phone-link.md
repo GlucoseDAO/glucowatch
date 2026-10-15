@@ -313,9 +313,35 @@ data; do not publish them.
   were captured with Demo, Dexcom Share and Nightscout (`scripts/phone_screenshots.py`). The
   optional heart-rate card uses platform Health Connect on Android 14+ with foreground permission;
   the emulator has no heart-rate samples.
-- **Not yet verified: the RFCOMM link between a real watch and a real phone.** Emulators cannot
-  bond a Wear OS AVD to a phone AVD over Bluetooth. Check pairing, a sync and copying a login on
-  the Galaxy Watch and a phone before tagging a release that ships `phone/`.
+- Between two emulators (2026-10-15, emulator 37.1 on Linux, `glucowatch_phone` API 36 and
+  `glucowatch_gw6c` Wear OS 6): the Bluetooth bond, the GlucoWatch pairing and syncs over RFCOMM,
+  with the watch showing the phone's Nightscout readings. Before the fix described under
+  [Two emulators](#two-emulators), one sync in three got through; after it, ten in ten.
+- **Not yet verified: the RFCOMM link between a real watch and a real phone.** The emulators share
+  one virtual radio, which says nothing about range, a Samsung phone's battery limits or Galaxy
+  Wearable. Check pairing, a sync and copying a login on the Galaxy Watch and a phone before
+  tagging a release that ships `phone/`.
+
+## Two emulators
+
+`uv run scripts/run_paired.py` opens the phone and watch emulators bonded and paired (see
+[development.md](development.md)). Both connect to the SDK's netsim, a virtual Bluetooth radio
+shared by every emulator on the PC, so the watch AVD finds the phone AVD and bonds with it the
+way a watch bonds with a phone. The script then pairs the apps through their own screens and
+confirms each code on both devices only after checking that the two match.
+
+The first test found a bug that real devices share: the phone closed the connection right after
+writing its answer, and Android dropped the answer while it was still queued in the Bluetooth
+stack. The watch then read the end of the stream and reported that GlucoPhone did not answer.
+`LinkService` now keeps the connection open until the watch, which closes as soon as it has read
+the answer, hangs up.
+
+One state needs a reset. If the phone forgets the watch, the watch keeps its key for the phone:
+it leaves the phone out of its scan and fails a pairing the phone starts ("incorrect PIN or
+passkey"). Wear OS has no Forget for its phone and the watch image is a user build without root,
+so reset the watch emulator once (`emulator -avd glucowatch_gw6c -wipe-data`) and run the
+script again. The script never makes either side forget the other, and says so when it finds
+that state.
 
 ## Known limits
 
