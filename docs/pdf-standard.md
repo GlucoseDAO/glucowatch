@@ -8,6 +8,30 @@ The renderer is `phone/.../ReportPdf.kt`; printable constants are in
 `phone/.../ReportStyle.kt`; chart calculations are in `core/.../ReportPresentation.kt`.
 The PDF palette is independent of the watch interface palette.
 
+## Reviewed one-day and activity reports
+
+The user-reviewed layout supersedes the overview/daily combination below for combined
+sensor-and-pump one-day reports and reports including activities. `ReviewedReportPdf`
+renders whole-day pages first and activity details afterwards. Keep the large mean,
+sample SD and vertical time-in-range bar. Omit GMI, coverage counts and best-day patterns;
+show activity time as a percentage of the day. Retain the two aligned daily charts and
+a visible activity-detail page reference.
+
+Activity details repeat summaries for the exact interval, add workout metrics, and use
+separate HR and estimated-GAP profiles over identical uniform light-grey elevation.
+Glucose has that elevation backdrop too. All activity plots share the narrower width
+with zone notes on the right. Preserve genuine observation gaps; slow/stopped motion
+must stay visible rather than disappear at the pace cap.
+
+This layout explicitly permits a **day-specific calculated basal estimate** from native
+rate observations, without claiming a recurring schedule. `ReportBasalEstimate` holds
+rates between changes, backfills the first unambiguous rate to the start of a day with
+rate data, and carries the final rate to that day's end. Conflicts and these assumptions
+are printed. Apply temporary rates and suspension over exact intervals. Add this amount
+to recorded bolus only under **Calculated total**; never call it measured delivery or
+write it into normalized CSV events. Missing days remain missing. Multi-day statistical
+profiles below retain their stricter recurring-schedule evidence rules.
+
 ## Layout and colors
 
 - US Letter, 612 × 792 points, 22-point side margins, white background.

@@ -5,6 +5,9 @@ plugins {
     application
 }
 
+// Parser notices are Java resources packaged verbatim by both APK modules.
+apply { from("../gradle/line-endings.gradle.kts") }
+
 java {
     sourceCompatibility = JavaVersion.VERSION_17
     targetCompatibility = JavaVersion.VERSION_17

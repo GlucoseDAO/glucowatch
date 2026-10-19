@@ -27,7 +27,9 @@ class ExportDownloadFolder(private val context: Context) {
             context.contentResolver.releasePersistableUriPermission(previous, Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
     }
-    fun csvFiles(since: Long): List<Csv> {
+    fun csvFiles(since: Long): List<Csv> = files(since, ".csv", HistoricalCsv.MAX_BYTES)
+    fun fitFiles(since: Long): List<Csv> = files(since, ".fit", glucowatch.core.FitWorkoutReader.MAX_BYTES)
+    private fun files(since: Long, extension: String, maxBytes: Int): List<Csv> {
         val tree = tree() ?: return emptyList()
         val children = DocumentsContract.buildChildDocumentsUriUsingTree(tree, DocumentsContract.getTreeDocumentId(tree))
         val files = mutableListOf<Csv>()
@@ -37,7 +39,7 @@ class ExportDownloadFolder(private val context: Context) {
                 val name = cursor.getString(1).orEmpty()
                 val size = cursor.getLong(2)
                 val modified = cursor.getLong(3)
-                if (!name.endsWith(".csv", true) || size !in 1..HistoricalCsv.MAX_BYTES.toLong() ||
+                if (!name.endsWith(extension, true) || size !in 1..maxBytes.toLong() ||
                     modified < since / 1000 * 1000 || cursor.getInt(4) and DocumentsContract.Document.FLAG_PARTIAL != 0) continue
                 files += Csv(DocumentsContract.buildDocumentUriUsingTree(tree, cursor.getString(0)), size, modified)
             }

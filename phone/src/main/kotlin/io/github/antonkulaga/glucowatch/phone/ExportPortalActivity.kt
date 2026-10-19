@@ -61,6 +61,7 @@ open class ExportPortalActivity : Activity() {
     override fun onCreate(state: Bundle?) {
         super.onCreate(state)
         portal = runCatching { ExportPortal.valueOf(intent.getStringExtra("portal").orEmpty()) }.getOrElse { finish(); return }
+        ExportDiagnostics.event(this, "portal_activity_created", portal)
         country = intent.getStringExtra("country") ?: "DE"
         region = runCatching { Region.valueOf(intent.getStringExtra("region").orEmpty()) }.getOrDefault(Region.OUS)
         val address = portal.url(country, region)
@@ -320,6 +321,7 @@ open class ExportPortalActivity : Activity() {
         if (externalLaunched || returned || downloading) return externalLaunched
         val opened = ExportBrowser.open(this, externalAddress(address), REQUEST_BROWSER, preferChromium = portal == ExportPortal.CARELINK)
         if (opened) {
+            ExportDiagnostics.event(this, "external_browser_opened", portal)
             externalLaunched = true
             browserPreferences.edit().putBoolean("external.${portal.name}", true).apply()
             status.text = "Download ${portal.label} CSV in the browser, then open or share that CSV with GlucoPhone. Closing the browser opens the file picker directly."

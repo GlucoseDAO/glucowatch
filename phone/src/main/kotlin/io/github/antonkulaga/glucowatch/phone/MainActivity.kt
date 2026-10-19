@@ -87,6 +87,7 @@ class MainActivity : Activity() {
     private var foregroundRefresh: Job? = null
     private val store by lazy { PhoneSettingsStore(this) }
     private val historyStore by lazy { HistoryExportStore(this) }
+    private val workoutStore by lazy { WorkoutStore(this) }
     private val exportDownloadFolder by lazy { ExportDownloadFolder(this) }
     private var folderWatch: Job? = null
     private val repository by lazy { PhoneRepository(this) }
@@ -177,11 +178,12 @@ class MainActivity : Activity() {
     private var pendingExportNote: String = ""
     private data class HistoryExport(val window: ExportWindow, val pdf: Boolean, val settings: PhoneSettings,
         var dexcom: List<ExportRow>? = null, var carelink: List<ExportRow>? = null,
-        val startedAt: Long = System.currentTimeMillis()) {
+        val startedAt: Long = System.currentTimeMillis(), val includeActivities: Boolean = false, val eventWorkoutId: String? = null) {
         val collection = ExportCollection(window.content, settings.latestDevice ?: window.device)
     }
     private var historyExport: HistoryExport? = null
     private var restoringHistory = false
+    private var queuedWorkoutReport: String? = null
     private var queuedHistoryUri: android.net.Uri? = null
     private var historyInputPlan: HistoryExport? = null
     private var historyPortalSource: String? = null
@@ -300,6 +302,10 @@ class MainActivity : Activity() {
             setIntent(Intent(intent).setAction(Intent.ACTION_MAIN).setData(null))
         }
         restoreHistoryExport()
+        if (intent.action == WorkoutImportActivity.ACTION_REPORT) {
+            queuedWorkoutReport = intent.getStringExtra("workoutId")
+            setIntent(Intent(intent).setAction(Intent.ACTION_MAIN))
+        }
         refreshHeartRate()
         // Ask for Nearby devices only once a watch is paired; pairing asks too.
         if (watches.all().isNotEmpty()) withBluetooth { LinkService.update(this) }
@@ -312,6 +318,10 @@ class MainActivity : Activity() {
                 .putExtra("fixtureBase", intent.getStringExtra("fixtureBase"))
         }
         setIntent(next)
+        if (next.action == WorkoutImportActivity.ACTION_REPORT) {
+            next.getStringExtra("workoutId")?.let(::beginWorkoutReport)
+            setIntent(Intent(next).setAction(Intent.ACTION_MAIN))
+        }
         if (next.action == CsvImportActivity.ACTION_IMPORT) {
             queuedHistoryUri = next.data
             setIntent(Intent(next).setAction(Intent.ACTION_MAIN).setData(null))
@@ -335,13 +345,15 @@ class MainActivity : Activity() {
                     }
                 }
                 if (restored != null && historyExport == null && !isFinishing) {
-                    beginHistoryExport(restored.first.window, restored.first.pdf, restored.second, resumeOnly = true, startedAt = restored.first.createdAt)
+                    beginHistoryExport(restored.first.window, restored.first.pdf, restored.second, resumeOnly = true, startedAt = restored.first.createdAt,
+                        includeActivities = restored.first.includeActivities, eventWorkoutId = restored.first.eventWorkoutId)
                 }
             } catch (e: CancellationException) { throw e }
             catch (_: Exception) { historyStore.clear() }
             finally {
                 restoringHistory = false
                 if (isActive) {
+                    queuedWorkoutReport?.let { id -> queuedWorkoutReport = null; beginWorkoutReport(id) }
                     if (queuedHistoryUri != null) consumeSharedHistoryCsv()
                     else if (historyExport != null) continueHistoryDownload()
                 }
@@ -394,6 +406,7 @@ class MainActivity : Activity() {
     private fun showOverflow(anchor: View) = PopupMenu(this, anchor).apply {
         menu.add(0, MENU_REFRESH, 0, "Refresh now")
         menu.add(0, MENU_EXPORT, 1, "Export data")
+        menu.add(0, MENU_WORKOUT, 2, "Import workout")
         menu.add(0, MENU_CHECK, 2, "Check prediction")
         menu.add(0, MENU_HISTORY, 3, "Prediction history")
         menu.add(0, MENU_PRIVACY, 4, "Heart-rate privacy")
@@ -402,6 +415,7 @@ class MainActivity : Activity() {
             when (item.itemId) {
                 MENU_REFRESH -> scope.launch { render(repository.refresh()) }
                 MENU_EXPORT -> exportData()
+                MENU_WORKOUT -> startActivityForResult(Intent(this@MainActivity, WorkoutImportActivity::class.java), REQUEST_WORKOUT)
                 MENU_CHECK -> checkPrediction()
                 MENU_HISTORY -> startActivity(Intent(this@MainActivity, PredictionHistoryActivity::class.java))
                 MENU_PRIVACY -> startActivity(Intent(this@MainActivity, HealthPrivacyActivity::class.java))
@@ -481,6 +495,9 @@ class MainActivity : Activity() {
             isChecked = draft.getBoolean("incomplete", false)
             visibility = if (draftContent == ExportContent.SENSOR_AND_PUMP) View.VISIBLE else View.GONE
         }
+        val activities = CheckBox(this).apply {
+            text = "Include imported activities"; setTextColor(Brand.TEXT); isChecked = draft.getBoolean("activities", false)
+        }
         content.setOnCheckedChangeListener { _, _ -> incomplete.visibility = if (selected(content) == ExportContent.SENSOR_AND_PUMP.name) View.VISIBLE else View.GONE }
         val box = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL; setPadding(dp(22), dp(8), dp(22), dp(8))
@@ -490,6 +507,8 @@ class MainActivity : Activity() {
             addView(label("End date")); addView(endDate); addView(span)
             addView(label("Data")); addView(content); addView(incomplete)
             addView(label("Format")); addView(format)
+            addView(activities)
+            addView(hint("Uses saved FIT workouts overlapping these dates. Workouts are not downloaded during export."))
         }
         renderDates()
         val dialog = AlertDialog.Builder(this).setTitle("Export data").setView(ScrollView(this).apply { addView(box) })
@@ -507,7 +526,7 @@ class MainActivity : Activity() {
                     .putBoolean("keepStart", keepStart)
                     .remove("anchor").remove("anchorKind")
                     .putInt("days", n).putString("content", chosen.name).putBoolean("pdf", pdf)
-                    .putBoolean("incomplete", allow).apply()
+                    .putBoolean("incomplete", allow).putBoolean("activities", activities.isChecked).apply()
                 dialog.dismiss()
                 val saved = store.load()
                 fun proceed(device: LatestDevice, since: LocalDate) {
@@ -515,7 +534,7 @@ class MainActivity : Activity() {
                         is ExportRequest.Refused -> exportError(request.message)
                         is ExportRequest.Ready -> {
                             if (chosen == ExportContent.SENSOR_AND_PUMP && !allow) rememberDevice(device, since)
-                            beginHistoryExport(request.window, pdf)
+                            beginHistoryExport(request.window, pdf, includeActivities = activities.isChecked)
                         }
                     }
                 }
@@ -542,17 +561,34 @@ class MainActivity : Activity() {
         pickDate(current ?: LocalDate.now(), onPicked = onSince)
     }
 
+    private fun beginWorkoutReport(id: String) {
+        if (historyExport != null || restoringHistory) { exportError("Finish or cancel the current export before generating a workout report."); return }
+        scope.launch {
+            try {
+                val workout = withContext(Dispatchers.IO) { workoutStore.load(id) }
+                val zone = java.time.ZoneId.systemDefault()
+                val start = java.time.Instant.ofEpochMilli(workout.startMillis).atZone(zone).toLocalDate()
+                val end = java.time.Instant.ofEpochMilli(workout.endMillis).atZone(zone).toLocalDate()
+                val window = ExportWindow(LatestDevice.MINIMED_PUMP, start, start, end, start,
+                    ExportContent.SENSOR_AND_PUMP, allowIncomplete = true)
+                beginHistoryExport(window, true, includeActivities = true, eventWorkoutId = id)
+            } catch (e: CancellationException) { throw e }
+            catch (e: Exception) { exportError(e.message ?: "Could not open workout.") }
+        }
+    }
+
     private fun beginHistoryExport(window: ExportWindow, pdf: Boolean,
-                                   restored: Map<ExportPortal, List<ExportRow>>? = null, resumeOnly: Boolean = false, startedAt: Long = System.currentTimeMillis()) {
+                                   restored: Map<ExportPortal, List<ExportRow>>? = null, resumeOnly: Boolean = false, startedAt: Long = System.currentTimeMillis(),
+                                   includeActivities: Boolean = false, eventWorkoutId: String? = null) {
         if (historyExport != null) return
         // A killed process cannot run its normal cleanup. A new export owns no previous portal downloads.
         cacheDir.listFiles()?.filter { it.isFile && ExportPortalActivity.validFileName(it.name) }?.forEach { it.delete() }
-        val plan = HistoryExport(window, pdf, store.load(), startedAt = startedAt)
+        val plan = HistoryExport(window, pdf, store.load(), startedAt = startedAt, includeActivities = includeActivities, eventWorkoutId = eventWorkoutId)
         restored?.forEach { (portal, rows) ->
             if (portal == ExportPortal.CARELINK) plan.carelink = rows else plan.dexcom = rows
             plan.collection.accept(portal)
         }
-        if (restored == null) historyStore.begin(window, pdf, plan.settings, plan.startedAt)
+        if (restored == null) historyStore.begin(window, pdf, plan.settings, plan.startedAt, includeActivities, eventWorkoutId)
         historyExport = plan
         val status = hint("Enter the login and selected dates yourself on each site, then download CSV. Only downloaded data is collected; no login fields are filled. Use data for the same person.")
         historyStatus = status
@@ -568,6 +604,8 @@ class MainActivity : Activity() {
             addView(hint("${window.content.label}: ${window.start} to ${window.end}." +
                 if (window.clipped) " Start adjusted to the latest device's first day (${window.deviceSince})." else ""))
             addView(actions)
+            if (eventWorkoutId != null) addView(hint("Workout PDF: download sensor and pump data for these dates. Whole-day context comes first, followed by the exact activity interval."))
+            else if (includeActivities) addView(hint("Imported workouts overlapping these dates will be included."))
             addView(status)
         }
         val d = AlertDialog.Builder(this).setTitle("Export sources").setView(ScrollView(this).apply { addView(box) })
@@ -604,7 +642,10 @@ class MainActivity : Activity() {
 
     private fun watchExportDownloadFolder(plan: HistoryExport) {
         stopExportDownloadWatch()
-        if (exportDownloadFolder.tree() == null) return
+        // A restored export may already have every CSV. Starting and immediately
+        // stopping a foreground service can leave Android's startup timeout armed.
+        if (plan.collection.ready || exportDownloadFolder.tree() == null) return
+        ExportDiagnostics.event(this, "folder_watch_started")
         runCatching { ExportDownloadService.start(this) }.onFailure {
             historyStatus?.text = "Keep GlucoPhone open or share the downloaded CSV if Android stops collection."
         }
@@ -625,11 +666,15 @@ class MainActivity : Activity() {
                             // A stalled transfer can contain valid CSV rows. Require Android's
                             // indexed size/mtime before reading, as well as stable document metadata.
                             if (!withContext(Dispatchers.IO) { exportDownloadFolder.indexed(file) }) continue
+                            ExportDiagnostics.event(this@MainActivity, "folder_candidate", bytes = file.size, fileKey = file.fingerprint)
+                            var stage = "read"
                             val portal = try { withContext(Dispatchers.IO) {
                                 val text = exportDownloadFolder.read(file)
+                                stage = "source"
                                 val source = HistoricalCsv.source(text)
                                 val portal = ExportPortal.entries.single { it.source == source }
                                 require(portal in plan.collection.portals)
+                                stage = "parse"
                                 val order = if (portal == ExportPortal.CARELINK)
                                     HistoricalCsv.inferDateOrder(text, plan.window.start, plan.window.end)
                                         ?: historyStore.learnedOrder(plan.settings) ?: HistoricalCsv.DateOrder.DAY_FIRST
@@ -637,15 +682,22 @@ class MainActivity : Activity() {
                                 val zone = java.time.ZoneId.systemDefault()
                                 val rows = HistoricalCsv.parse(text, source, zone, order).filter { plan.window.contains(it.timeMillis, zone) }
                                 val required = if (portal == ExportPortal.CARELINK) ExportContent.PUMP else ExportContent.SENSOR
+                                stage = "selected_events"
                                 require(rows.any(required::includes)) { "No selected events in the shared CSV." }
+                                stage = "file_changed"
                                 require(exportDownloadFolder.csvFiles(plan.startedAt).any { it.fingerprint == file.fingerprint } &&
                                     exportDownloadFolder.indexed(file))
                                 portal
                             } } catch (e: CancellationException) { throw e }
-                            catch (_: Exception) { handled += file.fingerprint; continue }
+                            catch (e: Exception) {
+                                ExportDiagnostics.event(this@MainActivity, "folder_rejected", bytes = file.size,
+                                    fileKey = file.fingerprint, stage = stage, error = e)
+                                handled += file.fingerprint; continue
+                            }
                             handled += file.fingerprint
                             if (!validPlan(plan) || plan.collection.contains(portal)) continue
                             queuedHistoryUri = file.uri
+                            ExportDiagnostics.event(this@MainActivity, "folder_import_launch", portal, file.size, file.fingerprint)
                             try {
                                 startActivity(Intent(this@MainActivity, MainActivity::class.java)
                                     .setAction(CsvImportActivity.ACTION_IMPORT).setData(file.uri)
@@ -658,7 +710,10 @@ class MainActivity : Activity() {
                             break
                         }
                     } catch (e: CancellationException) { throw e }
-                    catch (_: Exception) { /* A growing file or a revoked folder can be retried; never mark a source complete. */ }
+                    catch (e: Exception) {
+                        ExportDiagnostics.event(this@MainActivity, "folder_watch_error", error = e)
+                        // A growing file or a revoked folder can be retried; never mark a source complete.
+                    }
                     delay(500)
                 }
             } finally {
@@ -691,6 +746,7 @@ class MainActivity : Activity() {
             return
         }
         historyInputPlan = plan; historyPortalSource = portal.source
+        ExportDiagnostics.event(this, "portal_open", portal)
         historyStatus?.text = "Waiting for ${portal.label} CSV (${plan.window.start} to ${plan.window.end})."
         val portalIntent = Intent(this, ExportPortalActivity::class.java)
             .putExtra("portal", portal.name).putExtra("country", plan.settings.carelinkCountry)
@@ -727,6 +783,7 @@ class MainActivity : Activity() {
         val plan = historyExport ?: run { cleanup(); return }
         if (historyLookups.values.any { it.isActive }) { cleanup(); return }
         historyStatus?.text = "Checking downloaded CSV…"
+        ExportDiagnostics.event(this, "import_started")
         historyLookups["import"] = scope.launch {
             try {
                 val text = withContext(Dispatchers.IO) { read() }
@@ -758,7 +815,10 @@ class MainActivity : Activity() {
                     acceptHistoryCsv(plan, portal, text, order, cleanup, inferred.remember)
                 }
             } catch (e: CancellationException) { cleanup(); throw e }
-            catch (e: Exception) { cleanup(); if (validPlan(plan)) historyStatus?.text = e.message ?: "CSV import failed" }
+            catch (e: Exception) {
+                ExportDiagnostics.event(this@MainActivity, "import_failed", error = e)
+                cleanup(); if (validPlan(plan)) historyStatus?.text = e.message ?: "CSV import failed"
+            }
         }
     }
 
@@ -780,10 +840,14 @@ class MainActivity : Activity() {
                 if (portal == ExportPortal.CARELINK) { plan.carelink = rows; if (rememberOrder) historyStore.learn(plan.settings, order) }
                 else plan.dexcom = rows
                 plan.collection.accept(portal)
+                ExportDiagnostics.event(this@MainActivity, "import_accepted", portal)
                 historyStatus?.text = "${portal.label} ready: ${rows.size} events. Times use ${zone.id}."
                 accepted = true
             } catch (e: CancellationException) { throw e }
-            catch (e: Exception) { if (validPlan(plan)) historyStatus?.text = e.message ?: "CSV import failed" }
+            catch (e: Exception) {
+                ExportDiagnostics.event(this@MainActivity, "import_rejected", portal, error = e)
+                if (validPlan(plan)) historyStatus?.text = e.message ?: "CSV import failed"
+            }
             finally {
                 cleanup()
                 historyLookups.remove("import")
@@ -811,6 +875,10 @@ class MainActivity : Activity() {
         try {
             historyStatus?.text = "Preparing the ${if (plan.pdf) "PDF report" else "CSV"}…"
             val cached = if (useCache) repository.exportTables(plan.window) else PhoneExport.empty(java.time.ZoneId.systemDefault())
+            val activities = withContext(Dispatchers.IO) {
+                if (plan.eventWorkoutId != null) listOf(workoutStore.load(plan.eventWorkoutId))
+                else if (plan.includeActivities) workoutStore.inWindow(plan.window, cached.zone) else emptyList()
+            }
             val tables = withContext(Dispatchers.Default) {
                 cached.withHistory(plan.dexcom, plan.carelink).within(plan.window).select(plan.window.content)
             }
@@ -820,8 +888,9 @@ class MainActivity : Activity() {
                 (tables.dexcomRows.any(ExportContent.SENSOR::includes) && tables.carelinkRows.any(ExportContent.PUMP::includes))) {
                 "Both sensor and pump data are required. Collect the missing source before exporting."
             }
-            val coverage = tables.coverage(plan.window)
+            val coverage = tables.coverage(plan.window) + if (plan.includeActivities) " ${activities.size} imported workouts included." else ""
             if (!plan.window.allowIncomplete && tables.hasGaps(plan.window)) {
+                ExportDiagnostics.event(this, "coverage_incomplete")
                 val approved = suspendCancellableCoroutine<Boolean> { continuation ->
                     val dialog = AlertDialog.Builder(this).setTitle("Incomplete coverage")
                         .setMessage("$coverage\nSome days have no selected data. Export the available rows?")
@@ -834,11 +903,18 @@ class MainActivity : Activity() {
             }
             historyStatus?.text = "Creating the ${if (plan.pdf) "PDF report" else "CSV"}…"
             val bytes = withContext(Dispatchers.Default) {
-                if (plan.pdf) ReportPdf.render(tables.report(plan.window)) else ExportCsv.bytes(ExportCsv.write(tables.rows, tables.zone))
+                if (plan.eventWorkoutId != null) WorkoutReportPdf.render(activities.single(), tables.glucose, tables.rows, tables.zone, WorkoutZones.read(this@MainActivity),WorkoutZones.pace(this@MainActivity))
+                else if (plan.pdf) ReportPdf.render(tables.report(plan.window), workouts = activities, zoneBoundaries = WorkoutZones.read(this@MainActivity),paceBoundaries=WorkoutZones.pace(this@MainActivity))
+                else {
+                    val from = plan.window.start.atStartOfDay(tables.zone).toInstant().toEpochMilli()
+                    val until = plan.window.end.plusDays(1).atStartOfDay(tables.zone).toInstant().toEpochMilli()
+                    ExportCsv.bytes(ExportCsv.write(tables.rows + activities.flatMap { it.exportRows(from, until) }, tables.zone))
+                }
             }
             if (!validPlan(plan)) return
             val prefix = if (BuildConfig.DEBUG && intent.getBooleanExtra("exportPortalPreview", false)) "synthetic-" else ""
-            val name = "${prefix}glucowatch-${plan.window.content.name.lowercase()}-${plan.window.start}_${plan.window.end}.${if (plan.pdf) "pdf" else "csv"}"
+            val name = if (plan.eventWorkoutId != null) "glucowatch-workout-${activities.single().fileName(tables.zone).removeSuffix(".fit")}.pdf"
+                else "${prefix}glucowatch-${plan.window.content.name.lowercase()}-${plan.window.start}_${plan.window.end}.${if (plan.pdf) "pdf" else "csv"}"
             val mime = if (plan.pdf) "application/pdf" else "text/csv"
             val saved = runCatching { withContext(Dispatchers.IO) { saveToDownloads(name, mime, bytes) } }
                 .getOrElse { error ->
@@ -1700,6 +1776,7 @@ class MainActivity : Activity() {
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
         when (requestCode) {
+            REQUEST_WORKOUT -> if (resultCode == RESULT_OK) data?.getStringExtra("workoutId")?.let(::beginWorkoutReport)
             REQUEST_EXPORT_FOLDER -> {
                 val uri = data?.data?.takeIf { resultCode == RESULT_OK } ?: return
                 runCatching {
@@ -2360,6 +2437,7 @@ class MainActivity : Activity() {
         const val REQUEST_EXPORT = 6
         const val REQUEST_EXPORT_FOLDER = 7
         const val REQUEST_HISTORY_PORTAL = 8
+        const val REQUEST_WORKOUT = 9
 
         /** The period presets under the chart; pinching moves freely between them. */
         val PERIODS = listOf(3, 6, 12, 24)
@@ -2369,6 +2447,7 @@ class MainActivity : Activity() {
 
         const val MENU_REFRESH = 1
         const val MENU_EXPORT = 6
+        const val MENU_WORKOUT = 7
         const val MENU_CHECK = 2
         const val MENU_HISTORY = 3
         const val MENU_PRIVACY = 4

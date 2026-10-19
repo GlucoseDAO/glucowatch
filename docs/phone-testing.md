@@ -189,6 +189,47 @@ original export POST, so an authentication-losing replay cannot pass. `--ez wide
 the page 1200 pixels wide for Fit to screen checks. The fixture activity is absent from release
 builds. It uses fake credentials/data and never signs into an account.
 
+## Record a failing browser download
+
+Run the local recorder, then reproduce the CSV download in the emulator:
+
+```powershell
+uv run scripts/diagnose_downloads.py record --seconds 120
+```
+
+The recorder saves logcat and once-per-second MediaStore size/pending-state samples under
+`data/output/download-diagnostics/<run>/`. It does not read CSV contents, clear logs, change
+browser settings, or mark an indexed/stable file as complete. `summary.json` contains
+download lifecycle events, hashed filenames and network error codes; raw logs stay private
+because they can contain portal URLs and account data. Error codes can belong to background
+requests: correlate them with the export transaction before assigning a cause.
+Debug phone builds also keep a bounded private `export-diagnostics.jsonl` journal and emit
+`GlucoExport` events for folder candidates, parser rejections, import launches, accepted sources
+and incomplete coverage. The recorder collects that journal and, on the AOSP emulator, Firefox's
+download statuses. Neither summary retains filenames, URLs, CSV rows or exception messages.
+
+For a Firefox transfer that fails without logging its exception, enable the emulator's
+[native Gecko network logger](https://firefox-source-docs.mozilla.org/mobile/android/geckoview/consumer/automation.html)
+before recording:
+
+```powershell
+uv run scripts/diagnose_downloads.py firefox-logging on
+# Open Firefox, sign in manually if needed, then run the recorder and generate a fresh export.
+uv run scripts/diagnose_downloads.py record --seconds 120
+uv run scripts/diagnose_downloads.py firefox-logging off
+```
+
+The logger uses only the AOSP emulator, stops Firefox when enabling/disabling, preserves its
+cookies/data, and refuses to replace an existing Gecko configuration or another debug app.
+The recorder copies its network logs through the emulator's `su`, without restarting adbd.
+Native logs can contain credentials: keep the output local. The off command must be run even
+after an interrupted recording; it removes only the configuration this tool installed. Run
+`analyze <run-directory>` to rebuild the summary from saved logs. Analyzer regression checks:
+
+```powershell
+uv run python -m unittest discover -s scripts -p test_diagnose_downloads.py
+```
+
 ## Automated checks
 
 ```powershell

@@ -19,10 +19,15 @@ import kotlin.math.roundToInt
 
 /** Production implementation of the approved rounded, layered, Clarity-style report. */
 object ReportPdf {
-    fun render(report: GlucoseReport, generatedMillis: Long = System.currentTimeMillis()): ByteArray =
-        Renderer(report, generatedMillis).render()
+    fun render(report: GlucoseReport, generatedMillis: Long = System.currentTimeMillis(), workouts: List<Workout> = emptyList(),
+               zoneBoundaries: List<Int> = WorkoutAnalysis.defaultHeartBoundaries,
+               paceBoundaries: List<Int> = WorkoutAnalysis.defaultPaceBoundaries): ByteArray =
+        if (report.days.isNotEmpty() && (report.days.size == 1 || workouts.isNotEmpty()) &&
+            report.window?.content?.sensor != false && report.window?.content?.pump != false)
+            ReviewedReportPdf.render(report, workouts, zoneBoundaries, generatedMillis, paceBoundaries)
+        else Renderer(report, generatedMillis, workouts, zoneBoundaries, paceBoundaries).render()
 
-    private class Renderer(val report: GlucoseReport, val generated: Long) {
+    private class Renderer(val report: GlucoseReport, val generated: Long, val workouts: List<Workout>, val zoneBoundaries: List<Int>, val paceBoundaries: List<Int>) {
         val model = ReportPresentation.build(report)
         val sensor = report.window?.content?.sensor != false
         val pump = report.window?.content?.pump != false
@@ -63,6 +68,9 @@ object ReportPdf {
             if (pump) report.days.chunked(20).forEach { days -> pages += { pumpTable(it, days) } }
             if (sensor && report.days.size >= 2 && report.readings.isNotEmpty()) pages += { compare(it) }
             pages += { definitions(it) }
+            val from = report.window?.start?.atStartOfDay(model.zone)?.toInstant()?.toEpochMilli() ?: Long.MIN_VALUE
+            val until = report.window?.end?.plusDays(1)?.atStartOfDay(model.zone)?.toInstant()?.toEpochMilli()?.minus(1) ?: Long.MAX_VALUE
+            workouts.forEach { workout -> pages += WorkoutReportPdf.pages(workout, report.readings, report.events, model.zone, zoneBoundaries, from, until, paceBoundaries) }
             val pdf = PdfDocument()
             return try {
                 pages.forEachIndexed { i, draw ->
@@ -344,6 +352,13 @@ object ReportPdf {
                 glucoseAxes(c, 120f, height)
                 val readings = report.readings.filter { date(it.timeMillis) == day.date }
                 if (readings.isEmpty()) text(c, plotLeft + 8, 190f, "No sensor samples for this day.", 9f) else trace(c, readings, 120f, height)
+                workouts.filter { it.overlaps(start(day.date), start(day.date.plusDays(1))) }.forEachIndexed { i, workout ->
+                    val from = maxOf(start(day.date), workout.startMillis)
+                    val until = minOf(start(day.date.plusDays(1)) - 1, workout.endMillis)
+                    val a = x(clock(from)); val b = x(clock(until))
+                    rect(c, RectF(a, 120f, b, 120f + height), ReportStyle.GREY, 24)
+                    text(c, a.coerceAtMost(plotRight - 85), 133f + (i % 3) * 9, ellipsize(workout.name, 6f, 85f), 6f, color = ReportStyle.GREY)
+                }
             }
             if (pump) {
                 val dy = if (sensor) 0f else -190f
@@ -425,7 +440,9 @@ object ReportPdf {
             if (date(model.pumpEnd ?: start(day)) == day && end < start(day.plusDays(1)) && end >= start(day)) {
                 val cutoff = x(clock(end)); rect(c, RectF(cutoff, top, plotRight, top + height), 0xFFF5F5F5.toInt())
                 val clock = DateTimeFormatter.ofPattern("HH:mm").format(Instant.ofEpochMilli(end).atZone(model.zone))
-                text(c, cutoff + 5, top + height / 2, "No pump data after $clock", 6f, color = ReportStyle.GREY)
+                val gapLabel = "No pump data after $clock"
+                if (plotRight - cutoff > paint(6f).measureText(gapLabel) + 10)
+                    text(c, cutoff + 5, top + height / 2, gapLabel, 6f, color = ReportStyle.GREY)
             }
             timeLabels(c, top + height + 14); text(c, plotRight + 3, top - 6, if (model.programmedBasal || pulses.isEmpty()) "U/h" else "U", 6f, color = ReportStyle.BASAL)
             val boluses = model.boluses.filter { date(it.timeMillis) == day }

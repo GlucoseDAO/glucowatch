@@ -2,6 +2,10 @@
 
 GlucoPhone exports from **More → Export data**. Choose **Sensor and pump**, **Sensor**, or **Pump**, independently of **CSV** or **PDF report**.
 
+**Include imported activities** adds saved FIT workouts overlapping the selected dates.
+Import them through **More → Import workout** first. That screen also offers a separate
+workout-interval PDF using sensor and pump data. See [Workout imports](workouts.md).
+
 The form has separate start and end calendar buttons and accepts 1–90 inclusive calendar days. Changing either date updates the day count; changing the count keeps the date chosen most recently and moves the other. Before choosing a calendar date, Days keeps the end date. The interval summary includes both selected dates. Future end dates and invalid day counts are refused. The most recently started device and its first day are stored in Connect (also supported by `GLUCOWATCH_LATEST_DEVICE` / `GLUCOWATCH_DEVICE_SINCE` and configuration imports).
 
 For **Sensor and pump**, the default start is the later of the requested start and the latest-device start. An interval ending before that device began is refused. **Allow incomplete data before the latest device started** preserves the requested dates instead. Single-device exports also preserve them. Downloads are requested only after this date check. Missing uploads are a separate issue: the final preview gives days with sensor readings and days with pump events and asks before exporting missing days unless incomplete data was already allowed. Days containing events can still have gaps.

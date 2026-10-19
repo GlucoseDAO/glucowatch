@@ -440,6 +440,13 @@ data class PhoneExport(
         pump = pump.filter { window.contains(it.timeMillis, zone) },
     )
 
+    fun withinInterval(start: Long, endInclusive: Long) = copy(
+        carelinkRows = carelinkRows.filter { it.timeMillis in start..endInclusive },
+        dexcomRows = dexcomRows.filter { it.timeMillis in start..endInclusive },
+        glucose = glucose.filter { it.timeMillis in start..endInclusive },
+        pump = pump.filter { it.timeMillis in start..endInclusive },
+    )
+
     companion object {
         fun empty(zone: ZoneId) = PhoneExport(
             emptyList(), emptyList(), emptyList(), "no cached glucose", emptyList(), zone, false, false,

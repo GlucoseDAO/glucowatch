@@ -27,3 +27,5 @@ val normalizeLineEndings = tasks.register("normalizeLineEndings") {
 }
 
 tasks.named { it == "preBuild" }.configureEach { dependsOn(normalizeLineEndings) }
+// core/ is a JVM module; its notices must be normalized before Gradle copies them.
+tasks.named { it == "processResources" }.configureEach { dependsOn(normalizeLineEndings) }

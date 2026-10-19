@@ -18,6 +18,7 @@ class ExportDownloadService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        ExportDiagnostics.event(this, "collector_service_created")
         getSystemService(NotificationManager::class.java).createNotificationChannel(
             NotificationChannel(CHANNEL, "Export downloads", NotificationManager.IMPORTANCE_LOW))
         val open = PendingIntent.getActivity(this, 0,
@@ -27,18 +28,33 @@ class ExportDownloadService : Service() {
             .setSmallIcon(R.drawable.ic_launcher).setContentTitle("Collecting export downloads")
             .setContentText("Imports completed CSVs and opens the next selected source")
             .setContentIntent(open).setOngoing(true).setOnlyAlertOnce(true).build()
-        try { startForeground(ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC) }
-        catch (_: Exception) { stopSelf() } // A system quota must not crash the export activity.
+        try {
+            startForeground(ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
+            ExportDiagnostics.event(this, "collector_foreground_started")
+        } catch (e: Exception) {
+            ExportDiagnostics.event(this, "collector_foreground_failed", error = e)
+            stopSelf() // A system quota must not crash the export activity.
+        }
     }
 
-    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int) = START_NOT_STICKY
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (intent?.getBooleanExtra("workout", false) == true) {
+            val open = PendingIntent.getActivity(this, 1, Intent(this, WorkoutImportActivity::class.java)
+                .addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+            getSystemService(NotificationManager::class.java).notify(ID, Notification.Builder(this, CHANNEL)
+                .setSmallIcon(R.drawable.ic_launcher).setContentTitle("Collecting workout download")
+                .setContentText("Waiting for a completed FIT file in your selected folder")
+                .setContentIntent(open).setOngoing(true).setOnlyAlertOnce(true).build())
+        }
+        return START_NOT_STICKY
+    }
 
     override fun onTimeout(startId: Int, fgsType: Int) { stopSelf() }
 
     companion object {
         private const val CHANNEL = "export-downloads"
         private const val ID = 4203
-        fun start(context: Context) = context.startForegroundService(Intent(context, ExportDownloadService::class.java))
+        fun start(context: Context, workout: Boolean = false) = context.startForegroundService(Intent(context, ExportDownloadService::class.java).putExtra("workout", workout))
         fun stop(context: Context) { context.stopService(Intent(context, ExportDownloadService::class.java)) }
     }
 }
