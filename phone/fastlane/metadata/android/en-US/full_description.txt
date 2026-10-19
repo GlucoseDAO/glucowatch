@@ -15,6 +15,8 @@ Import a private .env or YAML configuration to set up your accounts and automati
 
 Dexcom Share and CareLink are proprietary services read through undocumented interfaces, so a change on their side can stop that source until an update. History exports open the Dexcom Clarity and CareLink Personal websites, where you sign in yourself. A forecast model is a data file, not an executable. It is downloaded from Hugging Face only when you choose one or import a configuration that names one. Nightscout and demo data need none of these services.
 
+Export 1 to 90 completed days as CSV, PDF, or both. Reports combine glucose, insulin and food logs, with daily overlays and imported activities. Import multiple FIT workouts, including pool swims, edit pace and heart-rate zones, and open generated PDFs in the offline viewer. Originals and exports are organized in separate Downloads folders. Recorded pump settings and experimental retrospective insulin-response estimates are labelled separately; they are not dose recommendations.
+
 This is not a medical device. Do not make treatment decisions from it. Keep using your CGM's official app and alarms.
 
 Dexcom, Clarity, Medtronic, MiniMed and CareLink are trademarks of their owners. GlucoWatch is not affiliated with them.

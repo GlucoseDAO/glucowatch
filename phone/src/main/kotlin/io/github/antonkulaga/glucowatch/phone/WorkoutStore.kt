@@ -31,8 +31,10 @@ class WorkoutStore(private val context: Context) {
         val entry = entries().single { it.id == id }
         val bytes = folder.resolve(entry.file).inputStream().use(::readBytes)
         require(Workout.digest(bytes) == entry.id) { "Stored workout checksum changed." }
-        return FitWorkoutReader.read(bytes, entry.name)
+        return FitWorkoutReader.read(bytes, entry.name).let { it.copy(pumpDisconnected=it.isSwim&&swimPumpDisconnected()) }
     }
+    fun swimPumpDisconnected()=context.getSharedPreferences("workout-context",Context.MODE_PRIVATE).getBoolean("swim-disconnected",false)
+    fun setSwimPumpDisconnected(value: Boolean) { context.getSharedPreferences("workout-context",Context.MODE_PRIVATE).edit().putBoolean("swim-disconnected",value).apply() }
     fun inWindow(window: ExportWindow, zone: ZoneId): List<Workout> {
         val from = window.start.atStartOfDay(zone).toInstant().toEpochMilli()
         val until = window.end.plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli()
@@ -46,9 +48,28 @@ class WorkoutStore(private val context: Context) {
         return import(bytes, name)
     }
     fun import(bytes: ByteArray, originalName: String): Pair<Entry, Boolean> = synchronized(lock) {
+        require(bytes.size in 1..FitWorkoutReader.MAX_BYTES) { "FIT must contain 1 byte to 32 MB." }
+        // Archive before decoding, including unsupported FITs. A browser suffix says nothing
+        // about the native session; only identical bytes are automatically reused.
+        ReportFiles.archiveStravaOriginal(context, originalName, bytes)
         val old = entries()
         val id = Workout.digest(bytes)
-        old.firstOrNull { it.id == id }?.let { return it to false }
+        old.firstOrNull { it.id == id }?.let { existing ->
+            val filename=FitWorkoutReader.read(bytes,existing.name).fileName(ZoneId.of(existing.zone))
+            if(filename==existing.file)return existing to false
+            // Upgrade previously arranged names too, preserving the public URI and original bytes.
+            write(folder.resolve(filename),bytes)
+            val uri=runCatching {
+                existing.uri?.let { saved -> Uri.parse(saved).also { target ->
+                    require(context.contentResolver.update(target,ContentValues().apply {
+                        put(MediaStore.Downloads.DISPLAY_NAME,filename)
+                    },null,null)==1)
+                } } ?: publish(filename,bytes)
+            }.getOrElse { runCatching { publish(filename,bytes) }.getOrNull() }
+            val entry=existing.copy(file=filename,uri=uri?.toString())
+            saveIndex(old.map { if(it.id==id)entry else it })
+            return entry to false
+        }
         val workout = FitWorkoutReader.read(bytes, originalName)
         val zone = ZoneId.systemDefault()
         val filename = workout.fileName(zone)
@@ -57,17 +78,20 @@ class WorkoutStore(private val context: Context) {
         // MediaStore publishes only after writing. Browser originals remain untouched.
         val uri = runCatching { publish(filename, bytes) }.getOrNull()
         val entry = Entry(workout.id, workout.name, filename, workout.startMillis, workout.endMillis, zone.id, uri?.toString())
-        val array = JSONArray()
-        (old + entry).forEach { e -> array.put(JSONObject().put("id", e.id).put("name", e.name).put("file", e.file)
-            .put("start", e.start).put("end", e.end).put("zone", e.zone).put("uri", e.uri.orEmpty())) }
-        write(index, array.toString().toByteArray())
+        saveIndex(old+entry)
         entry to true
+    }
+    private fun saveIndex(entries: List<Entry>) {
+        val array=JSONArray()
+        entries.forEach { e->array.put(JSONObject().put("id",e.id).put("name",e.name).put("file",e.file)
+            .put("start",e.start).put("end",e.end).put("zone",e.zone).put("uri",e.uri.orEmpty())) }
+        write(index,array.toString().toByteArray())
     }
     private fun publish(name: String, bytes: ByteArray): Uri {
         val values = ContentValues().apply {
             put(MediaStore.Downloads.DISPLAY_NAME, name)
             put(MediaStore.Downloads.MIME_TYPE, "application/octet-stream")
-            put(MediaStore.Downloads.RELATIVE_PATH, "${Environment.DIRECTORY_DOWNLOADS}/GlucoPhone/Strava")
+            put(MediaStore.Downloads.RELATIVE_PATH, "${Environment.DIRECTORY_DOWNLOADS}/${ReportFiles.STRAVA}")
             put(MediaStore.Downloads.IS_PENDING, 1)
         }
         val uri = context.contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values) ?: error("Downloads unavailable")

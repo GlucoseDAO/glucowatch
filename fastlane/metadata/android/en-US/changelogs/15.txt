@@ -1,0 +1,1 @@
+Matching release with GlucoPhone: improved glucose, insulin and workout reports, combined CSV/PDF export, FIT swimming support and an offline PDF viewer. Includes phone-link reliability fixes and consistent release builds across operating systems.

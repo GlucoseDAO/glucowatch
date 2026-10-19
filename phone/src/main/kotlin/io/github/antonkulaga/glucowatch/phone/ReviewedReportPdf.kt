@@ -20,16 +20,18 @@ internal object ReviewedReportPdf {
         val zone=ZoneId.of(report.zoneId)
         val first=report.days.minOf { it.date }.atStartOfDay(zone).toInstant().toEpochMilli()
         val until=report.days.maxOf { it.date }.plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli()
-        val selected=workouts.filter { it.overlaps(first,until) }.distinctBy { it.id }.sortedBy { it.startMillis }
+        val selected=workouts.filter { it.overlaps(first,until) }.distinctBy { it.id }.sortedByDescending { it.startMillis }
         val pages=mutableListOf<(Canvas)->Unit>()
-        report.days.sortedBy { it.date }.forEach { day ->
+        val response=InsulinResponse.analyse(report.events,report.readings)
+        report.days.sortedByDescending { it.date }.forEach { day ->
             val a=day.date.atStartOfDay(zone).toInstant().toEpochMilli()
             val b=minOf(day.date.plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli(),generated)
             val activities=selected.filter { it.overlaps(a,b) }
-            val detail=activities.firstOrNull()?.let { selected.indexOf(it)+report.days.size+1 }?:0
-            pages += { c -> Painter(c,zone).day(day.date,a,b,report.readings,report.events,activities,detail) }
+            val detail=if(activities.isEmpty())0 else pages.size+2
+            pages += { c -> Painter(c,zone).day(day.date,a,b,report.readings,report.events,activities,detail,response) }
+            activities.forEach { w -> pages += { c -> Painter(c,zone).activity(w,report.readings,report.events,boundaries,
+                maxOf(a,w.startMillis),minOf(b-1,w.endMillis),paceBoundaries) } }
         }
-        selected.forEach { w -> pages += { c -> Painter(c,zone).activity(w,report.readings,report.events,boundaries,maxOf(first,w.startMillis),minOf(until-1,w.endMillis),paceBoundaries) } }
         val pdf=PdfDocument()
         return try {
             pages.forEachIndexed { i,draw ->
@@ -169,7 +171,11 @@ internal object ReviewedReportPdf {
 
         fun glucose(from: Long,until: Long,top: Float,height: Float,readings: List<GlucoseReading>,activities: List<Workout>,right: Float=490f) {
             text(22f,top-13,"Glucose",10f,true);val p=Plot(from,until,top,height,40.0,400.0,right)
-            activities.forEach { w->p.elevation(WorkoutAnalysis.analyse(w).elevation) }
+            activities.forEach { w->
+                val background=WorkoutAnalysis.analyse(w).elevation
+                if(background.isNotEmpty())p.elevation(background)
+                else if(w.overlaps(from,until))c.drawRect(p.x(maxOf(from,w.startMillis)),top,p.x(minOf(until,w.endMillis)),p.bottom,paint(color=elevation,alpha=110))
+            }
             p.grid(if(height>=80)(50..400 step 50).map(Int::toDouble)else listOf(70.0,180.0,300.0,400.0))
             if(right==490f)activities.forEach { w->
                 val a=p.x(maxOf(from,w.startMillis));val b=p.x(minOf(until,w.endMillis));c.drawRect(a,top,b,p.bottom,paint(color=grey,alpha=22));line(a,top,a,p.bottom,grey,dash=true);line(b,top,b,p.bottom,grey,dash=true)
@@ -184,80 +190,28 @@ internal object ReviewedReportPdf {
             };p.trace(groups);p.labels("mg/dL")
         }
 
-        fun insulin(from: Long,until: Long,top: Float,height: Float,rows: List<ExportRow>,estimate: ReportBasalEstimate,right: Float=490f) {
-            val compact=right<490f
-            val selected=rows.filter { it.timeMillis in from until until }.distinctBy { it.identity() }
-            val basalDoses=selected.filter { it.kind==ExportRow.KIND_BASAL_DELIVERY&&it.insulinU!=null }
-            val showDoses=estimate.intervals.isEmpty()&&basalDoses.isNotEmpty()
-            val blueUnit=if(showDoses)"U"else"U/h"
-            text(22f,top-if(compact)17 else 29,"Insulin",10f,true)
-            text(93f,top-if(compact)17 else 29,"Bolus: U (red, left) / Basal: $blueUnit (blue, right)",if(compact)7.2f else 8f)
-            if(!compact){rounded(RectF(60f,top-19,70f,top-13),blue,64);text(75f,top-13,"Scheduled/held 25%",7.5f)
-                rounded(RectF(215f,top-19,225f,top-13),blue,128);text(230f,top-13,"Temporary overlap 50%",7.5f);text(410f,top-13,"Hatched: suspended",7f,color=grey)}
-            val relevant=estimate.intervals
-            val blueMax=if(showDoses)maxOf(.1,ceil((basalDoses.maxOf { it.insulinU!! })*10)/10)
-                else ceil(maxOf(2.5,relevant.maxOfOrNull { maxOf(it.scheduledRate,it.programmedRate) }?:0.0)*2)/2
-            val p=Plot(from,until,top,height,0.0,blueMax,right)
-            p.grid(if(compact)listOf(0.0,blueMax/2,blueMax)else(0..5).map { blueMax*it/5 },blue){fmt(it,1)}
-            fun snap(t: Long): Long {
-                val day=Instant.ofEpochMilli(t).atZone(zone).toLocalDate().atStartOfDay(zone).toInstant().toEpochMilli()
-                return day+((t-day+150_000)/300_000)*300_000
-            }
-            // Snap drawing only. Keep a full rounded baseline for each hour even when a
-            // temporary change starts inside it; layer the changed portion over that baseline.
-            val display=relevant.map { it.copy(start=maxOf(from,snap(it.start)),end=minOf(until,snap(it.end))) }.filter { it.end>it.start }
-            var hour=Instant.ofEpochMilli(from).atZone(zone).withMinute(0).withSecond(0).withNano(0)
-            while(hour.toInstant().toEpochMilli()<until){
-                val a=maxOf(from,hour.toInstant().toEpochMilli());val b=minOf(until,hour.plusHours(1).toInstant().toEpochMilli())
-                val runs=mutableListOf<ReportBasalInterval>()
-                display.filter { it.start<b&&it.end>a }.forEach { interval->
-                    val run=interval.copy(start=maxOf(a,interval.start),end=minOf(b,interval.end));val previous=runs.lastOrNull()
-                    if(previous!=null&&previous.end==run.start&&previous.scheduledRate==run.scheduledRate)runs[runs.lastIndex]=previous.copy(end=run.end)
-                    else runs+=run
-                }
-                runs.forEach { run->
-                    val box=RectF(p.x(run.start)+1.1f,p.y(run.scheduledRate),p.x(run.end)-1.1f,p.bottom);rounded(box,blue,64)
-                    if(box.width()>0)display.filter { it.start<run.end&&it.end>run.start&&it.change!=ReportBasalChange.SCHEDULED }.forEach { interval->
-                        val left=maxOf(box.left,p.x(maxOf(run.start,interval.start)));val right=minOf(box.right,p.x(minOf(run.end,interval.end)))
-                        if(right>left&&interval.change==ReportBasalChange.TEMPORARY){
-                            val overlay=RectF(left,p.y(interval.programmedRate),right,p.bottom);rounded(overlay,blue,64)
-                            if(overlay.height()>0){val saved=c.save();c.clipPath(Path().apply { addRoundRect(box,2f,2f,Path.Direction.CW) })
-                                c.clipPath(Path().apply { addRoundRect(overlay,2f,2f,Path.Direction.CW) });c.drawColor(Color.argb(28,22,139,211));c.restoreToCount(saved)}
-                        }else if(right>left){
-                            val saved=c.save();c.clipPath(Path().apply { addRoundRect(box,2f,2f,Path.Direction.CW) });c.clipRect(left,top,right,p.bottom)
-                            var x=left-box.height();while(x<right){line(x,box.bottom,x+box.height(),box.top,blue,.45f);x+=4};c.restoreToCount(saved)
-                        }
-                    }
-                }
-                hour=hour.plusHours(1)
-            }
-            if(showDoses)basalDoses.forEach { r->rounded(RectF(p.x(r.timeMillis)-1f,p.y(r.insulinU!!),p.x(r.timeMillis)+1f,p.bottom),blue,180) }
-            val boluses=selected.filter { it.kind==ExportRow.KIND_BOLUS&&it.insulinU!=null }
-            val redMax=maxOf(3.0,ceil(boluses.maxOfOrNull { it.insulinU!! }?:0.0))
-            (0..3).forEach { i->text(53f,p.bottom-height*i/3+2,fmt(redMax*i/3,if(redMax%3==0.0)0 else 1),7f,color=red,right=true) }
-            text(53f,top-5,"U",7f,color=red,right=true);text(right+4,top-5,blueUnit,7f,color=blue)
-            boluses.forEach { r->rounded(RectF(p.x(r.timeMillis)-1.1f,p.bottom-(r.insulinU!!/redMax).toFloat()*height,p.x(r.timeMillis)+1.1f,p.bottom),red,radius=1.1f) }
-            if(compact&&boluses.isEmpty())text(74f,top+11,"No delivered bolus recorded",7f,color=grey)
-            p.labels()
+        fun insulin(from: Long,until: Long,top: Float,height: Float,rows: List<ExportRow>,estimate: ReportBasalEstimate,right: Float=490f,activities: List<Workout> = emptyList()) {
+            ReportInsulinPdf.draw(c, zone, from, until, top, height, rows, estimate, right,activities)
         }
 
-        fun day(date: LocalDate,from: Long,until: Long,glucose: List<GlucoseReading>,rows: List<ExportRow>,activities: List<Workout>,detailPage: Int) {
+        fun day(date: LocalDate,from: Long,until: Long,glucose: List<GlucoseReading>,rows: List<ExportRow>,activities: List<Workout>,detailPage: Int,response: InsulinResponse.Result) {
             title("Whole day","Sensor, pump and activity / $date",from)
             val estimate=summary(glucose,rows,from,until,activities,false)
             if(activities.isNotEmpty()){
                 rounded(RectF(22f,342f,590f,367f),Color.rgb(237,240,238),radius=4f)
-                text(34f,358f,"${activities.first().sport} / ${clock(activities.first().startMillis)} - ${clock(activities.first().endMillis)} / shaded below",9f,true)
+                text(34f,358f,"${if (activities.size == 1) activities.first().sport else "${activities.size} activities"} / ${clock(activities.minOf { it.startMillis })} - ${clock(activities.maxOf { it.endMillis })} / shaded below",9f,true)
                 text(578f,358f,"Activity detail on page $detailPage",9f,true,right=true)
             }
-            glucose(from,until,389f,150f,glucose,activities)
-            insulin(from,until,599f,109f,rows,estimate)
-            paragraph(22f,729f,fit(estimate.assumptions.joinToString(" ").ifBlank { "No basal rates supplied; recorded doses remain separate." },1050f,7f),size=7f)
+            glucose(from,until,389f,95f,glucose,activities)
+            insulin(from,until,540f,80f,rows,estimate,activities=activities)
+            InsulinReferencePdf.draw(c,rows,zone,from,until,665f,33f,response)
+            paragraph(22f,729f,if(activities.any {it.pumpDisconnected})"Pump disconnected during swimming (user-reported). FIT session bounds approximate timing; calculated basal reaching the user is zero during that interval. Original pump records are retained." else fit(estimate.assumptions.joinToString(" ").ifBlank { "No basal rates supplied; recorded doses remain separate." },1050f,7f),size=7f)
         }
 
         fun profile(from: Long,until: Long,top: Float,title: String,groups: List<List<WorkoutPoint>>,background: List<List<WorkoutPoint>>,low: Double,high: Double,ticks: List<Double>,color: Int,unit: String): Plot {
             text(22f,top-13,title,10f,true);val p=Plot(from,until,top,63f,low,high,389f)
             p.elevation(background);p.trace(groups,color,96,true);p.trace(groups,color,210)
-            p.grid(ticks,color){if(unit=="min/km")if(it==30.0)"30+"else"${fmt(it,0)}:00"else fmt(it,0)}
+            p.grid(ticks,color){if(unit.startsWith("min/"))if(it==30.0)"30+"else paceText(it)else fmt(it,0)}
             text(393f,top-5,unit,7f,color=color);p.labels();return p
         }
         fun zones(top: Float,values: List<Double>,labels: List<String>,colors: List<Int>,title: String) {
@@ -273,7 +227,7 @@ internal object ReviewedReportPdf {
         }
         fun activity(workout: Workout,glucose: List<GlucoseReading>,rows: List<ExportRow>,boundaries: List<Int>,from: Long,until: Long,paceBoundaries: List<Int>) {
             val a=WorkoutAnalysis.analyse(workout,from,until,boundaries,paceBoundaries)
-            title("${workout.name} / ${workout.sport}","Activity detail / ${clock(from)} - ${clock(until)} local time",from)
+            title("${workout.name} / ${workout.sport}","Activity detail / ${clock(from)} - ${clock(until)} local time${if(workout.pumpDisconnected)" / Pump disconnected (user-reported)"else""}",from)
             val estimate=summary(glucose,rows,from,until+1,listOf(workout),true)
             val full=from==workout.startMillis&&until==workout.endMillis
             val samples=workout.samples.filter { it.timeMillis in from..until }
@@ -281,26 +235,45 @@ internal object ReviewedReportPdf {
             val seconds=if(full)workout.timerSeconds?:((until-from)/1000.0)else(until-from)/1000.0
             val ascent=if(full)workout.ascentM else null;val descent=if(full)workout.descentM else null
             val elapsed=(until-from)/1000
-            val metrics=listOf("Distance" to "${fmt(distance?.div(1000),2)} km","Elapsed time" to "${elapsed/3600}:${(elapsed%3600/60).toString().padStart(2,'0')}:${(elapsed%60).toString().padStart(2,'0')}","Ascent / descent" to "+${fmt(ascent,0)} / -${fmt(descent,0)} m","Mean speed" to "${fmt(distance?.times(3.6)?.div(seconds),2)} km/h","Mean pace" to "${paceText(distance?.takeIf { it>0 }?.let { seconds/it*1000/60 })} /km")
-            metrics.forEachIndexed { i,(name,value)->val x=22f+i*568f/5;text(x,331f,name,8f,true);text(x,349f,value,if(i==2)10f else 13f,true)}
+            val metrics=listOf("Distance" to "${fmt(distance?.div(1000),2)} km","Elapsed time" to "${elapsed/3600}:${(elapsed%3600/60).toString().padStart(2,'0')}:${(elapsed%60).toString().padStart(2,'0')}",if(workout.isSwim)"Pool / lengths" to "${fmt(workout.poolLengthM,0)} m / ${workout.lengths.count { it.active }}" else "Ascent / descent" to "+${fmt(ascent,0)} / -${fmt(descent,0)} m","Mean speed" to "${fmt(distance?.times(3.6)?.div(seconds),2)} km/h","Mean pace" to "${paceText(distance?.takeIf { it>0 }?.let { seconds/it*(if(workout.isSwim)100 else 1000)/60 })} ${if(workout.isSwim)"/100m"else"/km"}")
+            metrics.forEachIndexed { i,(name,value)->
+                val x=22f+i*568f/5
+                text(x,331f,fit(name,106f,8f),8f,true)
+                val requested=if(i==2)10f else 13f
+                val size=min(requested,requested*106f/paint(requested,true).measureText(value).coerceAtLeast(1f))
+                text(x,349f,value,size,true)
+            }
             val hp=profile(from,until,378f,"Heart rate",a.heart,a.elevation,70.0,190.0,listOf(80.0,130.0,180.0),heart,"bpm")
+            if(a.heart.isEmpty())text(74f,407f,"Heart rate unavailable",8f,color=grey)
             a.heartGaps.forEach { (lo,hi)->line(hp.x(lo),378f,hp.x(lo),441f,grey,dash=true);line(hp.x(hi),378f,hp.x(hi),441f,grey,dash=true);if(hp.x(hi)-hp.x(lo)>20)text((hp.x(lo)+hp.x(hi))/2-10,388f,"HR gap",6f,color=grey)}
             if(boundaries.size==4)zones(378f,a.heartZones,listOf("<${boundaries[0]}","${boundaries[0]}-${boundaries[1]-1}","${boundaries[1]}-${boundaries[2]-1}","${boundaries[2]}-${boundaries[3]-1}","${boundaries[3]}+"),listOf(0xFFE8AAAA.toInt(),0xFFD67B7B.toInt(),0xFFD35450.toInt(),0xFFC63C34.toInt(),0xFFA82626.toInt()),"Heart-rate zones / bpm")
             else text(443f,385f,"Heart-rate zones disabled",8f)
             text(443f,447f,"Avg ${fmt(a.heartMean,0)} / Max ${fmt(a.heartMax,0)} bpm",7f,true,heart)
-            profile(from,until,480f,"Estimated GAP",a.gap,a.elevation,33.0,3.0,listOf(5.0,10.0,20.0,30.0),pace,"min/km")
-            fun boundary(i: Int)="${paceBoundaries[i]/60}:${(paceBoundaries[i]%60).toString().padStart(2,'0')}"
-            val paceLabels=listOf("${boundary(4)}+")+(3 downTo 0).map { "${boundary(it)}-${boundary(it+1)}" }+"<${boundary(0)}"
-            zones(480f,a.gapZones,paceLabels,listOf(0xFFC6D8EF.toInt(),0xFFA5C1E4.toInt(),0xFF7FA5D5.toInt(),0xFF537FC0.toInt(),0xFF3561A7.toInt(),0xFF234C91.toInt()),"GAP zones / min/km")
-            text(443f,549f,"Mean GAP ${paceText(a.gapMean)} / Minetti",6.8f,true,pace)
+            if (a.gap.isNotEmpty()) {
+                profile(from,until,480f,"Estimated GAP",a.gap,a.elevation,33.0,3.0,listOf(5.0,10.0,20.0,30.0),pace,"min/km")
+                fun boundary(i: Int)="${paceBoundaries[i]/60}:${(paceBoundaries[i]%60).toString().padStart(2,'0')}"
+                val paceLabels=listOf("${boundary(4)}+")+(3 downTo 0).map { "${boundary(it)}-${boundary(it+1)}" }+"<${boundary(0)}"
+                zones(480f,a.gapZones,paceLabels,listOf(0xFFC6D8EF.toInt(),0xFFA5C1E4.toInt(),0xFF7FA5D5.toInt(),0xFF537FC0.toInt(),0xFF3561A7.toInt(),0xFF234C91.toInt()),"GAP zones / min/km")
+                text(443f,549f,"Mean GAP ${paceText(a.gapMean)} / Minetti",6.8f,true,pace)
+            } else {
+                val observed = a.motion.flatten().map { it.value }
+                val lo = maxOf(0.0, floor(observed.minOrNull() ?: 0.0))
+                val hi = maxOf(lo + 1, ceil(observed.maxOrNull() ?: if(workout.isSwim)5.0 else 10.0))
+                val ticks = (0..3).map { lo + (hi-lo)*it/3 }
+                val paceAxis = a.motionUnit.startsWith("min/")
+                profile(from,until,480f,a.motionTitle,a.motion,a.elevation,if(paceAxis)hi else lo,if(paceAxis)lo else hi,ticks,pace,a.motionUnit)
+                if(observed.isEmpty())text(74f,510f,"No motion observations supplied",8f,color=grey)
+                paragraph(443f,484f,if(workout.isSwim)"Native pool lengths or recorded speed. Swim pace is per 100 m. Running pace zones do not apply." else "Recorded motion only. Running GAP zones are not applied without an estimated GAP series.",147f)
+                text(443f,549f,"Mean ${if(paceAxis)paceText(a.motionMean)else fmt(a.motionMean)} ${a.motionUnit}",6.8f,true,pace)
+            }
             glucose(from,until,575f,60f,glucose,listOf(workout),389f)
             text(443f,562f,"During the activity",9f,true)
-            paragraph(443f,576f,"Grey = elevation behind all three traces. GAP: 100 m grade, speed from 30 s distance changes.",147f)
-            paragraph(443f,611f,"Observed HR: ${duration((a.heartZones.sum()*1000).toLong())}\nMotion: ${duration((a.gapZones.sum()*1000).toLong())}\nReal HR gaps stay blank; stops stay in GAP zones.",147f)
-            insulin(from,until,678f,45f,rows,estimate,389f)
+            paragraph(443f,576f,if(a.gap.isNotEmpty())"Grey = recorded elevation. GAP: 100 m grade and 30 s distance changes." else "Missing observations remain blank. Grey elevation appears only when recorded.",147f)
+            paragraph(443f,611f,"Observed HR: ${duration((a.heartZones.sum()*1000).toLong())}\n${if(workout.excludedSampleCount>0)"${workout.excludedSampleCount} observations outside the session omitted." else "Real HR gaps remain blank."}",147f)
+            insulin(from,until,678f,45f,rows,estimate,389f,listOf(workout))
             text(443f,661f,"Calculated insulin",9f,true)
-            paragraph(443f,675f,"${units(estimate.units)} U rate-time basal. Blue = held setting; temporary changes and suspensions modify the estimate.",147f)
-            paragraph(22f,741f,"GAP: Minetti et al. (2002), doi:10.1152/japplphysiol.01177.2001. Grade +/-45%; 1-min chart medians; display cap 30+. Different from Strava.",size=6.3f)
+            paragraph(443f,675f,if(workout.pumpDisconnected)"Pump disconnected (user-reported). FIT bounds approximate timing. Estimated basal reaching user: ${units(estimate.units)} U."else"${units(estimate.units)} U rate-time basal. Blue = held setting; temporary changes and suspensions modify the estimate.",147f)
+            paragraph(22f,741f,if(a.gap.isNotEmpty())"GAP: Minetti et al. (2002), doi:10.1152/japplphysiol.01177.2001. Grade +/-45%; 1-min chart medians; display cap 30+. Different from Strava." else "Activity interval and observations come from the original FIT. No running GAP model is applied to swims, cycling or other sports.",size=6.3f)
         }
         fun paceText(value: Double?): String=value?.takeIf { it.isFinite() }?.let { val seconds=(it*60).roundToInt();"${seconds/60}:${(seconds%60).toString().padStart(2,'0')}" }?:"--"
     }

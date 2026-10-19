@@ -29,7 +29,7 @@ enum class ExportContent(val label: String) {
         val sensorEvent = row.kind in setOf(ExportRow.KIND_GLUCOSE, ExportRow.KIND_CALIBRATION, ExportRow.KIND_METER)
         return when (this) {
             SENSOR_AND_PUMP -> true
-            SENSOR -> sensorEvent || (row.source == ExportRow.SOURCE_DEXCOM_CLARITY && row.insulinU == null && row.carbsG == null)
+            SENSOR -> sensorEvent || (row.source == ExportRow.SOURCE_DEXCOM_CLARITY && row.insulinU == null)
             PUMP -> row.source == ExportRow.SOURCE_CARELINK && !sensorEvent
         }
     }

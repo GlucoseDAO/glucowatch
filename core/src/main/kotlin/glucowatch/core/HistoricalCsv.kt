@@ -119,10 +119,14 @@ object HistoricalCsv {
             val delivered = number("Bolus Volume Delivered (U)")
             val programmed = number("Bolus Volume Selected (U)")
             if (delivered != null || programmed != null) {
+                val type = value("Bolus Type")
+                val extended = type?.let { it.contains("square", true) || it.contains("extended", true) } == true
                 output += ExportRow(time, source, ExportRow.KIND_BOLUS, insulinU = delivered,
-                    insulinKind = InsulinKind.BOLUS.name, bolusType = value("Bolus Type"),
-                    programmedFastU = programmed, deliveredFastU = delivered, durationMin = duration(value("Bolus Duration (h:mm:ss)")),
-                    markerType = event.takeIf(String::isNotBlank), detail = detail)
+                    insulinKind = InsulinKind.BOLUS.name, bolusType = type,
+                    programmedFastU = programmed.takeUnless { extended }, deliveredFastU = delivered.takeUnless { extended },
+                    programmedExtendedU = programmed.takeIf { extended }, deliveredExtendedU = delivered.takeIf { extended },
+                    durationMin = duration(value("Bolus Duration (h:mm:ss)")),
+                    markerType = event.takeIf(String::isNotBlank), detail = detail, bolusId = value("Bolus Number"))
                 emitted = true
             }
             number("Temp Basal Amount")?.let { amount ->
@@ -138,6 +142,17 @@ object HistoricalCsv {
                 row(ExportRow.KIND_OTHER, insulin = number("Insulin Value (u)", "Insulin Value (U)"))
             number("BWZ Carb Input (grams)", "Carb Value (grams)")?.let { row(ExportRow.KIND_MEAL, carbs = it) }
             number("Basal Rate (U/h)")?.let { row(ExportRow.KIND_REPORTED_BASAL, rate = it, insulinKind = InsulinKind.BASAL.name) }
+            number("BWZ Active Insulin (U)", "Active Insulin (U)")?.let {
+                output += ExportRow(time, source, ExportRow.KIND_IOB, iobU = it)
+                emitted = true
+            }
+            val isf = number("BWZ Insulin Sensitivity (mg/dL/U)")
+            val icr = number("BWZ Carb Ratio (g/U)")
+            if (isf != null || icr != null) {
+                output += ExportRow(time, source, "pump_therapy_settings", pumpIsfMgdlPerU = isf,
+                    pumpIcrGPerU = icr, detail = detail)
+                emitted = true
+            }
             number("Sensor Calibration BG (mg/dL)")?.let { row(ExportRow.KIND_CALIBRATION, reading = it) }
             number("BG Reading (mg/dL)")?.let { row(ExportRow.KIND_METER, reading = it) }
             // Suspend/resume can share a timestamp and rate with another native record.

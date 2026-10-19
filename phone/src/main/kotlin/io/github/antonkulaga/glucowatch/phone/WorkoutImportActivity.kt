@@ -13,6 +13,10 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.EditText
+import android.widget.CheckBox
+import android.text.InputType
+import android.text.TextWatcher
+import android.text.Editable
 import kotlinx.coroutines.*
 import java.time.Instant
 import java.time.ZoneId
@@ -30,6 +34,9 @@ class WorkoutImportActivity : Activity() {
     private var busy = false
     private var restored = false
     private var renderGeneration = 0
+    private val heartInputs = mutableListOf<EditText>()
+    private val paceInputs = mutableListOf<EditText>()
+    private lateinit var generateReport: CheckBox
     override fun onCreate(state: Bundle?) {
         super.onCreate(state)
         column = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(24, 24, 24, 24); setBackgroundColor(Brand.BACKGROUND) }
@@ -49,77 +56,102 @@ class WorkoutImportActivity : Activity() {
         render()
         consumeReady(intent)
     }
-    private fun button(label: String, action: () -> Unit) { column.addView(Button(this).apply {
+    private fun button(label: String, parent: LinearLayout = column, action: () -> Unit) { parent.addView(Button(this).apply {
         text = label; Brand.style(this, false); setOnClickListener { if (!busy) action() }
     }) }
-    private fun text(label: String) = TextView(this).apply { text = label; textSize = 15f; setTextColor(Brand.TEXT); setPadding(4, 12, 4, 12) }.also(column::addView)
+    private fun text(label: String, parent: LinearLayout = column) = TextView(this).apply { text = label; textSize = 15f; setTextColor(Brand.TEXT); setPadding(4, 12, 4, 12) }.also(parent::addView)
     private fun render() {
         val generation = ++renderGeneration
         column.removeAllViews()
-        text("Workout imports").textSize = 24f
-        text("Open your workout on Strava and choose Export Original. Sign in with Google in the browser if needed. Import saves a dated FIT copy; it does not generate a report unless you ask.")
-        button("Import workout from Strava") { openStrava(false) }
-        button("Import and generate event report") { openStrava(true) }
-        button("Choose downloaded FIT") { chooseFit() }
-        button("Heart-rate zones") {
-            val input = EditText(this).apply {
-                hint = "Four boundaries in bpm, e.g. 115,143,157,171"
-                setText(WorkoutZones.read(this@WorkoutImportActivity).joinToString(","))
-            }
-            val dialog = AlertDialog.Builder(this).setTitle("Your heart-rate zones")
-                .setMessage("Enter your own four increasing bpm boundaries for five zones. Leave blank to omit zone calculations.")
-                .setView(input).setPositiveButton("Save", null).setNegativeButton("Cancel", null).create()
-            dialog.setOnShowListener { dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
-                val raw = input.text.toString().trim()
-                val boundaries = raw.split(',').mapNotNull { it.trim().toIntOrNull() }
-                if (raw.isNotEmpty() && (boundaries.size != 4 || raw.split(',').size != 4 || boundaries != boundaries.sorted().distinct() || boundaries.any { it !in 1..250 }))
-                    input.error = "Enter four increasing whole bpm values, separated by commas."
-                else { WorkoutZones.save(this, if (raw.isEmpty()) emptyList() else boundaries); dialog.dismiss() }
-            } }
-            dialog.show()
+        text("Workouts").textSize = 24f
+        text("Pace zones · estimated grade-adjusted pace (min:sec/km)").textSize = 18f
+        paceInputs.clear(); heartInputs.clear()
+        val pace = WorkoutZones.pace(this)
+        pace.forEachIndexed { index, value -> zoneField("Zone ${6 - index} · ${if (index == 0) "faster than" else "up to"}",
+            "${value / 60}:${(value % 60).toString().padStart(2, '0')}", paceInputs, pace = true) }
+        text("Zone 1 · slower than the last pace boundary")
+        text("Heart-rate zones · bpm").textSize = 18f
+        val heart = WorkoutZones.read(this)
+        repeat(4) { index -> zoneField("Zone ${index + 1} · below", heart.getOrNull(index)?.toString().orEmpty(), heartInputs, pace = false) }
+        text("Zone 5 · at or above the last heart-rate boundary. Clear all heart-rate fields to omit HR zones.")
+        text("Zone edits are saved automatically when all boundaries are valid.")
+        column.addView(CheckBox(this).apply {
+            text="Pump disconnected during swimming";setTextColor(Brand.TEXT);isChecked=store.swimPumpDisconnected()
+            setOnCheckedChangeListener { _,checked->store.setSwimPumpDisconnected(checked) }
+        })
+        text("Disconnection is user-reported. Reports use the swim's FIT session bounds as approximate timing and retain raw pump records.")
+        generateReport = CheckBox(this).apply {
+            text = "Generate report per activity"; setTextColor(Brand.TEXT)
+            isChecked = pending.getBoolean("generateReport", false)
+            setOnCheckedChangeListener { _, checked -> pending.edit().putBoolean("generateReport", checked).apply() }
         }
-        button("Pace zones") {
-            val input=EditText(this).apply {
-                hint="6:45,7:11,7:40,8:33,9:56"
-                setText(WorkoutZones.pace(this@WorkoutImportActivity).joinToString(",") { "${it/60}:${(it%60).toString().padStart(2,'0')}" })
+        column.addView(generateReport)
+        button("Import workout from Strava") { if (saveZones(showErrors = true)) openStrava(generateReport.isChecked) }
+        button("Generate report from downloaded FIT files") {
+            if (saveZones(showErrors = true)) {
+                pending.edit().putBoolean("report", true).apply(); chooseFit()
             }
-            val dialog=AlertDialog.Builder(this).setTitle("Your pace zones")
-                .setMessage("Five increasing boundaries in min:sec per km, fastest to slowest. These apply to estimated grade-adjusted pace.")
-                .setView(input).setPositiveButton("Save",null).setNegativeButton("Cancel",null).create()
-            dialog.setOnShowListener { dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
-                val values=input.text.toString().split(',').mapNotNull { word->
-                    val parts=word.trim().split(':');val minutes=parts.getOrNull(0)?.toIntOrNull();val seconds=parts.getOrNull(1)?.toIntOrNull()
-                    if(parts.size==2&&minutes!=null&&minutes in 0..120&&seconds!=null&&seconds in 0..59)minutes*60+seconds else null
-                }
-                if(input.text.toString().split(',').size!=5||values.size!=5||values!=values.sorted().distinct()||values.firstOrNull()==0)
-                    input.error="Enter five increasing min:sec values separated by commas."
-                else { WorkoutZones.savePace(this,values);dialog.dismiss() }
-            } }
-            dialog.show()
         }
-        if (Build.VERSION.SDK_INT >= 31) button("Automatic download folder") {
+        if (Build.VERSION.SDK_INT >= 31) button("Select download folder") {
             AlertDialog.Builder(this).setTitle("Workout download folder")
-                .setMessage("Choose Downloads/GlucoPhone in device storage, and set Chrome to save downloads there. GlucoPhone checks completed FIT files while this import is active. You can always choose a file manually.")
+                .setMessage("Select GlucoPhone/Raw to include its Dexcom, Medtronic and Strava subfolders, or choose a browser download folder. Untouched downloads keep their names in Downloads/GlucoPhone/Raw/Strava/Unedited. Dated, arranged copies are in Raw/Strava.")
                 .setPositiveButton("Choose folder") { _, _ -> startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT_TREE)
-                    .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION), FOLDER) }
+                    .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)
+                    .putExtra(DocumentsContract.EXTRA_INITIAL_URI, Uri.parse("content://com.android.externalstorage.documents/document/primary%3ADownload%2FGlucoPhone%2FRaw")), FOLDER) }
                 .setNegativeButton("Cancel", null).show()
         }
+        val savedColumn = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }.also(column::addView)
         status = text("Archived copies use the workout start date and time, not the download date.")
         button("Stop waiting for workout") {
-            pending.edit().clear().apply(); watch?.cancel(); ExportDownloadService.stop(this); status.text = "Import cancelled. Downloaded files are kept."
+            pending.edit().remove("since").remove("report").apply(); watch?.cancel(); ExportDownloadService.stop(this); status.text = "Import cancelled. Downloaded files are kept."
         }
         scope.launch {
             try {
                 val entries = withContext(Dispatchers.IO) { store.entries() }
                 if (generation != renderGeneration) return@launch
-                if (entries.isNotEmpty()) text("Saved workouts")
+                if (entries.isNotEmpty()) text("Saved workouts", savedColumn)
                 val format = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm").withZone(ZoneId.systemDefault())
-                entries.forEach { e -> button("${format.format(Instant.ofEpochMilli(e.start))} · ${e.name}") {
+                entries.forEach { e -> button("${format.format(Instant.ofEpochMilli(e.start))} · ${e.name}", savedColumn) {
                     AlertDialog.Builder(this@WorkoutImportActivity).setTitle(e.name).setMessage("Saved as ${e.file}\n\nGenerate a PDF for this workout using sensor and pump data?")
                         .setPositiveButton("Event report") { _, _ -> report(e.id) }.setNegativeButton("Close", null).show()
                 } }
             } catch (e: Exception) { status.text = e.message ?: "Could not read workout archive." }
         }
+    }
+    private fun zoneField(label: String, value: String, fields: MutableList<EditText>, pace: Boolean) {
+        val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = android.view.Gravity.CENTER_VERTICAL }
+        row.addView(TextView(this).apply { text = label; setTextColor(Brand.TEXT) }, LinearLayout.LayoutParams(0, -2, 1f))
+        val field = EditText(this).apply {
+            setText(value); setTextColor(Brand.TEXT); setSingleLine()
+            inputType = if (pace) InputType.TYPE_CLASS_DATETIME or InputType.TYPE_DATETIME_VARIATION_TIME else InputType.TYPE_CLASS_NUMBER
+            contentDescription = "${if (pace) "Pace" else "Heart rate"} $label"
+        }
+        fields += field; row.addView(field, LinearLayout.LayoutParams(180, -2)); column.addView(row)
+        field.addTextChangedListener(object : TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) { saveZones(showErrors = false) }
+            override fun afterTextChanged(s: Editable?) {}
+        })
+    }
+    private fun saveZones(showErrors: Boolean): Boolean {
+        if (paceInputs.size != 5 || heartInputs.size != 4) return false
+        val pace = paceInputs.map { input ->
+            val parts = input.text.toString().trim().split(':')
+            val minutes = parts.getOrNull(0)?.toIntOrNull(); val seconds = parts.getOrNull(1)?.toIntOrNull()
+            if (parts.size == 2 && minutes != null && minutes in 0..120 && seconds != null && seconds in 0..59) minutes * 60 + seconds else null
+        }
+        val heart = heartInputs.map { it.text.toString().trim().toIntOrNull() }
+        val heartEmpty = heartInputs.all { it.text.isBlank() }
+        val paceValues = pace.filterNotNull(); val heartValues = heart.filterNotNull()
+        val paceValid = paceValues.size == 5 && paceValues.first() > 0 && paceValues == paceValues.sorted().distinct()
+        val heartValid = heartEmpty || (heartValues.size == 4 && heartValues.all { it in 1..250 } && heartValues == heartValues.sorted().distinct())
+        if (paceValid) WorkoutZones.savePace(this, paceValues)
+        if (heartValid) WorkoutZones.save(this, if (heartEmpty) emptyList() else heartValues)
+        if (showErrors) {
+            paceInputs.forEach { it.error = if (paceValid) null else "Use five increasing min:sec boundaries" }
+            heartInputs.forEach { it.error = if (heartValid) null else "Use four increasing bpm boundaries, or clear all four" }
+        }
+        return paceValid && heartValid
     }
     override fun onNewIntent(next: Intent) {
         super.onNewIntent(next); setIntent(next); consumeReady(next)
@@ -152,8 +184,10 @@ class WorkoutImportActivity : Activity() {
         scope.launch {
             watch?.cancelAndJoin(); watch = null
             pending.edit().putLong("since", System.currentTimeMillis()).putBoolean("report", eventReport).apply()
-            if (!ExportBrowser.open(this@WorkoutImportActivity, "https://www.strava.com/athlete/training", BROWSER, preferChromium = true)) {
-                status.text = "Install a browser to sign in to Strava, or choose an existing FIT file."; return@launch
+            if (!ExportBrowser.openChrome(this@WorkoutImportActivity, "https://www.strava.com/athlete/training", BROWSER)) {
+                pending.edit().remove("since").remove("report").apply()
+                status.text = "Chrome is required for this sign-in. Install or enable Chrome, then tap Import workout from Strava again."
+                return@launch
             }
             watchFolder()
         }
@@ -161,6 +195,7 @@ class WorkoutImportActivity : Activity() {
     private fun chooseFit() {
         startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
             addCategory(Intent.CATEGORY_OPENABLE); type = "*/*"
+            putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
             putExtra(DocumentsContract.EXTRA_INITIAL_URI, Uri.parse("content://com.android.externalstorage.documents/document/primary:Download"))
         }, FIT)
     }
@@ -214,29 +249,101 @@ class WorkoutImportActivity : Activity() {
     private fun accepted(result: Pair<WorkoutStore.Entry, Boolean>) {
         val (entry, fresh) = result
         val generate = pending.getBoolean("report", false)
-        pending.edit().clear().apply()
+        pending.edit().remove("since").remove("report").apply()
         ExportDownloadService.stop(this)
         if (generate) { report(entry.id); return }
         render()
         status.text = (if (fresh) "Workout imported" else "Already imported") + ": ${entry.file}." +
-            if (entry.uri != null) " Copy saved in Downloads/GlucoPhone/Strava." else " Saved in the private workout archive; Downloads copy unavailable."
+            if (entry.uri != null) " Original saved in Raw/Strava/Unedited; dated copy in Raw/Strava." else " Saved in the private workout archive; Downloads copy unavailable."
         AlertDialog.Builder(this).setTitle(if (fresh) "Workout imported" else "Already imported")
             .setMessage("${entry.name}\n${entry.file}")
             .setPositiveButton("Done", null).setNeutralButton("Generate event report") { _, _ -> report(entry.id) }.show()
     }
-    private fun report(id: String) {
-        val result = Intent().putExtra("workoutId", id)
-        if (callingActivity != null) setResult(RESULT_OK, result)
-        else startActivity(Intent(this, MainActivity::class.java).setAction(ACTION_REPORT).putExtra("workoutId", id)
-            .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP))
-        finish()
+    private fun report(id: String) = report(listOf(id))
+    private fun report(ids: List<String>) {
+        if (!saveZones(showErrors = true)) return
+        scope.launch {
+            try {
+                val workouts = withContext(Dispatchers.IO) { ids.distinct().map(store::load) }
+                val range = glucowatch.core.WorkoutReportRange.covering(workouts, ZoneId.systemDefault())
+                require(range.last < java.time.LocalDate.now()) {
+                    "Activity files are saved. CareLink can export only completed days; generate reports for today's activities tomorrow."
+                }
+                val box = LinearLayout(this@WorkoutImportActivity).apply { orientation = LinearLayout.VERTICAL; setPadding(36, 12, 36, 12) }
+                box.addView(TextView(this@WorkoutImportActivity).apply {
+                    text = "${workouts.size} selected activities require sensor and pump data from ${range.first} to ${range.last}, including both dates. You can extend this interval."
+                })
+                var start = range.first; var end = range.last
+                val from = Button(this@WorkoutImportActivity).apply { text = "Start: $start" }
+                val until = Button(this@WorkoutImportActivity).apply { text = "End: $end" }
+                fun pick(initial: java.time.LocalDate, action: (java.time.LocalDate) -> Unit) {
+                    android.app.DatePickerDialog(this@WorkoutImportActivity, { _, year, month, day -> action(java.time.LocalDate.of(year, month + 1, day)) },
+                        initial.year, initial.monthValue - 1, initial.dayOfMonth).apply {
+                        datePicker.maxDate = java.time.LocalDate.now().atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()-1
+                    }.show()
+                }
+                from.setOnClickListener { pick(start) { start = it; from.text = "Start: $start" } }
+                until.setOnClickListener { pick(end) { end = it; until.text = "End: $end" } }
+                box.addView(from); box.addView(until)
+                val error = TextView(this@WorkoutImportActivity).apply { setTextColor(Brand.RED) }; box.addView(error)
+                val dialog = AlertDialog.Builder(this@WorkoutImportActivity).setTitle("Confirm report dates")
+                    .setView(box).setPositiveButton("Use these dates", null).setNegativeButton("Cancel", null).create()
+                dialog.setOnShowListener { dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                    try {
+                        range.validate(start, end)
+                        require(end < java.time.LocalDate.now()) { "CareLink exports completed days only. Today’s activity is saved; generate its combined report tomorrow." }
+                        val result = Intent().putStringArrayListExtra("workoutIds", ArrayList(ids.distinct()))
+                            .putExtra("reportStart", start.toString()).putExtra("reportEnd", end.toString())
+                        if (callingActivity != null) setResult(RESULT_OK, result)
+                        else startActivity(Intent(this@WorkoutImportActivity, MainActivity::class.java).setAction(ACTION_REPORT)
+                            .putExtras(result).addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP))
+                        dialog.dismiss(); finish()
+                    } catch (failure: IllegalArgumentException) { error.text = failure.message }
+                } }
+                dialog.show()
+            } catch (failure: CancellationException) { throw failure }
+            catch (failure: Exception) { status.text = failure.message ?: "Could not prepare activity selection." }
+        }
+    }
+    private fun importSelection(uris: List<Uri>) {
+        if (busy) return
+        if (uris.size !in 1..50) { status.text = "Select 1 to 50 FIT files."; return }
+        if (!saveZones(showErrors = true)) return
+        busy = true; watch?.cancel(); status.text = "Validating ${uris.size} FIT files…"
+        scope.launch {
+            val entries = mutableListOf<WorkoutStore.Entry>()
+            val failures = mutableListOf<String>()
+            try {
+                uris.forEachIndexed { index, uri ->
+                    status.text = "Importing activity ${index + 1} of ${uris.size}…"
+                    try { entries += withContext(Dispatchers.IO) { store.import(uri).first } }
+                    catch (failure: CancellationException) { throw failure }
+                    catch (failure: Exception) { failures += "File ${index + 1}: ${failure.message ?: "Could not import FIT"}" }
+                }
+                pending.edit().remove("since").remove("report").apply(); ExportDownloadService.stop(this@WorkoutImportActivity)
+                val ids = entries.map { it.id }.distinct()
+                if (failures.isNotEmpty()) {
+                    status.text = "${ids.size} activities imported; ${failures.size} files could not be imported."
+                    AlertDialog.Builder(this@WorkoutImportActivity).setTitle("FIT import results").setMessage(failures.joinToString("\n"))
+                        .setPositiveButton(if (ids.isEmpty()) "Close" else "Report valid activities") { _, _ -> if (ids.isNotEmpty()) report(ids) }
+                        .setNegativeButton("Cancel", null).show()
+                } else report(ids)
+            } finally { busy = false }
+        }
     }
     @Deprecated("Platform result API")
     override fun onActivityResult(request: Int, result: Int, data: Intent?) {
         super.onActivityResult(request, result, data)
-        if (result != RESULT_OK) return
+        if (result != RESULT_OK) {
+            if (request == FIT && pending.getLong("since", 0) == 0L) pending.edit().remove("report").apply()
+            return
+        }
+        if (request == FIT) {
+            val uris = data?.clipData?.let { clips -> (0 until clips.itemCount).map { clips.getItemAt(it).uri } }
+                ?: listOfNotNull(data?.data)
+            importSelection(uris.distinct()); return
+        }
         val uri = data?.data ?: return
-        if (request == FIT) import(uri)
         if (request == FOLDER) runCatching { folder.remember(uri, data.flags); watchFolder() }
             .onFailure { status.text = "Could not retain folder access. Choose a FIT file instead." }
     }

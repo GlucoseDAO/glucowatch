@@ -22,13 +22,14 @@ object ReportPdf {
     fun render(report: GlucoseReport, generatedMillis: Long = System.currentTimeMillis(), workouts: List<Workout> = emptyList(),
                zoneBoundaries: List<Int> = WorkoutAnalysis.defaultHeartBoundaries,
                paceBoundaries: List<Int> = WorkoutAnalysis.defaultPaceBoundaries): ByteArray =
-        if (report.days.isNotEmpty() && (report.days.size == 1 || workouts.isNotEmpty()) &&
-            report.window?.content?.sensor != false && report.window?.content?.pump != false)
-            ReviewedReportPdf.render(report, workouts, zoneBoundaries, generatedMillis, paceBoundaries)
-        else Renderer(report, generatedMillis, workouts, zoneBoundaries, paceBoundaries).render()
+        Renderer(report.copy(events=WorkoutAnnotations.add(report.events,workouts)), generatedMillis, workouts, zoneBoundaries, paceBoundaries).render()
 
-    private class Renderer(val report: GlucoseReport, val generated: Long, val workouts: List<Workout>, val zoneBoundaries: List<Int>, val paceBoundaries: List<Int>) {
+    private class Renderer(val report: GlucoseReport, val generated: Long, workoutInput: List<Workout>, val zoneBoundaries: List<Int>, val paceBoundaries: List<Int>) {
         val model = ReportPresentation.build(report)
+        val workouts = workoutInput.filter { workout -> report.days.any { day ->
+            workout.overlaps(day.date.atStartOfDay(model.zone).toInstant().toEpochMilli(), day.date.plusDays(1).atStartOfDay(model.zone).toInstant().toEpochMilli())
+        } }.distinctBy { it.id }.sortedBy { it.startMillis }
+        val timeline by lazy { ReportTimelinePdf(report, generated, workouts, zoneBoundaries, paceBoundaries) }
         val sensor = report.window?.content?.sensor != false
         val pump = report.window?.content?.pump != false
         val left = ReportStyle.MARGIN
@@ -57,9 +58,12 @@ object ReportPdf {
                 report.days.chunked(7).asReversed().forEach { days -> pages += { overlay(it, days) } }
             }
             report.days.asReversed().forEach { day ->
-                val events = dailyEvents(day.date)
-                pages += { daily(it, day, events.take(18)) }
-                events.drop(18).chunked(32).forEach { rows -> pages += { eventPage(it, day, rows) } }
+                pages += { daily(it, day) }
+                // Cross-midnight activities appear clipped after each affected day.
+                ReportExercise.onDay(workouts, day.date, model.zone).forEach { workout ->
+                    pages += WorkoutReportPdf.pages(workout, report.readings, report.events, model.zone, zoneBoundaries,
+                        start(day.date), start(day.date.plusDays(1)) - 1, paceBoundaries)
+                }
             }
             if (sensor && report.readings.isNotEmpty()) {
                 pages += { statistics(it, "Daily Statistics", report.weekdays) }
@@ -68,9 +72,6 @@ object ReportPdf {
             if (pump) report.days.chunked(20).forEach { days -> pages += { pumpTable(it, days) } }
             if (sensor && report.days.size >= 2 && report.readings.isNotEmpty()) pages += { compare(it) }
             pages += { definitions(it) }
-            val from = report.window?.start?.atStartOfDay(model.zone)?.toInstant()?.toEpochMilli() ?: Long.MIN_VALUE
-            val until = report.window?.end?.plusDays(1)?.atStartOfDay(model.zone)?.toInstant()?.toEpochMilli()?.minus(1) ?: Long.MAX_VALUE
-            workouts.forEach { workout -> pages += WorkoutReportPdf.pages(workout, report.readings, report.events, model.zone, zoneBoundaries, from, until, paceBoundaries) }
             val pdf = PdfDocument()
             return try {
                 pages.forEachIndexed { i, draw ->
@@ -320,148 +321,20 @@ object ReportPdf {
             c.drawPath(path, Paint(Paint.ANTI_ALIAS_FLAG).apply { this.color = color; style = Paint.Style.STROKE; strokeWidth = .8f })
         }
         fun patterns(c: Canvas) {
-            title(c, "Patterns", "Best Day")
-            val best = report.summary.bestDay ?: run { paragraph(c, 125f, "No day has the 24 recorded samples needed for a best-day comparison.", 10f); return }
-            text(c, left, 119f, "Best recorded glucose day: ${best.label}", 12f, true)
-            text(c, left, 136f, "${fmt(best.inRangePercent)}% of recorded samples in the 70-180 mg/dL target range.", 9f)
-            glucoseAxes(c, 180f, 216f); trace(c, report.readings.filter { date(it.timeMillis) == best.date }, 180f, 216f)
-            section(c, 446f, "Statistics for this day")
-            listOf("Average glucose" to "${fmt(best.mean, 0)} mg/dL", "Readings" to best.readings.toString(), "In range" to "${fmt(best.inRangePercent)}%").forEachIndexed { i, (name, value) -> text(c, left + i * 176, 476f, name, 9f, true); text(c, left + i * 176, 504f, value, 20f, true) }
-            paragraph(c, 550f, "Best day compares recorded samples, not complete-day coverage. These descriptive summaries do not diagnose patterns or suggest treatment.", 9f)
+            val best = report.summary.bestDay
+            title(c, "Patterns", best?.let { "Best recorded glucose day: ${it.label}" } ?: "Best Day")
+            if (best == null) paragraph(c, 125f, "No day has the 24 samples needed for a best-day comparison.", 10f)
+            else timeline.daily(c, best)
         }
         fun overlay(c: Canvas, days: List<ReportDay>) {
             title(c, "Overlay", "${days.first().date} - ${days.last().date}")
-            val colors = listOf(ReportStyle.INK, 0xFF5E5E5E.toInt(), 0xFF2E6D28.toInt(), 0xFF8D7512.toInt(), 0xFF713B78.toInt(), 0xFFA44F27.toInt(), 0xFF497E93.toInt())
-            days.forEachIndexed { i, day -> text(c, left + i * 80, 119f, DateTimeFormatter.ofPattern("EEE d MMM").format(day.date), 8f, true, colors[i]) }
-            glucoseAxes(c, 145f, 350f)
-            days.forEachIndexed { i, day -> trace(c, report.readings.filter { date(it.timeMillis) == day.date }, 145f, 350f, colors[i]) }
-            paragraph(c, 548f, "Each line is one recorded day. Missing spans longer than 15 minutes break the trace. Orange and red rules mark 180 and 70 mg/dL.", 9f)
+            timeline.overlay(c, days)
         }
-
-        fun dailyEvents(day: LocalDate) = report.events.filter { date(it.timeMillis) == day && when (it.kind) {
-            ExportRow.KIND_BOLUS -> it.insulinU != null
-            ExportRow.KIND_MEAL -> it.carbsG != null
-            ExportRow.KIND_CALIBRATION, ExportRow.KIND_METER -> true
-            else -> false
-        } }.distinctBy { it.source + it.identity() }.sortedBy { it.timeMillis }
-
-        fun daily(c: Canvas, day: ReportDay, events: List<ExportRow>) {
+        fun daily(c: Canvas, day: ReportDay) {
             title(c, "Daily", day.label)
-            if (sensor) {
-                val height = if (pump) 150f else 300f
-                glucoseAxes(c, 120f, height)
-                val readings = report.readings.filter { date(it.timeMillis) == day.date }
-                if (readings.isEmpty()) text(c, plotLeft + 8, 190f, "No sensor samples for this day.", 9f) else trace(c, readings, 120f, height)
-                workouts.filter { it.overlaps(start(day.date), start(day.date.plusDays(1))) }.forEachIndexed { i, workout ->
-                    val from = maxOf(start(day.date), workout.startMillis)
-                    val until = minOf(start(day.date.plusDays(1)) - 1, workout.endMillis)
-                    val a = x(clock(from)); val b = x(clock(until))
-                    rect(c, RectF(a, 120f, b, 120f + height), ReportStyle.GREY, 24)
-                    text(c, a.coerceAtMost(plotRight - 85), 133f + (i % 3) * 9, ellipsize(workout.name, 6f, 85f), 6f, color = ReportStyle.GREY)
-                }
-            }
-            if (pump) {
-                val dy = if (sensor) 0f else -190f
-                text(c, left, 309f + dy, "Insulin", 9f, true)
-                text(c, 94f, 309f + dy, "Bolus: U (red, left) | Basal: ${if (model.programmedBasal || model.basalPulses.isEmpty()) "U/h" else "U"} (blue, right)", 7.2f)
-                if (model.programmedBasal) {
-                    val scheduled = RectF(60f, 322f + dy, 70f, 328f + dy); rounded(c, scheduled, ReportStyle.BASAL, ReportStyle.LAYER_ALPHA); text(c, 75f, 328f + dy, "Scheduled 25%", 7f)
-                    rounded(c, RectF(174f, 322f + dy, 184f, 328f + dy), ReportStyle.BASAL, ReportStyle.LAYER_ALPHA); text(c, 189f, 328f + dy, "Temporary 25%", 7f)
-                    val overlap = RectF(294f, 322f + dy, 304f, 328f + dy); rounded(c, overlap, ReportStyle.BASAL, ReportStyle.LAYER_ALPHA); layers(c, overlap, overlap); text(c, 309f, 328f + dy, "Overlap 50%", 7f)
-                    repeat(3) { i -> line(c, 405f + i * 4, 328f + dy, 411f + i * 4, 322f + dy, ReportStyle.BASAL) }; text(c, 424f, 328f + dy, "Suspended", 7f)
-                } else text(c, plotLeft, 328f + dy, if (model.basalPulses.isNotEmpty()) "Recorded basal doses" else "Recorded basal rate observations; recurring schedule unavailable", 7f, color = ReportStyle.BASAL)
-                dailyInsulin(c, day.date, 341f + dy, 109f - dy)
-            }
-            val values = if (sensor) listOf("Mean" to "${fmt(day.mean, 0)} mg/dL", "In range" to "${fmt(day.inRangePercent)}%") else emptyList()
-            val metrics = values + if (pump) listOf("Bolus" to "${fmt(day.bolusU, 2)} U", "Carbs" to "${fmt(day.carbsG, 0)} g") else emptyList()
-            metrics.forEachIndexed { i, (label, value) -> val xx = left + i * width / metrics.size; text(c, xx, 495f, label, 7.5f, true); text(c, xx, 514f, value, 14f, true) }
-            text(c, left, 540f, "Recorded events", 10f, true)
-            val split = (events.size + 1) / 2
-            listOf(events.take(split), events.drop(split)).forEachIndexed { i, rows -> eventTable(c, 550f, rows, left + i * 296, true) }
-            paragraph(c, 725f, "${day.readings} sensor samples. Basal display changes round to five minutes. Event table reads down the left column, then the right; source timestamps and calculations stay exact.", 6.7f)
+            timeline.daily(c, day)
         }
 
-        fun dailyInsulin(c: Canvas, day: LocalDate, top: Float, height: Float) {
-            val intervals = model.displayBasal(day, ReportStyle.DISPLAY_MINUTES)
-            val rates = model.pumpRows.filter { it.kind == ExportRow.KIND_REPORTED_BASAL && date(it.timeMillis) == day && it.basalRateUPerH != null }
-            val pulses = model.basalPulses.filter { date(it.timeMillis) == day }
-            val blueMax = if (model.programmedBasal || pulses.isEmpty()) ceil(maxOf(2.5,
-                intervals.maxOfOrNull { maxOf(it.scheduledRate, it.programmedRate) } ?: rates.maxOfOrNull { it.basalRateUPerH!! } ?: 1.0) * 2) / 2
-                else maxOf(.1, pulses.maxOfOrNull { it.insulinU!! } ?: .1)
-            fun y(value: Double) = top + height - (value / blueMax).toFloat() * height
-            val step = if (blueMax >= 2) .5 else blueMax / 4
-            var tick = 0.0
-            while (tick <= blueMax + .0001) { line(c, plotLeft, y(tick), plotRight, y(tick)); text(c, plotRight + 3, y(tick) + 2, fmt(tick, if (blueMax < 1) 2 else 1), 6f, color = ReportStyle.BASAL); tick += step }
-            val end = minOf(start(day.plusDays(1)), model.pumpEnd ?: start(day))
-            for (hour in 0..23) {
-                val a = day.atTime(hour, 0).atZone(model.zone).toInstant().toEpochMilli()
-                val b = minOf(day.atTime(hour, 0).plusHours(1).atZone(model.zone).toInstant().toEpochMilli(), end)
-                if (b <= a) continue
-                val observed = intervals.filter { it.start < b && it.end > a }
-                if (observed.isEmpty()) continue
-                val runs = mutableListOf<ReportBasalInterval>()
-                observed.forEach { interval ->
-                    val run = interval.copy(start = maxOf(a, interval.start), end = minOf(b, interval.end))
-                    val previous = runs.lastOrNull()
-                    if (previous != null && previous.end == run.start && previous.scheduledRate == run.scheduledRate)
-                        runs[runs.lastIndex] = previous.copy(end = run.end)
-                    else runs += run
-                }
-                runs.forEach runLoop@ { run ->
-                    val base = RectF(maxOf(x(hour.toDouble()) + ReportStyle.HOUR_GAP / 2, x(clock(run.start))), y(run.scheduledRate),
-                        minOf(x((hour + 1).toDouble()) - ReportStyle.HOUR_GAP / 2, if (run.end == start(day.plusDays(1))) plotRight else x(clock(run.end))), top + height)
-                    if (base.width() <= 0) return@runLoop
-                    rounded(c, base, ReportStyle.BASAL, ReportStyle.LAYER_ALPHA)
-                    observed.filter { it.start < run.end && it.end > run.start && it.change != ReportBasalChange.SCHEDULED }.forEach changeLoop@ { interval ->
-                        val lo = maxOf(run.start, interval.start); val hi = minOf(run.end, interval.end)
-                        val x1 = maxOf(base.left, x(clock(lo)))
-                        val x2 = minOf(base.right, if (hi == start(day.plusDays(1))) plotRight else x(clock(hi)))
-                        val inset = min(.25f, (x2 - x1) * .1f)
-                        if (x2 - x1 <= inset * 2) return@changeLoop
-                        if (interval.change == ReportBasalChange.TEMPORARY) layers(c, base, RectF(x1 + inset, y(interval.programmedRate), x2 - inset, top + height))
-                        else {
-                            val save = c.save()
-                            try {
-                                c.clipPath(roundedPath(base)); c.clipRect(x1, base.top, x2, base.bottom)
-                                var xx = x1 - base.height()
-                                while (xx < x2 + 4) { line(c, xx, top + height, xx + base.height(), base.top, ReportStyle.BASAL, .45f); xx += 4 }
-                            } finally { c.restoreToCount(save) }
-                        }
-                    }
-                }
-            }
-            if (!model.programmedBasal) {
-                if (pulses.isNotEmpty()) pulses.forEach { e -> val xx = x(clock(e.timeMillis)); rounded(c, RectF(xx - 1, y(e.insulinU!!), xx + 1, top + height), ReportStyle.BASAL, 180) }
-                else {
-                    rates.forEach { e -> val value = e.basalRateUPerH!!; val xx = x(clock(e.timeMillis)); line(c, xx, top + height, xx, y(value), ReportStyle.BASAL); c.drawCircle(xx, y(value), 1.2f, paint(color = ReportStyle.BASAL)) }
-                    text(c, plotLeft + 8, top + 13, "Recurring basal schedule unavailable", 7f, color = ReportStyle.GREY)
-                }
-            }
-            if (date(model.pumpEnd ?: start(day)) == day && end < start(day.plusDays(1)) && end >= start(day)) {
-                val cutoff = x(clock(end)); rect(c, RectF(cutoff, top, plotRight, top + height), 0xFFF5F5F5.toInt())
-                val clock = DateTimeFormatter.ofPattern("HH:mm").format(Instant.ofEpochMilli(end).atZone(model.zone))
-                val gapLabel = "No pump data after $clock"
-                if (plotRight - cutoff > paint(6f).measureText(gapLabel) + 10)
-                    text(c, cutoff + 5, top + height / 2, gapLabel, 6f, color = ReportStyle.GREY)
-            }
-            timeLabels(c, top + height + 14); text(c, plotRight + 3, top - 6, if (model.programmedBasal || pulses.isEmpty()) "U/h" else "U", 6f, color = ReportStyle.BASAL)
-            val boluses = model.boluses.filter { date(it.timeMillis) == day }
-            val redMax = maxOf(2.0, ceil(boluses.maxOfOrNull { it.insulinU!! } ?: 1.0))
-            (0..redMax.toInt()).forEach { v -> rightText(c, plotLeft - 7, top + height - (v / redMax).toFloat() * height + 2, "$v", 6f, ReportStyle.BOLUS) }
-            rightText(c, plotLeft - 7, top - 6, "U", 6f, ReportStyle.BOLUS)
-            boluses.forEach { e -> val xx = x(clock(e.timeMillis)); rounded(c, RectF(xx - 1.1f, top + height - (e.insulinU!! / redMax).toFloat() * height, xx + 1.1f, top + height), ReportStyle.BOLUS, 242, 1.1f) }
-        }
-
-        fun eventCells(row: ExportRow): List<String> {
-            val time = DateTimeFormatter.ofPattern("HH:mm:ss").format(Instant.ofEpochMilli(row.timeMillis).atZone(model.zone))
-            val type = row.bolusType?.replace("Dual (normal part)", "Dual normal")?.replace("Dual (square part)", "Dual square")
-            return listOf(time, when (row.kind) { ExportRow.KIND_BOLUS -> "Bolus" + (type?.let { " - $it" } ?: ""); ExportRow.KIND_MEAL -> "Carbs - logged"; ExportRow.KIND_CALIBRATION -> "Calibration"; else -> "Meter glucose" },
-                row.insulinU?.let { "${fmt(it, 2)} U" } ?: row.carbsG?.let { "${fmt(it, 0)} g" } ?: "${fmt(row.value, 0)} ${row.valueUnit.orEmpty()}")
-        }
-        fun eventTable(c: Canvas, top: Float, events: List<ExportRow>, x: Float, compact: Boolean) {
-            table(c, top, listOf("Time", "Recorded event", "Amount"), events.map(::eventCells), if (compact) listOf(52f, 157f, 63f) else listOf(100f, 335f, 133f), if (compact) 7.5f else 8f, x, if (compact) 16.5f else 17.5f, true)
-        }
-        fun eventPage(c: Canvas, day: ReportDay, rows: List<ExportRow>) { title(c, "Daily events", "${day.label} - continued"); eventTable(c, 111f, rows, left, false) }
         fun table(c: Canvas, top: Float, headers: List<String>, rows: List<List<String>>, widths: List<Float>, size: Float = 8f, x: Float = left, rowHeight: Float = 24f, singleLine: Boolean = false): Float {
             var y = top
             val headerHeight = if (singleLine) 20f else 24f
@@ -509,17 +382,32 @@ object ReportPdf {
             paragraph(c, 670f, "* A basal plan is reconstructed rate x exact interval duration, including temporary settings and suspension. It is not measured delivery. Missing basal doses stay unavailable; rates are never added to recorded dose totals.", 8.5f)
         }
         fun compare(c: Canvas) {
-            title(c, "Compare", "First and second halves of the selected interval")
-            report.days.chunked((report.days.size + 1) / 2).forEachIndexed { i, days ->
-                val dates = days.map { it.date }.toSet(); val points = report.readings.filter { date(it.timeMillis) in dates }
-                val ranges = points.fold(RangeCounts()) { a, p -> a + RangeCounts.of(p.mgdl) }
-                val y = 119f + i * 250
-                text(c, left, y, "${days.first().date} - ${days.last().date}", 11f, true)
-                table(c, y + 18, listOf("Mean glucose", "Readings", "In range"), listOf(listOf(if (points.isEmpty()) "--" else "${fmt(points.map { it.mgdl }.average())} mg/dL", "${points.size}", "${pct(ranges.inRange, ranges.n)}%")), List(3) { width / 3 }, 9f)
-                var xx = left
-                listOf(ranges.veryLow to ReportStyle.VERY_LOW, ranges.low to ReportStyle.LOW, ranges.inRange to ReportStyle.GREEN, ranges.high to ReportStyle.YELLOW, ranges.veryHigh to ReportStyle.ORANGE).forEach { (count, color) -> val w = width * count / ranges.n.coerceAtLeast(1); rect(c, RectF(xx, y + 98, xx + w, y + 118), color); xx += w }
-                paragraph(c, y + 154, "Within-period comparison; no earlier-period data is fetched or inferred.", 8.5f)
+            title(c, "Compare", "How glucose changed within your selected interval")
+            paragraph(c,105f,"The selected days are split into an earlier half and a later half. With an odd number of days, the earlier half has one extra day. This compares two parts of this export; it does not fetch a previous period.",8.5f)
+            val legend = listOf("<54 Very low" to ReportStyle.VERY_LOW,"54-69 Low" to ReportStyle.LOW,"70-180 In range" to ReportStyle.GREEN,"181-250 High" to ReportStyle.YELLOW,">250 Very high" to ReportStyle.ORANGE)
+            legend.forEachIndexed { i,(label,color)->val xx=left+i*width/5;rect(c,RectF(xx,155f,xx+8,163f),color);text(c,xx+12,162f,label,7f) }
+            text(c,left,177f,"All glucose thresholds are mg/dL. Each full bar represents 100% of recorded sensor samples.",7.5f,color=ReportStyle.GREY)
+            val halves=report.days.chunked((report.days.size+1)/2)
+            val groups=halves.map { days->val dates=days.map { it.date }.toSet();report.readings.filter { date(it.timeMillis) in dates } }
+            halves.forEachIndexed { i, days ->
+                val points=groups[i]
+                val ranges=points.fold(RangeCounts()) { a,p->a+RangeCounts.of(p.mgdl) }
+                val y=205f+i*215
+                text(c,left,y,"${if(i==0)"Earlier"else"Later"}: ${days.first().date} - ${days.last().date}",11f,true)
+                table(c,y+18,listOf("Mean glucose","Readings","In range"),listOf(listOf(if(points.isEmpty())"--"else"${fmt(points.map { it.mgdl }.average())} mg/dL","${points.size}","${pct(ranges.inRange,ranges.n)}%")),List(3){width/3},9f)
+                var xx=left
+                listOf(ranges.veryLow,ranges.low,ranges.inRange,ranges.high,ranges.veryHigh).forEachIndexed { j,count->val w=width*count/ranges.n.coerceAtLeast(1);rect(c,RectF(xx,y+94,xx+w,y+114),legend[j].second);xx+=w }
+                text(c,left,y+131,listOf(ranges.veryLow,ranges.low,ranges.inRange,ranges.high,ranges.veryHigh).mapIndexed { j,n->"${legend[j].first.substringAfter(' ')} ${pct(n,ranges.n)}%" }.joinToString("   /   "),7.5f)
+                text(c,left,y+148,"${days.count { it.readings>0 }} of ${days.size} days with sensor readings. Missing samples do not count as in range.",7.5f,color=ReportStyle.GREY)
             }
+            if(groups.size==2&&groups.all { it.isNotEmpty() }) {
+                val earlier=groups[0];val later=groups[1]
+                val meanChange=later.map { it.mgdl }.average()-earlier.map { it.mgdl }.average()
+                val tirChange=100.0*later.count { it.mgdl in 70..180 }/later.size-100.0*earlier.count { it.mgdl in 70..180 }/earlier.size
+                text(c,left,622f,"Later minus earlier",10f,true)
+                paragraph(c,633f,"Mean glucose: ${if(meanChange>=0)"+"else""}${fmt(meanChange)} mg/dL. In-range share: ${if(tirChange>=0)"+"else""}${fmt(tirChange)} percentage points.",9f)
+            }
+            paragraph(c,679f,"Means and percentages weight every sensor sample equally, not every day equally. Different sample counts and gaps can affect the comparison. These descriptive changes do not explain their cause.",8f,color=ReportStyle.GREY)
         }
         fun definitions(c: Canvas) {
             title(c, "Report definitions", "Data and drawing rules")
@@ -530,10 +418,15 @@ object ReportPdf {
                 listOf("Basal schedule", "A recurring schedule is inferred only from historical rate snapshots repeated on multiple days. A sparse live rate does not establish a full-day schedule."),
                 listOf("Basal changes", "Percent settings multiply the scheduled rate; absolute temporary rates replace it within their duration. Recorded suspension gives zero until resumption."),
                 listOf("Basal drawing", "Rounded hourly blocks have visible gaps. Scheduled and temporary layers each use 25% opacity; the intersection is 50%. Only display boundaries snap to five minutes."),
-                listOf("Daily axes", "Red bolus spikes use the left U scale. Blue uses the right U/h scale for settings, or U when only delivered basal pulses are available."),
-                listOf("Hourly insulin", "Rounded min-max rectangles and black median strokes summarize hourly totals across observed days. Source timestamps and numeric calculations retain their exact precision."),
+                listOf("Daily panels", "Glucose is followed by one combined insulin panel: red delivered bolus spikes (U, left), blue basal (U/h, right). Cumulative ramps rise from immediate dose to total over recorded duration; dashed ramps are unconfirmed. Exercise days add a sport graph."),
+                listOf("Daily basal", "Recorded rate settings are held between changes and to the end of days with rate data. The first unambiguous rate covers the earlier day boundary. This is an estimate, not measured delivery."),
+                listOf("Hourly insulin", "Rounded min-max rectangles, black medians and individual day traces accompany the glucose overlay on the same weekly page. Daily panels overlay bolus and basal; distributions are reserved for summaries."),
+                listOf("ISF / ICR references", "Black = last recorded Bolus Wizard ISF/ICR (held up to 24 h). Grey = Medtronic 780G starting references 1800/TDD and 450/TDD. Blue = conditional 4 h CGM-response estimates; not prescribed settings. Sources: Medtronic Therapy Management Protocol; LoopDocs Algorithm/Prediction."),
+                listOf("Response model", "Apparent carbs = (glucose change / ISF + model insulin effect) x ICR. Conditional ICR = logged carbs / (model insulin effect + glucose change / baseline ISF). Fasting corrections estimate ISF independently. A 6 h triangular insulin-action approximation is assumed; exercise, overlaps, unknown delivery and gaps are excluded."),
+                listOf("Swimming", "Pump disconnection is user-reported; FIT session bounds approximate timing. Calculated basal reaching the user is zero inside this interval; raw pump records and held schedules remain available."),
                 listOf("Unknown data", "Missing schedules, doses or hours remain unavailable. Inferred programmed basal units never become measured doses or normalized CSV events."),
                 listOf("Statistics", "Sample SD; GMI = 3.31 + 0.02392 x mean mg/dL; CV = 100 x SD / mean. Range bins: <54, 54-69, 70-180, 181-250, >250."),
+                listOf("Food / exercise", "Food circles label grams from pump (P), sensor (S), or an identical log in both (P+S). Grey marks imported exercise on all aligned graphs; exercise days add HR/GAP context and enlarged activity pages. Raw events stay in CSV."),
                 listOf("Event categories", report.events.groupingBy { it.kind }.eachCount().entries.sortedBy { it.key }.joinToString("; ") { "${it.key.replace('_', ' ')}: ${it.value}" }.ifEmpty { "No event rows supplied." })
             ), listOf(110f, 458f), 8.2f, rowHeight = 28f)
         }

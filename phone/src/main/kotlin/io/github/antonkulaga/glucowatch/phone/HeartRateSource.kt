@@ -20,8 +20,10 @@ data class HeartRateSummary(val bpm: Long, val ageMinutes: Long, val change30Min
 
 /** Reads optional phone Health Connect data in the foreground; nothing is uploaded or relayed. */
 class HeartRateSource(private val context: Context) {
+    @androidx.annotation.ChecksSdkIntAtLeast(api = 34)
     fun supported() = Build.VERSION.SDK_INT >= 34 && context.getSystemService(HealthConnectManager::class.java) != null
 
+    @androidx.annotation.ChecksSdkIntAtLeast(api = 34)
     fun permitted() = Build.VERSION.SDK_INT >= 34 &&
         context.checkSelfPermission(HealthPermissions.READ_HEART_RATE) == PackageManager.PERMISSION_GRANTED
 

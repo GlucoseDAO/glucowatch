@@ -10,7 +10,7 @@ import java.time.LocalDate
 /** A browser can evict the phone process. Keep only the active export in private, unbacked storage. */
 class HistoryExportStore(context: Context) {
     data class Saved(val window: ExportWindow, val pdf: Boolean, val createdAt: Long, val files: Map<ExportPortal, Pair<String, HistoricalCsv.DateOrder>>,
-        val includeActivities: Boolean = false, val eventWorkoutId: String? = null)
+        val includeActivities: Boolean = false, val eventWorkoutIds: List<String> = emptyList(), val csv: Boolean = !pdf)
     private val folder = context.filesDir.resolve("pending-history-export")
     private var sessionId: String? = null
     private val metadata get() = folder.resolve("session.json")
@@ -25,15 +25,15 @@ class HistoryExportStore(context: Context) {
         catch (e: Exception) { atomic.failWrite(output); throw e }
     }
     fun begin(window: ExportWindow, pdf: Boolean, settings: PhoneSettings, createdAt: Long,
-              includeActivities: Boolean = false, eventWorkoutId: String? = null) = synchronized(lock) {
+              includeActivities: Boolean = false, eventWorkoutIds: List<String> = emptyList(), csv: Boolean = !pdf) = synchronized(lock) {
         clear()
         sessionId = java.util.UUID.randomUUID().toString()
         val data = JSONObject().put("id", sessionId).put("account", account(settings)).put("created", createdAt)
             .put("device", window.device.name).put("since", window.deviceSince.toString())
             .put("start", window.start.toString()).put("end", window.end.toString())
             .put("requestedStart", window.requestedStart.toString()).put("content", window.content.name)
-            .put("incomplete", window.allowIncomplete).put("pdf", pdf).put("sources", JSONObject())
-            .put("activities", includeActivities).put("workout", eventWorkoutId.orEmpty())
+            .put("incomplete", window.allowIncomplete).put("pdf", pdf).put("csv", csv).put("sources", JSONObject())
+            .put("activities", includeActivities).put("workouts", org.json.JSONArray(eventWorkoutIds))
         write(metadata, data.toString().toByteArray(Charsets.UTF_8))
     }
     fun record(portal: ExportPortal, text: String, order: HistoricalCsv.DateOrder) = synchronized(lock) {
@@ -61,7 +61,10 @@ class HistoryExportStore(context: Context) {
             file.readText() to HistoricalCsv.DateOrder.valueOf(sources.getString(portal.name))
         }
         Saved(window, data.getBoolean("pdf"), data.getLong("created"), files,
-            data.optBoolean("activities"), data.optString("workout").takeIf { it.matches(Regex("[0-9a-f]{64}")) })
+            data.optBoolean("activities"), (data.optJSONArray("workouts")?.let { array -> (0 until array.length()).map { array.getString(it) } }
+                ?: listOfNotNull(data.optString("workout").takeIf { it.isNotEmpty() })).also { ids ->
+                    require(ids.size <= 50 && ids.distinct() == ids && ids.all { it.matches(Regex("[0-9a-f]{64}")) })
+                }, data.optBoolean("csv", !data.getBoolean("pdf")))
     }.getOrElse { clear(); null } }
     fun learnedOrder(settings: PhoneSettings): HistoricalCsv.DateOrder? = runCatching {
         HistoricalCsv.DateOrder.valueOf(preferences.getString(account(settings), "").orEmpty())

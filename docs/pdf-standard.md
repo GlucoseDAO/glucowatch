@@ -50,17 +50,27 @@ profiles below retain their stricter recurring-schedule evidence rules.
 Glucose uses 96 quarter-hour bins: rounded grey 15th–75th percentile bars, colored portions
 above/below target, and a black mean line. Missing bins break the line.
 
-Insulin uses spaced, rounded min–max rectangles for hourly totals across observed days,
+The overview's insulin summary uses spaced, rounded min–max rectangles for hourly totals across observed days,
 with black median strokes and numbered horizontal gridlines. Red is delivered bolus units.
 Blue is programmed basal units if a recurring historical schedule can be inferred, otherwise
 recorded basal delivery if supplied. The pale blue scheduled background is the integrated
 scheduled amount for that hour, including schedule changes inside the hour.
 
 Only complete hours within the pump's first/last recorded boundaries on days with pump data
-enter these distributions. Within such hours no recorded dose contributes zero; missing days
+enter recorded-dose distributions. Within such hours no recorded dose contributes zero; missing days
 and partial hours are excluded. Presence of pump events does not prove complete delivery capture.
 
-## Daily insulin panel
+## Overlay and daily panels
+
+General PDF exports keep their overview, weekly overlays, daily pages and statistics even
+when workouts are included. Both weekly overlays and combined daily pages have three aligned
+graphs: glucose, red bolus and blue basal. Weekly insulin panels use the exact dates named on
+the glucose overlay, with rounded hourly min-max ranges, black medians and matching individual
+day traces. Recorded basal doses take precedence over estimates; the two are not added together.
+
+Daily bolus panels show pale rounded hourly totals and delivered spikes at their original
+timestamps. Daily basal panels use the recorded/held rate-time estimate described in
+[workout reports](workouts.md), with exact-interval calculations and an explicit settings label.
 
 - Draw scheduled basal as rounded hourly blue blocks with visible gaps. Split blocks when
   the underlying schedule changes within an hour.
@@ -69,14 +79,20 @@ and partial hours are excluded. Presence of pump events does not prove complete 
   this same rule. Suspension is hatched.
 - Temporary setting and schedule boundaries snap to the nearest five minutes for drawing.
   Calculations and original/exported timestamps retain exact precision.
-- Overlay red bolus spikes at their native timestamps. Use a red left axis in U and a blue
-  right axis in U/h for rate settings, or U when showing delivered basal pulses.
-- Keep glucose on its own aligned daily panel. Give metrics aligned labels and values;
-  print events in two columns, up to eighteen per daily page, then continue on event pages.
+- Keep bolus U and basal U/h on their separate aligned panels (basal is U when doses are supplied).
+- Replace recorded-event tables and continuation pages with open food circles on the daily
+  glucose graph, labelled with grams and source. Read food logs from both pump and sensor
+  exports. Identical timestamps and amounts merge their P/S provenance without double counting;
+  distinct logs stay distinct. The CSV still retains all native events.
+- Shade imported exercise intervals uniformly grey on all three graphs. Only overlapping
+  dates are marked, including a correctly clipped interval at midnight. Exercise days add
+  an HR/estimated-GAP graph with grey elevation; enlarged activity details retain HR/GAP zones.
+- Preserve the separate exercise-export route and its reviewed layout. Including exercises
+  in a general report does not replace that report with the dedicated exercise export.
 
 ## Basal evidence and unavailable data
 
-Infer a recurring schedule only from native historical rate snapshots repeated across
+For the recurring overview profile, infer a schedule only from native historical rate snapshots repeated across
 multiple days, including a midnight setting. Reject tied rate votes. Label the result as
 inferred. A sparse live upload or a single day does not establish a recurring full-day schedule.
 
@@ -86,8 +102,10 @@ one. Preserve native suspend/resume states even when they share a rate row. Prog
 amounts integrate these settings over exact intervals and remain separate from delivered doses.
 Never add them to delivered insulin totals or normalized CSV measurements.
 
-Without sufficient evidence, show recorded rate observations or delivered basal pulses and
-an unavailable schedule. Missing data must not turn into an inferred flat schedule or zero dose.
+Without sufficient evidence, the recurring schedule remains unavailable. Daily and weekly
+rate-time estimates instead use each day's explicit recorded/held settings as documented above;
+they are labelled as calculated settings, not independently measured delivery. A day without
+rate data is not filled from a different day. Missing dose capture must not become zero delivery.
 
 ## Verification
 
@@ -100,3 +118,17 @@ PDF renderer. Launch with `--ez all_cases true` to cover sensor-only, pump-only 
 14-day reports, plus 1-day and 90-day combined reports. The PDFs are written to app-private
 cache as `standard-<days>-<content>.pdf`. Render the PDFs to images and inspect the overview,
 hourly charts, daily layers, continuation tables and final pages before accepting layout changes.
+
+## Corrected cumulative bolus and personal baseline
+
+The extended-bolus ramp rises from the immediately delivered component to the cumulative total by the end of the recorded interval. It is a linear interpolation of delivery over that interval, not an absorption/action curve. Native CareLink programming/delivery rows match by Bolus Number, component and a maximum 12-hour pairing window; raw CSV retains both records. Delivered duration takes precedence over selected duration. Unmatched programmed components remain unconfirmed and dashed.
+
+Black ISF/ICR curves use the native `BWZ Insulin Sensitivity (mg/dL/U)` and `BWZ Carb Ratio (g/U)` observations, held for at most 24 hours and labelled as last observed values. This does not reconstruct an unseen pump schedule. Grey references use Medtronic's 780G starting equations, ISF=1800/TDD and ICR=450/TDD; they never override actual pump observations. Programming-only rows with matching delivery no longer invalidate an entire day. Extended delivered amounts are apportioned over their recorded duration for trailing totals.
+
+Blue diamonds are conditional retrospective 4-hour glucose-response estimates. With baseline ISF fixed, apparent ICR = logged carbs / (model effective insulin + glucose change / baseline ISF). Fasting correction windows estimate apparent ISF = glucose fall / model effective insulin, separately from meals. Apparent cumulative carb appearance = baseline ICR x (glucose change / baseline ISF + model effective insulin). These equations cannot identify both unknown ISF and ICR independently from one meal. They assume a neutral basal baseline and complete logged carbs at 4 hours for the ICR estimate. The insulin action kernel is an explicit triangular approximation with 10-minute delay, 75-minute peak and 360-minute end; the six-hour time scale is separate from Medtronic's SmartGuard AIT setting. Appearance may be negative or exceed logged food because this is an apparent glucose-balance quantity, not measured intestinal absorption.
+
+Response eligibility requires endpoint CGM within 7.5 minutes, >=80% sample coverage, no CGM gap >15 minutes, no unconfirmed bolus, no recent temporary/suspend/disconnection interval, and no overlapping meals. Exercise and recent exercise are excluded. Excluded windows retain baseline curves; they are not fabricated zero estimates. CSV model rows identify their source, assumptions, baseline values, effective insulin and glucose change. Source equations: [Medtronic Therapy Management Protocol](https://www.medtronic.com/content/dam/medtronic-wide/public/united-states/products/diabetes/mm780g-therapy-management-protocol.pdf), [LoopDocs glucose prediction / insulin counteraction](https://loopkit.github.io/loopdocs/operation/algorithm/prediction/), [LoopKit model time scales](https://loopkit.github.io/loopdocs/version/code-custom-edits/). The local action approximation and eligibility rules are implementation assumptions, not a reproduction or validation of Loop. No analysis changes therapy settings or computes a recommended dose.
+
+Recorded elevation profiles appear as grey area behind daily glucose and combined insulin panels, and on activity detail graphs. Flat shading is used only when native elevation is unavailable. The profile is normalized within its activity, so shading does not encode glucose or insulin. Dedicated reports use descending dates and descending activities within each day, and retain whole-day -> activity interleaving. Generated names use `workouts` without a count suffix.
+
+Swimming pump disconnection is a saved user preference, not inferred from sport for every user. When enabled, FIT bounds approximate the interval. The PDF and user-reported CSV annotations state this timing assumption. Basal calculated as reaching the user is zero inside it; native pump records are preserved, even if the disconnected pump continued logging.

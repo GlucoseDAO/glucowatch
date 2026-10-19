@@ -61,6 +61,10 @@ open class ExportPortalActivity : Activity() {
     override fun onCreate(state: Bundle?) {
         super.onCreate(state)
         portal = runCatching { ExportPortal.valueOf(intent.getStringExtra("portal").orEmpty()) }.getOrElse { finish(); return }
+        if (android.os.Build.VERSION.SDK_INT >= 33) onBackInvokedDispatcher.registerOnBackInvokedCallback(
+            android.window.OnBackInvokedDispatcher.PRIORITY_DEFAULT,
+            android.window.OnBackInvokedCallback { navigateBack() },
+        )
         ExportDiagnostics.event(this, "portal_activity_created", portal)
         country = intent.getStringExtra("country") ?: "DE"
         region = runCatching { Region.valueOf(intent.getStringExtra("region").orEmpty()) }.getOrDefault(Region.OUS)
@@ -71,12 +75,15 @@ open class ExportPortalActivity : Activity() {
             setTextColor(Brand.TEXT); textSize = 14f; setPadding(20, 12, 20, 12)
         }
         desktopSite = portal == ExportPortal.CARELINK
-        web = portalWebView(address)
-        webContainer = FrameLayout(this).apply { addView(web, FrameLayout.LayoutParams(-1, -1)) }
+        webContainer = FrameLayout(this)
         setContentView(LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             addView(Button(this@ExportPortalActivity).apply {
                 text = "Back to export"; Brand.style(this, false); setOnClickListener { finish() }
+            })
+            addView(TextView(this@ExportPortalActivity).apply {
+                text = "Target interval: ${targetDates()} · both dates included"
+                textSize = 18f; setTextColor(Brand.TEXT); setTypeface(null, android.graphics.Typeface.BOLD); setPadding(20, 12, 20, 12)
             })
             addView(status)
             addView(LinearLayout(this@ExportPortalActivity).apply {
@@ -85,13 +92,13 @@ open class ExportPortalActivity : Activity() {
                 buttonTintList = android.content.res.ColorStateList.valueOf(Brand.TEXT)
                 setOnCheckedChangeListener { _, checked ->
                     desktopSite = checked
-                    activeWeb().takeIf { it.parent != null }?.apply { settings.userAgentString = userAgent(this); reload() }
+                    if (::web.isInitialized) activeWeb().takeIf { it.parent != null }?.apply { settings.userAgentString = userAgent(this); reload() }
                 }
             }, LinearLayout.LayoutParams(0, -2, 1f))
             addView(CheckBox(this@ExportPortalActivity).apply {
                 text = "Fit to screen"; setTextColor(Brand.TEXT); isChecked = true
                 buttonTintList = android.content.res.ColorStateList.valueOf(Brand.TEXT)
-                setOnCheckedChangeListener { _, checked -> fitToScreen = checked; fitPage(activeWeb()) }
+                setOnCheckedChangeListener { _, checked -> fitToScreen = checked; if (::web.isInitialized) fitPage(activeWeb()) }
             }, LinearLayout.LayoutParams(0, -2, 1f))
             })
             addView(Button(this@ExportPortalActivity).apply {
@@ -110,7 +117,31 @@ open class ExportPortalActivity : Activity() {
                 insets
             }
         })
-        if (preferExternalBrowser() && openBrowser(address)) return
+        if (preferExternalBrowser()) {
+            val dialog = android.app.AlertDialog.Builder(this).setTitle("${portal.label}: dates to select")
+                .setMessage("${targetDates()}\nInclude both dates.\n\nSelect this interval on the site, then download the English CSV data export. These dates also remain visible when you return to GlucoPhone.")
+                .setPositiveButton("Open site") { _, _ -> if (!openBrowser(address)) loadEmbedded(address) }
+                .setNeutralButton("Copy dates", null).setNegativeButton("Back") { _, _ -> finish() }.create()
+            dialog.setOnShowListener { dialog.getButton(android.app.AlertDialog.BUTTON_NEUTRAL).setOnClickListener {
+                (getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager)
+                    .setPrimaryClip(android.content.ClipData.newPlainText("Report interval", targetDates()))
+                Toast.makeText(this, "Target dates copied", Toast.LENGTH_SHORT).show()
+            } }
+            dialog.show()
+        } else loadEmbedded(address)
+    }
+
+    private fun targetDates(): String {
+        val format = java.time.format.DateTimeFormatter.ofPattern("EEE d MMM uuuu", java.util.Locale.ENGLISH)
+        fun date(key: String) = runCatching { java.time.LocalDate.parse(intent.getStringExtra(key)).format(format) }
+            .getOrDefault(intent.getStringExtra(key).orEmpty())
+        return "${date("start")} to ${date("end")}"
+    }
+    private fun loadEmbedded(address: String) {
+        if (!::web.isInitialized) {
+            web = portalWebView(address)
+            webContainer.addView(web, FrameLayout.LayoutParams(-1, -1))
+        }
         loadPortal(web, address)
     }
 
@@ -330,6 +361,7 @@ open class ExportPortalActivity : Activity() {
     }
 
     private fun reloadPortal(address: String) {
+        if (!::web.isInitialized) { loadEmbedded(address); return }
         if (downloading) failBlob("The current CSV capture was cancelled for reload.")
         popupOrigins.keys.toList().forEach(::closePopup)
         csvCapture.remove(web); gestures.remove(web)
@@ -347,13 +379,17 @@ open class ExportPortalActivity : Activity() {
         webContainer.removeView(view); view.stopLoading(); view.destroy()
     }
 
-    @Deprecated("Activity back navigation")
-    override fun onBackPressed() {
+    @Deprecated("Legacy dispatch for Android 10-12; Android 13+ uses OnBackInvokedDispatcher")
+    @android.annotation.SuppressLint("GestureBackNavigation") // Modern callback is registered in onCreate.
+    override fun onBackPressed() = navigateBack()
+
+    private fun navigateBack() {
+        if (!::web.isInitialized) { finish(); return }
         val current = activeWeb()
         when {
             current.parent != null && current.canGoBack() -> current.goBack()
             current !== web -> closePopup(current)
-            else -> super.onBackPressed()
+            else -> finish()
         }
     }
 
@@ -411,7 +447,7 @@ open class ExportPortalActivity : Activity() {
             try {
                 val name = withContext(Dispatchers.IO) { saveDownloadedCsv() }
                 returned = true
-                Toast.makeText(this@ExportPortalActivity, "CSV saved to Downloads/GlucoPhone/$name", Toast.LENGTH_LONG).show()
+                Toast.makeText(this@ExportPortalActivity, "CSV saved to Downloads/GlucoPhone/Raw: $name", Toast.LENGTH_LONG).show()
                 setResult(RESULT_OK, Intent().putExtra("csvFile", downloadFile.name).putExtra("source", portal.source)
                     .putExtra("downloadName", name))
                 finish()
@@ -425,34 +461,14 @@ open class ExportPortalActivity : Activity() {
 
     /** Scoped-storage download owned by this app; no broad storage permission is needed. */
     private suspend fun saveDownloadedCsv(): String {
-        val prefix = if (BuildConfig.DEBUG && javaClass.simpleName == "ExportPortalPreviewActivity") "synthetic-" else ""
-        val provider = if (HistoricalCsv.source(downloadFile.readText()) == ExportPortal.CARELINK.source) "carelink" else "clarity"
-        val name = "$prefix$provider-history-${java.time.LocalDateTime.now().format(java.time.format.DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss"))}-${java.util.UUID.randomUUID().toString().take(8)}.csv"
-        val values = ContentValues().apply {
-            put(MediaStore.Downloads.DISPLAY_NAME, name)
-            put(MediaStore.Downloads.MIME_TYPE, "text/csv")
-            put(MediaStore.Downloads.RELATIVE_PATH, "${Environment.DIRECTORY_DOWNLOADS}/GlucoPhone")
-            put(MediaStore.Downloads.IS_PENDING, 1)
-        }
-        val uri = contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
-            ?: error("Could not create CSV download")
-        try {
-            contentResolver.openOutputStream(uri)?.use { output ->
-                downloadFile.inputStream().use { input ->
-                    val buffer = ByteArray(8192)
-                    while (true) {
-                        currentCoroutineContext().ensureActive()
-                        val count = input.read(buffer); if (count < 0) break
-                        output.write(buffer, 0, count)
-                    }
-                }
-            } ?: error("Could not write CSV download")
-            contentResolver.update(uri, ContentValues().apply { put(MediaStore.Downloads.IS_PENDING, 0) }, null, null)
-        } catch (e: Exception) {
-            contentResolver.delete(uri, null, null)
-            throw e
-        }
-        return name
+        val bytes = downloadFile.readBytes()
+        val source = HistoricalCsv.source(bytes.toString(Charsets.UTF_8))
+        val actual = ExportPortal.entries.single { it.source == source }
+        val uri = ReportFiles.archiveCsv(this, actual, bytes,
+            synthetic = BuildConfig.DEBUG && javaClass.simpleName == "ExportPortalPreviewActivity")
+        return contentResolver.query(uri, arrayOf(MediaStore.Downloads.DISPLAY_NAME), null, null, null)?.use {
+            if (it.moveToFirst()) it.getString(0) else null
+        } ?: "download.csv"
     }
 
     @Deprecated("One foreground document import")

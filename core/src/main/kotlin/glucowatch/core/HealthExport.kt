@@ -45,6 +45,9 @@ data class ExportRow(
     val valueUnit: String? = null,
     val markerType: String? = null,
     val detail: String? = null,
+    val pumpIsfMgdlPerU: Double? = null,
+    val pumpIcrGPerU: Double? = null,
+    val bolusId: String? = null,
 ) {
     /** The chart's reading, when this row is a usable sensor glucose. */
     fun toReading(): GlucoseReading? {
@@ -56,6 +59,9 @@ data class ExportRow(
     fun identity(): String = listOf(
         timeMillis, kind, markerType.orEmpty(), glucoseMgdl?.toString().orEmpty(),
         num(insulinU), num(carbsG), num(basalRateUPerH), num(basalPercent), num(value),
+        if (kind == KIND_BOLUS) listOf(bolusType.orEmpty(), num(programmedFastU), num(deliveredFastU),
+            num(programmedExtendedU), num(deliveredExtendedU), num(durationMin)).joinToString(":") else "",
+        num(pumpIsfMgdlPerU), num(pumpIcrGPerU), bolusId.orEmpty(),
     ).joinToString("|")
 
     private fun toJson(): JsonObject = buildJsonObject {
@@ -84,6 +90,9 @@ data class ExportRow(
         valueUnit?.let { put("valueUnit", it) }
         markerType?.let { put("markerType", it) }
         detail?.let { put("detail", it) }
+        pumpIsfMgdlPerU?.let { put("pumpIsfMgdlPerU", it) }
+        pumpIcrGPerU?.let { put("pumpIcrGPerU", it) }
+        bolusId?.let { put("bolusId", it) }
     }
 
     companion object {
@@ -197,6 +206,9 @@ data class ExportRow(
                 valueUnit = obj.text("valueUnit"),
                 markerType = obj.text("markerType"),
                 detail = obj.text("detail"),
+                pumpIsfMgdlPerU = obj.double("pumpIsfMgdlPerU"),
+                pumpIcrGPerU = obj.double("pumpIcrGPerU"),
+                bolusId = obj.text("bolusId"),
             )
         }
 
@@ -249,6 +261,7 @@ object ExportCsv {
         "programmed_fast_u", "delivered_fast_u", "programmed_extended_u", "delivered_extended_u",
         "carbs_g", "basal_rate_u_per_h", "basal_percent", "duration_min", "percent_of_profile",
         "iob_u", "value", "value_unit", "marker_type", "detail",
+        "pump_isf_mgdl_per_u", "pump_icr_g_per_u", "bolus_id",
     )
 
     private val UTC = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'").withZone(ZoneId.of("UTC"))
@@ -286,6 +299,7 @@ object ExportCsv {
                 row.valueUnit.orEmpty(),
                 row.markerType.orEmpty(),
                 row.detail.orEmpty(),
+                num(row.pumpIsfMgdlPerU), num(row.pumpIcrGPerU), row.bolusId.orEmpty(),
             ).joinToString(",") { csvField(it) }
         }
         return COLUMNS.joinToString(",") + "\n" + body + if (body.isEmpty()) "" else "\n"
@@ -408,6 +422,7 @@ internal object CareLinkRows {
                     deliveredFastU = fast,
                     programmedExtendedU = values.double("programmedExtendedAmount"),
                     deliveredExtendedU = extended,
+                    durationMin = durationMinutes(values, marker),
                     markerType = type,
                     detail = detail,
                 )

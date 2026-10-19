@@ -26,12 +26,13 @@ internal object ReportPreviewData {
             rows += ExportRow(time(19, 5), ExportRow.SOURCE_CARELINK, ExportRow.KIND_SUSPEND, detail = "{\"Suspend\":\"USER_SUSPEND\"}")
             rows += ExportRow(time(19, 35), ExportRow.SOURCE_CARELINK, ExportRow.KIND_SUSPEND, detail = "{\"Suspend\":\"NORMAL_PUMPING\"}")
             rows += ExportRow(time(23, 59), ExportRow.SOURCE_CARELINK, ExportRow.KIND_OTHER, markerType = "Preview boundary")
-            // Exercise continuation tables with more than eighteen native events on a day.
+            // Exercise dense meal-marker placement; these do not create event-table pages.
             if (d == 0) repeat(22) { i ->
                 rows += ExportRow(time(i, 10), ExportRow.SOURCE_CARELINK, ExportRow.KIND_MEAL, carbsG = 5.0)
                 treatments += Treatment(time(i, 10), carbs = 5.0)
             }
         }
+        rows += ExportRow(today.atTime(9, 18).toInstant(zone).toEpochMilli(), ExportRow.SOURCE_DEXCOM_CLARITY, ExportRow.KIND_MEAL, carbsG = 18.0)
         val window = (ExportWindow.resolve(LatestDevice.MINIMED_PUMP, today.minusDays(100), today, days, today, content) as ExportRequest.Ready).window
         return GlucoseReport.build(if (content.sensor) readings else emptyList(), if (content.pump) treatments else emptyList(),
             "Synthetic demo", zone, now, window, rows.filter(content::includes))

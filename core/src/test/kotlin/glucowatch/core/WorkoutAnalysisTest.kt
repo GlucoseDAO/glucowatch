@@ -30,6 +30,21 @@ class WorkoutAnalysisTest {
         assertEquals(listOf(start+99_000 to start+141_000),result.heartGaps)
         assertTrue(result.gap.flatten().all { it.value<30 })
     }
+    @Test fun `sports use their native motion units and never apply running GAP to swimming or cycling`() {
+        listOf("Swim", "Ride", "Exercise").forEach { sport ->
+            val result = WorkoutAnalysis.analyse(workout(.1).copy(sport = sport))
+            assertTrue(result.gap.isEmpty(), sport)
+            assertNull(result.gapMean, sport)
+            assertEquals(0.0, result.gapZones.sum(), sport)
+            assertTrue(result.motion.isNotEmpty(), sport)
+            assertEquals(if (sport == "Swim") "min/100m" else "km/h", result.motionUnit)
+        }
+        val withoutElevation = WorkoutAnalysis.analyse(workout().copy(samples = workout().samples.map { it.copy(elevationM = null) }))
+        assertTrue(withoutElevation.gap.isEmpty())
+        assertEquals("Recorded pace", withoutElevation.motionTitle)
+        assertTrue(withoutElevation.motion.isNotEmpty())
+        assertTrue(WorkoutAnalysis.analyse(workout().copy(samples = emptyList())).motion.isEmpty())
+    }
     @Test fun `stationary observations are slow pace instead of absent samples`() {
         val w=workout().copy(samples=workout().samples.mapIndexed { i,s->s.copy(distanceM=if(i in 100..200)150.0 else if(i>200)150.0+(i-200)*1.5 else i*1.5) })
         val result=WorkoutAnalysis.analyse(w)

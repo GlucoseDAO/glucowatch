@@ -7,6 +7,29 @@ import android.os.Bundle
 
 /** Browser-owned authentication/downloads, shown in an app-task Custom Tab when supported. */
 object ExportBrowser {
+    private val chromePackages = listOf("com.android.chrome", "com.chrome.beta", "com.chrome.dev", "com.chrome.canary")
+
+    /** Google sign-in stays in Chrome. Never silently substitutes an embedded WebView. */
+    fun openChrome(activity: Activity, address: String, request: Int): Boolean {
+        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(address)).addCategory(Intent.CATEGORY_BROWSABLE)
+        val chrome = chromePackages.firstOrNull { name ->
+            activity.packageManager.resolveActivity(Intent(intent).setPackage(name), 0) != null
+        }
+        if (chrome == null) {
+            android.app.AlertDialog.Builder(activity).setTitle("Install Chrome")
+                .setMessage("Chrome is needed for Google sign-in to Strava on this device. Install or enable it, then return to Workouts.")
+                .setPositiveButton("Get Chrome") { _, _ ->
+                    runCatching { activity.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("market://details?id=com.android.chrome"))) }
+                        .recoverCatching { activity.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://play.google.com/store/apps/details?id=com.android.chrome"))) }
+                        .onFailure { android.widget.Toast.makeText(activity, "No app store or browser is installed. Install Chrome on this device first.", android.widget.Toast.LENGTH_LONG).show() }
+                }.setNegativeButton("Cancel", null).show()
+            return false
+        }
+        return runCatching { activity.startActivityForResult(intent.setPackage(chrome).putExtras(Bundle().apply {
+            putBinder("android.support.customtabs.extra.SESSION", null)
+        }), request); true }.getOrDefault(false)
+    }
+
     fun open(activity: Activity, address: String, request: Int, preferChromium: Boolean = false): Boolean {
         val generic = Intent(Intent.ACTION_VIEW, Uri.parse("https://example.com")).addCategory(Intent.CATEGORY_BROWSABLE)
         val browsers = activity.packageManager.queryIntentActivities(generic, 0).filter {

@@ -2,6 +2,6 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <application android:networkSecurityConfig="@xml/network_security_config">
         <activity android:name=".ReportPreviewActivity" android:exported="true" />
-        <activity android:name=".ExportPortalPreviewActivity" android:exported="true" />
+        <activity android:name=".ExportPortalPreviewActivity" android:exported="true" android:process=":export_portal" />
     </application>
 </manifest>

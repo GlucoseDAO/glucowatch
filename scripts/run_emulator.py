@@ -17,6 +17,7 @@ import time
 from pathlib import Path
 
 from emulator_tools import ROOT, emulator_command, sdk_dir, sdk_tool, start_emulator, wait_until_closed
+from install_phone_browser import ensure_chrome
 
 PACKAGES = {
     'phone': 'io.github.antonkulaga.glucowatch.phone',
@@ -111,6 +112,8 @@ def main():
             time.sleep(2)
         else:
             raise RuntimeError(f'Emulator did not boot within 4 minutes; see {log_path}')
+        if args.target == 'phone':
+            ensure_chrome(adb, serial)
         for path in apks:
             device('install', '-r', str(path), timeout=120)
         package = PACKAGES[args.target]

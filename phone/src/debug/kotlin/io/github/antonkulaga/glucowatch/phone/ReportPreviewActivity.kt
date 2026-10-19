@@ -13,6 +13,121 @@ class ReportPreviewActivity : Activity() {
         setContentView(label)
         Thread {
             try {
+                if(intent.getBooleanExtra("archive_matrix",false)) {
+                    val store=WorkoutStore(this)
+                    val checks=cacheDir.resolve("workout-cases").listFiles().orEmpty().filter { it.extension=="fit" }.sortedBy { it.name }.map { file->
+                        val bytes=file.readBytes();val decoded=FitWorkoutReader.read(bytes,file.name)
+                        val first=store.import(bytes,file.name);val again=store.import(bytes,file.name)
+                        check(!again.second&&first.first.id==again.first.id)
+                        "${file.name}: ${java.time.Instant.ofEpochMilli(decoded.startMillis)} to ${java.time.Instant.ofEpochMilli(decoded.endMillis)}; ${decoded.id.take(12)}; duplicate bytes reused; original bytes archived"
+                    }
+                    check(checks.size==8)
+                    cacheDir.resolve("native-archive-check.txt").writeText(checks.joinToString("\n"))
+                    runOnUiThread { label.text="Eight native archives verified, including browser suffixes." }
+                    return@Thread
+                }
+                if (intent.getBooleanExtra("layout_review", false)) {
+                    val zone=java.time.ZoneId.of("Europe/Bucharest")
+                    fun source(key: String, portal: ExportPortal): List<ExportRow> {
+                        val uri=android.net.Uri.parse(requireNotNull(intent.getStringExtra(key)))
+                        val bytes=contentResolver.openInputStream(uri)!!.use { it.readBytes() }
+                        val text=bytes.toString(Charsets.UTF_8)
+                        val order=HistoricalCsv.inferDateOrder(text) ?: error("Explicit date order required")
+                        ReportFiles.archiveCsv(this,portal,bytes,order=order)
+                        return HistoricalCsv.parse(text,portal.source,zone,order)
+                    }
+                    WorkoutStore(this).setSwimPumpDisconnected(true)
+                    val rows=source("sensor_uri",ExportPortal.CLARITY)+source("pump_uri",ExportPortal.CARELINK)
+                    val first=java.time.LocalDate.parse("2026-09-20");val last=java.time.LocalDate.parse("2026-10-18")
+                    val selected=rows.filter { java.time.Instant.ofEpochMilli(it.timeMillis).atZone(zone).toLocalDate() in first..last }
+                    val workouts=cacheDir.resolve("workout-cases").listFiles().orEmpty()
+                        .filter { it.extension.equals("fit",true) }.map { FitWorkoutReader.read(it.readBytes(),it.name).let { w->w.copy(pumpDisconnected=w.isSwim) } }
+                    val window=ExportWindow(LatestDevice.MINIMED_PUMP,first,first,last,first,allowIncomplete=true)
+                    val treatments=selected.filter { it.source==ExportRow.SOURCE_CARELINK }.mapNotNull { r->when(r.kind){
+                        ExportRow.KIND_BOLUS->r.insulinU?.let { Treatment(r.timeMillis,insulin=it) }
+                        ExportRow.KIND_BASAL_DELIVERY->r.insulinU?.let { Treatment(r.timeMillis,insulin=it,insulinKind=InsulinKind.BASAL) }
+                        ExportRow.KIND_TEMP_BASAL->Treatment(r.timeMillis,insulinKind=InsulinKind.BASAL,basalRate=r.basalRateUPerH,basalPercent=r.basalPercent,durationMinutes=r.durationMin)
+                        else->null
+                    } }
+                    val report=GlucoseReport.build(selected.filter { it.source==ExportRow.SOURCE_DEXCOM_CLARITY }.mapNotNull(ExportRow::toReading),
+                        treatments,"Dexcom Clarity",zone,window=window,events=selected)
+                    val general=ReportPdf.render(report,workouts=workouts)
+                    val workoutFirst=java.time.LocalDate.parse("2026-10-15")
+                    val activityWorkouts=workouts.filter { it.name in setOf("Afternoon_Swim","Evening_Run") }
+                    val activityContext=WorkoutAnnotations.context(selected,workouts,activityWorkouts)
+                    val activity=WorkoutReportPdf.render(activityWorkouts,report.readings,activityContext,zone,workoutFirst,last)
+                    val files=listOf(ExportNames.report(first,last,ExportContent.SENSOR_AND_PUMP,workouts.size) to general,
+                        (ExportNames.report(workoutFirst,last,ExportContent.SENSOR_AND_PUMP,activityWorkouts.size)+"-activity-report") to activity)
+                    val uris=files.map { (name,bytes)->cacheDir.resolve("$name.pdf").writeBytes(bytes)
+                        "$name.pdf="+ReportFiles.publish(this,"$name.pdf","application/pdf",bytes,ReportFiles.exports("application/pdf")) }
+                    val from=workoutFirst.atStartOfDay(zone).toInstant().toEpochMilli()
+                    val until=last.plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli()
+                    val csvName=ExportNames.report(workoutFirst,last,ExportContent.SENSOR_AND_PUMP,activityWorkouts.size)+"-merged-sample.csv"
+                    val merged=MergedHealthExport.rows(activityContext,report.readings,activityWorkouts,from,until)
+                    val csv=ExportCsv.bytes(ExportCsv.write(merged,zone))
+                    cacheDir.resolve(csvName).writeBytes(csv)
+                    val csvUri=ReportFiles.publish(this,csvName,"text/csv",csv,ReportFiles.exports("text/csv"))
+                    val annotated=WorkoutAnnotations.add(selected,workouts)
+                    val response=InsulinResponse.analyse(annotated,report.readings)
+                    InsulinAnalysisStore(this).save(annotated,report.readings,zone,until,PhoneSettingsStore(this).load())
+                    cacheDir.resolve("response-check.txt").writeText("Native settings: "+selected.count { it.pumpIsfMgdlPerU!=null||it.pumpIcrGPerU!=null }+"; conditional estimates: "+response.estimates.size+"; absorption points: "+response.appearance.size+"; excluded meals: "+response.excluded+"; unresolved bolus components: "+BolusLedger.records(selected).count { it.insulinU==null }+"; CSV rows: "+merged.size)
+                    cacheDir.resolve("layout-review.txt").writeText((uris+"$csvName=$csvUri").joinToString("\n"))
+                    runOnUiThread { label.text="Native layout review ready: ${uris.joinToString("\n")}" }
+                    return@Thread
+                }
+                if (intent.getBooleanExtra("activity_matrix", false)) {
+                    val zone = java.time.ZoneId.of(intent.getStringExtra("zone") ?: "Europe/Bucharest")
+                    val inputs = cacheDir.resolve("workout-cases").listFiles().orEmpty().filter { it.extension.equals("fit", true) }
+                    check(inputs.isNotEmpty()) { "Explicit local FIT fixtures are required" }
+                    val workouts = inputs.sortedBy { it.name }.map { FitWorkoutReader.read(it.readBytes(), it.name) }
+                    val range = WorkoutReportRange.covering(workouts, zone)
+                    cacheDir.resolve("activity-matrix.pdf").writeBytes(WorkoutReportPdf.render(workouts, emptyList(), emptyList(), zone, range.first, range.last))
+                    val window = ExportWindow(LatestDevice.MINIMED_PUMP, range.first, range.first, range.last, range.first, allowIncomplete = true)
+                    val report = GlucoseReport.build(emptyList(), emptyList(), "No sensor fixture supplied", zone, window = window)
+                    cacheDir.resolve("activity-matrix-general.pdf").writeBytes(ReportPdf.render(report, workouts = workouts))
+                    val edgeStart = java.time.Instant.parse("2026-01-01T10:00:00Z").toEpochMilli()
+                    val base = Workout("b".repeat(64), "Synthetic activity", "Swim", edgeStart, edgeStart + 300_000,
+                        300.0, 240.0, 100.0, null, null, emptyList())
+                    val edges = listOf(base, base.copy(id="c".repeat(64), name="Pool lengths only", poolLengthM=25.0,
+                        lengths=listOf(WorkoutLength(edgeStart,edgeStart+60_000,60.0,null,true))),
+                        base.copy(id="d".repeat(64), name="Open water without HR", samples=(0..300).map { i -> WorkoutSample(edgeStart+i*1000L,speedMps=.6,distanceM=i*.6) }),
+                        base.copy(id="e".repeat(64), name="Stationary training", sport="Exercise"),
+                        base.copy(id="f".repeat(64), name="Ride without elevation", sport="Ride", distanceM=1500.0, timerSeconds=300.0, samples=(0..300).map { i -> WorkoutSample(edgeStart+i*1000L,heartRate=130,speedMps=5.0,distanceM=i*5.0) }))
+                    val edgeRange = WorkoutReportRange.covering(edges, zone)
+                    cacheDir.resolve("activity-edge-cases.pdf").writeBytes(WorkoutReportPdf.render(edges, emptyList(), emptyList(), zone, edgeRange.first, edgeRange.last))
+                    cacheDir.resolve("activity-matrix-check.txt").writeText(workouts.joinToString("\n") { workout ->
+                        val analysis = WorkoutAnalysis.analyse(workout)
+                        "${workout.name}: ${workout.sport}; observations=${workout.samples.size}; outside=${workout.excludedSampleCount}; lengths=${workout.lengths.size}; motion=${analysis.motionTitle} / ${analysis.motionUnit}; GAP=${analysis.gap.isNotEmpty()}"
+                    })
+                    runOnUiThread { label.text = "Native activity matrix and missing-field reports ready." }
+                    return@Thread
+                }
+                if (intent.getBooleanExtra("timeline_fixture", false)) {
+                    // Explicit private inputs; no account access or files bundled in the APK.
+                    val zone = java.time.ZoneId.of(intent.getStringExtra("zone") ?: "UTC")
+                    fun source(name: String, kind: String) = cacheDir.resolve(name).takeIf { it.isFile }?.let {
+                        HistoricalCsv.parse(it.readText(), kind, zone)
+                    }.orEmpty()
+                    val glucose = source("sensor-fixture.csv", ExportRow.SOURCE_DEXCOM_CLARITY) + source("context-sensor-fixture.csv", ExportRow.SOURCE_DEXCOM_CLARITY)
+                    val pump = source("pump-fixture.csv", ExportRow.SOURCE_CARELINK) + source("context-pump-fixture.csv", ExportRow.SOURCE_CARELINK)
+                    val workout = FitWorkoutReader.read(cacheDir.resolve("workout-fixture.fit").readBytes(), "Imported activity")
+                    val end = java.time.Instant.ofEpochMilli(workout.endMillis).atZone(zone).toLocalDate()
+                    val first = end.minusDays(6)
+                    val window = ExportWindow(LatestDevice.MINIMED_PUMP, first, first, end, first, allowIncomplete = true)
+                    val all = (glucose + pump).distinctBy { it.source + it.identity() }
+                    val readings = glucose.mapNotNull(ExportRow::toReading)
+                    val treatments = pump.mapNotNull { row -> when (row.kind) {
+                        ExportRow.KIND_BOLUS -> Treatment(row.timeMillis, insulin = row.insulinU ?: 0.0)
+                        ExportRow.KIND_BASAL_DELIVERY -> Treatment(row.timeMillis, insulin = row.insulinU ?: 0.0, insulinKind = InsulinKind.BASAL)
+                        ExportRow.KIND_MEAL -> Treatment(row.timeMillis, carbs = row.carbsG ?: 0.0)
+                        else -> null
+                    } }
+                    val report = GlucoseReport.build(readings, treatments, "Dexcom Clarity", zone, window = window, events = all)
+                    cacheDir.resolve("timeline-fixture.pdf").writeBytes(ReportPdf.render(report, workouts = listOf(workout)))
+                    cacheDir.resolve("timeline-fixture-check.txt").writeText("Window: $first to $end; sensor days: ${report.summary.daysWithData}; workout: ${workout.startMillis} to ${workout.endMillis}; meals: ${ReportMeal.read(report.events).size}")
+                    runOnUiThread { label.text = "Private general timeline report ready." }
+                    return@Thread
+                }
                 if (intent.getBooleanExtra("reviewed_fixture", false)) {
                     // Explicitly supplied private files only; no personal fixture enters git or release.
                     val zone=java.time.ZoneId.of(intent.getStringExtra("zone") ?: "UTC")

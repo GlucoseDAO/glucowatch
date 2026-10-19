@@ -64,7 +64,15 @@
             </intent-filter>
         </activity>
 
-        <activity android:name=".ExportPortalActivity" android:exported="false" />
+        <activity android:name=".ExportPortalActivity" android:exported="false" android:process=":export_portal" />
+
+        <activity android:name=".PdfViewerActivity" android:exported="true" android:label="GlucoPhone PDF viewer">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:scheme="content" android:mimeType="application/pdf" />
+            </intent-filter>
+        </activity>
 
         <activity android:name=".WorkoutImportActivity" android:exported="true">
             <intent-filter>

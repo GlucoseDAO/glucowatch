@@ -31,17 +31,31 @@ class ExportDownloadFolder(private val context: Context) {
     fun fitFiles(since: Long): List<Csv> = files(since, ".fit", glucowatch.core.FitWorkoutReader.MAX_BYTES)
     private fun files(since: Long, extension: String, maxBytes: Int): List<Csv> {
         val tree = tree() ?: return emptyList()
-        val children = DocumentsContract.buildChildDocumentsUriUsingTree(tree, DocumentsContract.getTreeDocumentId(tree))
         val files = mutableListOf<Csv>()
-        context.contentResolver.query(children, arrayOf(DocumentsContract.Document.COLUMN_DOCUMENT_ID, DocumentsContract.Document.COLUMN_DISPLAY_NAME,
-            DocumentsContract.Document.COLUMN_SIZE, DocumentsContract.Document.COLUMN_LAST_MODIFIED, DocumentsContract.Document.COLUMN_FLAGS), null, null, null)?.use { cursor ->
+        val pending = java.util.ArrayDeque<Pair<String, Int>>()
+        pending.add(DocumentsContract.getTreeDocumentId(tree) to 0)
+        var visited = 0
+        while (pending.isNotEmpty() && visited++ < 64) {
+            val (id, depth) = pending.removeFirst()
+            val children = DocumentsContract.buildChildDocumentsUriUsingTree(tree, id)
+            context.contentResolver.query(children, arrayOf(DocumentsContract.Document.COLUMN_DOCUMENT_ID, DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+            DocumentsContract.Document.COLUMN_SIZE, DocumentsContract.Document.COLUMN_LAST_MODIFIED, DocumentsContract.Document.COLUMN_FLAGS,
+                DocumentsContract.Document.COLUMN_MIME_TYPE), null, null, null)?.use { cursor ->
             while (cursor.moveToNext()) {
                 val name = cursor.getString(1).orEmpty()
+                if (cursor.getString(5) == DocumentsContract.Document.MIME_TYPE_DIR) {
+                    // Include raw provider categories, never feed our generated CSVs back into import.
+                    if (depth < 3 && !name.equals("Exports", true) && pending.size < 64)
+                        pending.add(cursor.getString(0) to depth + 1)
+                    continue
+                }
                 val size = cursor.getLong(2)
                 val modified = cursor.getLong(3)
                 if (!name.endsWith(extension, true) || size !in 1..maxBytes.toLong() ||
                     modified < since / 1000 * 1000 || cursor.getInt(4) and DocumentsContract.Document.FLAG_PARTIAL != 0) continue
                 files += Csv(DocumentsContract.buildDocumentUriUsingTree(tree, cursor.getString(0)), size, modified)
+                if (files.size >= 5000) break
+            }
             }
         }
         return files.sortedBy { it.modified }

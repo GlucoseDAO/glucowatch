@@ -31,7 +31,7 @@ class HistoricalExportTest {
         assertTrue(rows.first().detail!!.contains("quoted, note"))
         assertEquals(2.5, rows[1].insulinU)
         assertEquals(25.0, rows[2].carbsG)
-        assertEquals(1, rows.count(ExportContent.SENSOR::includes))
+        assertEquals(2, rows.count(ExportContent.SENSOR::includes)) // Glucose and sensor-entered food; no logged insulin.
         assertEquals(0, rows.count(ExportContent.PUMP::includes))
     }
 

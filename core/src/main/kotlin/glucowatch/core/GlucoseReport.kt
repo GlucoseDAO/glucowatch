@@ -135,7 +135,9 @@ data class GlucoseReport(
             val selectedPump = pump.filter { window == null || window.contains(it.timeMillis, zone) }
             val bolus = selectedPump.filter { it.isBolus && it.timeMillis <= now }
             val basalPulses = selectedPump.filter { it.isBasal && it.insulin > 0 && it.durationMinutes == null && it.basalRate == null && it.timeMillis <= now }
-            val meals = selectedPump.filter { it.carbs > 0 && it.timeMillis <= now }
+            val eventMeals = ReportMeal.read(events.filter { it.timeMillis <= now && (window == null || window.contains(it.timeMillis, zone)) })
+            val meals = if (eventMeals.isNotEmpty()) eventMeals.map { Treatment(it.timeMillis, carbs = it.grams) }
+                else selectedPump.filter { it.carbs > 0 && it.timeMillis <= now }
             val temps = selectedPump.filter { it.durationMinutes != null && it.durationMinutes > 0 && it.timeMillis <= now }
             val bolusSum = bolus.sumOf { it.insulin }
             val autoSum = bolus.filter { it.automatic }.sumOf { it.insulin }

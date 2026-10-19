@@ -19,7 +19,7 @@ data class ReportRange(val minimum: Double, val median: Double, val maximum: Dou
 data class ReportCoverage(val sensorDays: Int, val pumpDays: Int, val bothDays: Int, val requestedDays: Int)
 data class ReportGlucoseSlot(val mean: Double, val p15: Double, val p75: Double)
 data class ReportBasalStep(val minuteOfDay: Int, val rate: Double)
-enum class ReportBasalChange { SCHEDULED, TEMPORARY, SUSPENDED }
+enum class ReportBasalChange { SCHEDULED, TEMPORARY, SUSPENDED, DISCONNECTED }
 data class ReportBasalInterval(
     val start: Long, val end: Long, val scheduledRate: Double, val programmedRate: Double,
     val change: ReportBasalChange,

@@ -18,6 +18,8 @@ object WorkoutAnalysis {
         val gap: List<List<WorkoutPoint>>, val heartZones: List<Double>, val gapZones: List<Double>,
         val heartMean: Double?, val heartMax: Double?, val gapMean: Double?,
         val heartGaps: List<Pair<Long, Long>>, val clampedGradeSeconds: Int,
+        val motion: List<List<WorkoutPoint>> = emptyList(), val motionTitle: String = "Speed",
+        val motionUnit: String = "km/h", val motionMean: Double? = null,
     )
 
     fun runningCost(grade: Double): Double {
@@ -52,7 +54,7 @@ object WorkoutAnalysis {
         data class Motion(val time: Long, val distance: Double, val elevation: Double)
         val segments = mutableListOf<MutableList<Motion>>()
         var segment = mutableListOf<Motion>()
-        if (distance.isNotEmpty() && elevation.isNotEmpty()) {
+        if (workout.usesRunningGap && distance.isNotEmpty() && elevation.isNotEmpty()) {
             val first = maxOf(from, distance.first().time, elevation.first().time)
             val last = minOf(until, distance.last().time, elevation.last().time)
             var t = ceil(first / 1000.0).toLong() * 1000
@@ -90,9 +92,46 @@ object WorkoutAnalysis {
             }
             gapGroups += bin(calculated)
         }
+        val gapMean = equivalentDistance.takeIf { it > 0 }?.let { known / it * 1000 / 60 }
+        val nativeSpeed = samples.mapIndexedNotNull { index, sample ->
+            val previous = samples.getOrNull(index - 1)
+            val derived = previous?.let { before ->
+                val span = sample.timeMillis - before.timeMillis
+                if (span in 1..MAX_GAP && sample.distanceM != null && before.distanceM != null && sample.distanceM >= before.distanceM)
+                    (sample.distanceM - before.distanceM) * 1000 / span else null
+            }
+            val speed = sample.speedMps?.takeIf { it > 0 } ?: derived?.takeIf { it > 0 } ?: sample.speedMps ?: derived
+            speed?.takeIf { it.isFinite() && it >= 0 }?.let { WorkoutPoint(sample.timeMillis, it) }
+        }
+        val swim = if (workout.isSwim) workout.lengths.filter { it.active && it.startMillis >= from && it.endMillis <= until }.mapNotNull { length ->
+            val speed = length.speedMps?.takeIf { it > 0 } ?: workout.poolLengthM?.let { metres ->
+                length.timerSeconds?.takeIf { it > 0 }?.let { metres / it }
+            }
+            speed?.let { listOf(WorkoutPoint(length.startMillis, 100 / it / 60), WorkoutPoint(length.endMillis, 100 / it / 60)) }
+        } else emptyList()
+        val motion = when {
+            workout.usesRunningGap && gapGroups.isNotEmpty() -> gapGroups
+            workout.usesRunningGap -> split(nativeSpeed.filter { it.value > 0 }.map { it.copy(value = 1000 / it.value / 60) })
+            swim.isNotEmpty() -> swim
+            workout.isSwim -> split(nativeSpeed.filter { it.value > 0 }.map { it.copy(value = 100 / it.value / 60) })
+            else -> split(nativeSpeed.map { it.copy(value = it.value * 3.6) }).map(::bin)
+        }
+        val duration = if (from == workout.startMillis && until == workout.endMillis)
+            workout.timerSeconds ?: workout.elapsedSeconds ?: (until - from) / 1000.0 else (until - from) / 1000.0
+        val metres = if (from == workout.startMillis && until == workout.endMillis) workout.distanceM else
+            distance.takeIf { it.size > 1 }?.let { it.last().value - it.first().value }
+        val motionMean = when {
+            workout.usesRunningGap && gapGroups.isNotEmpty() -> gapMean
+            duration <= 0 || metres == null || metres <= 0 -> null
+            workout.isSwim -> duration / metres * 100 / 60
+            workout.usesRunningGap -> duration / metres * 1000 / 60
+            else -> metres / duration * 3.6
+        }
         return Result(split(heart).map(::bin), split(elevation).map(::bin), gapGroups, zones, gapZones,
             zones.sum().takeIf { it > 0 }?.let { weighted / it }, heart.maxOfOrNull { it.value },
-            equivalentDistance.takeIf { it > 0 }?.let { known / it * 1000 / 60 }, gaps, clamped)
+            gapMean, gaps, clamped, motion,
+            if (workout.usesRunningGap && gapGroups.isNotEmpty()) "Estimated GAP" else if (workout.usesRunningGap) "Recorded pace" else if (workout.isSwim) "Swim pace" else "Speed",
+            if (workout.usesRunningGap) "min/km" else if (workout.isSwim) "min/100m" else "km/h", motionMean)
     }
 
     private fun interpolate(points: List<WorkoutPoint>, time: Long): Double? {

@@ -158,7 +158,7 @@ class LinkService : Service() {
     }
 
     private fun answer(socket: BluetoothSocket) {
-        val name = runCatching { socket.remoteDevice.name }.getOrNull() ?: "Watch"
+        val name = try { socket.remoteDevice.name } catch (_: SecurityException) { null } ?: "Watch"
         // No socket timeouts on RFCOMM: closing the socket ends a watch that stops talking.
         val watchdog = Timer("phone-link-watchdog", true).apply { schedule(TIMEOUT_MS) { runCatching { socket.close() } } }
         try {
@@ -181,7 +181,9 @@ class LinkService : Service() {
         private val repository = PhoneRepository(context)
         private val watches = PairedWatches(context)
         private val settings = PhoneSettingsStore(context)
-        private val adapterName = runCatching { context.getSystemService(BluetoothManager::class.java)?.adapter?.name }.getOrNull()
+        private val adapterName = try {
+            context.getSystemService(BluetoothManager::class.java)?.adapter?.name
+        } catch (_: SecurityException) { null }
 
         override val phoneId get() = watches.phoneId
         override val phoneName get() = adapterName ?: Build.MODEL

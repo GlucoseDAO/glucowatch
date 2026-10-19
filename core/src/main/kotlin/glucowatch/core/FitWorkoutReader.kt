@@ -47,6 +47,8 @@ object FitWorkoutReader {
         var descent: Double? = null
         var sport = "Exercise"
         var sessions = 0
+        var poolLength: Double? = null
+        val lengths = mutableListOf<WorkoutLength>()
         fun time(value: Double?) = value?.toLong()?.takeIf { it >= 0 }?.let { epoch + it * 1000 }
         while (at < end) {
             val recordHeader = byte()
@@ -67,6 +69,8 @@ object FitWorkoutReader {
             val definition = definitions[local] ?: error("Undefined FIT message.")
             val values = mutableMapOf<Int, Double>()
             for (field in definition.fields) {
+                // A compressed header replaces the timestamp bytes even when the definition has field 253.
+                if (compressed && field.number == 253) continue
                 require(at + field.size <= end) { "Truncated FIT field." }
                 val width = when (field.type) { 0, 1, 2, 10, 13 -> 1; 3, 4, 11 -> 2; 5, 6, 8, 12 -> 4; 9, 14, 15, 16 -> 8; else -> 0 }
                 if (width == 0 || field.size != width) { at += field.size; continue }
@@ -100,7 +104,15 @@ object FitWorkoutReader {
                     timer = values[8]?.div(1000)
                     distance = values[9]?.div(100)
                     ascent = values[22]; descent = values[23]
+                    poolLength = values[44]?.div(100)?.takeIf { it > 0 }
                     sport = when (values[5]?.toInt()) { 1 -> "Run"; 2 -> "Ride"; 5 -> "Swim"; 11 -> "Walk"; 17 -> "Hike"; else -> "Exercise" }
+                }
+                101 -> {
+                    val a = time(values[2])
+                    val b = time(values[253]) ?: a?.let { it + ((values[3] ?: 0.0)).toLong() }
+                    if (a != null && b != null && b > a) lengths += WorkoutLength(a, b,
+                        values[4]?.div(1000), values[6]?.div(1000), values[12]?.toInt() == 1)
+                    require(lengths.size <= MAX_SAMPLES) { "FIT workout has too many pool lengths." }
                 }
                 21 -> if (values[0]?.toInt() == 0 && values[1]?.toInt() in listOf(1, 4, 8, 9)) stop = t
                 20 -> {
@@ -116,14 +128,21 @@ object FitWorkoutReader {
                 }
             }
         }
-        require(sessions == 1 && samples.isNotEmpty()) { "No workout session and timestamped observations found in this FIT." }
-        val first = start ?: samples.firstKey()
-        val last = maxOf(stop ?: sessionEnd ?: (first + ((elapsed ?: 0.0) * 1000).toLong()), samples.lastKey())
+        require(sessions == 1) { "No workout session found in this FIT." }
+        val first = start ?: samples.firstKeyOrNull() ?: lengths.minOfOrNull { it.startMillis }
+            ?: error("No workout start time found in this FIT.")
+        val elapsedEnd = elapsed?.takeIf { it > 0 }?.let { first + (it * 1000).toLong() }
+        val last = listOfNotNull(sessionEnd, elapsedEnd).maxOrNull()
+            ?: stop ?: samples.lastKeyOrNull() ?: lengths.maxOfOrNull { it.endMillis } ?: first
         require(last > first && last - first <= 7 * 86_400_000L) { "Invalid workout interval." }
-        require(samples.keys.all { it in first..last }) { "FIT observations fall outside the workout." }
+        val selected = samples.values.filter { it.timeMillis in first..last }
         return Workout(Workout.digest(bytes), name.substringBeforeLast('.').take(120).ifBlank { sport }, sport,
-            first, last, elapsed, timer, distance, ascent, descent, samples.values.toList())
+            first, last, elapsed, timer, distance, ascent, descent, selected, poolLength,
+            lengths.filter { it.startMillis >= first && it.endMillis <= last }, samples.size - selected.size)
     }
+
+    private fun <K, V> java.util.SortedMap<K, V>.firstKeyOrNull(): K? = if (isEmpty()) null else firstKey()
+    private fun <K, V> java.util.SortedMap<K, V>.lastKeyOrNull(): K? = if (isEmpty()) null else lastKey()
 
     /** FIT CRC-16, including the stored checksum. A complete valid file yields zero. */
     internal fun crc(bytes: ByteArray, length: Int): Int {

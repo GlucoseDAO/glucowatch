@@ -76,8 +76,8 @@ There is no GlucoWatch server and no Google Play Services dependency.
   a file or Hugging Face. Inference runs on the phone. See the [prediction guide](docs/prediction.md).
 - **Easier watch setup:** relay readings and forecasts over Bluetooth, or copy your Dexcom
   or Nightscout login to the watch so you can avoid its keyboard.
-- **Exports and PDF reports:** save 1 to 90 days of sensor and pump history as a CSV or a
-  printable report with an overview, glucose and insulin by time of day, and a page per day.
+- **Exports and PDF reports:** save 1 to 90 completed days of sensor and pump history as CSV, PDF, or both.
+  Reports include glucose and insulin by time of day, daily overlays, and imported workouts.
   See [export files](docs/export.md).
 
 <table>
@@ -301,9 +301,13 @@ notification timestamps may differ from sensor timestamps. For the watch, use **
 show therapy data. Only combine sources belonging to the same person.
 [CareLink setup](docs/carelink.md) explains browser sign-in and the pump data available.
 On the phone, **More → Export data** uses the newest device and the day it started when those
-are already saved, then asks for an interval of 1 to 90 days and the file type. Continue signs
-in with the saved login and writes a CareLink CSV, a CareLink and Dexcom CSV, or a PDF report
-to Downloads. Fill that device and day in `.env` (`GLUCOWATCH_LATEST_DEVICE`, `GLUCOWATCH_DEVICE_SINCE`)
+are already saved, then asks for an interval of 1 to 90 completed days. Select CSV, PDF, or both.
+Each portal opening shows the exact dates to select; sign in and download the native CSV yourself.
+Source files are kept in `Downloads/GlucoPhone/Raw`, split by provider, and generated reports
+in `Downloads/GlucoPhone/Exports/PDF` and `Exports/CSV`. PDFs open in the built-in offline viewer.
+**More → Workouts** imports multiple FIT files, edits pace and heart-rate zones, and creates
+separate activity reports or includes activities immediately after their day in the general report.
+Fill the newest device and its first day in `.env` (`GLUCOWATCH_LATEST_DEVICE`, `GLUCOWATCH_DEVICE_SINCE`)
 or in the YAML import (`latest_device`, `device_since`).
 The file starts on the device day when the interval reaches further back. [Export files](docs/export.md)
 describes each column. The CSV is the form to use

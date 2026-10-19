@@ -1,0 +1,1 @@
+Matching release with GlucoWatch and GlucoPhone. Includes consistent release builds across operating systems and the standalone Wear OS declaration; the watch face keeps its existing glucose history and bolus display.

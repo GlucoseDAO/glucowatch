@@ -18,7 +18,7 @@ data class ReportBasalEstimate(val intervals: List<ReportBasalInterval>, val ass
             val result = mutableListOf<ReportBasalInterval>(); val notes = linkedSetOf<String>()
             val sorted = rows.distinctBy { it.identity() }.sortedBy { it.timeMillis }
             fun date(time: Long) = Instant.ofEpochMilli(time).atZone(zone).toLocalDate()
-            fun state(row: ExportRow): String? = runCatching {
+            fun state(row: ExportRow): String? = if(row.kind != ExportRow.KIND_SUSPEND) null else runCatching {
                 ((Json.parseToJsonElement(row.detail ?: "{}") as? JsonObject)?.get("Suspend") as? JsonPrimitive)?.content
             }.getOrNull()
             var day = date(from)
@@ -38,7 +38,9 @@ data class ReportBasalEstimate(val intervals: List<ReportBasalInterval>, val ass
                     val temps = sorted.filter { it.kind == ExportRow.KIND_TEMP_BASAL && it.durationMin != null &&
                         it.timeMillis < b && it.timeMillis+(it.durationMin!!*60_000).toLong() > a }
                     val states = sorted.filter { it.timeMillis < b }.mapNotNull { row -> state(row)?.let { row.timeMillis to it } }.distinct()
-                    val cuts = (listOf(a,b) + rates.map { it.first } + temps.flatMap { listOf(it.timeMillis,it.timeMillis+(it.durationMin!!*60_000).toLong()) } + states.map { it.first })
+                    val disconnects=sorted.filter { it.kind=="pump_disconnected"&&it.durationMin!=null&&it.timeMillis<b&&it.timeMillis+(it.durationMin!!*60_000).toLong()>a }
+                    val cuts = (listOf(a,b) + rates.map { it.first } + temps.flatMap { listOf(it.timeMillis,it.timeMillis+(it.durationMin!!*60_000).toLong()) } + states.map { it.first }+
+                        disconnects.flatMap { listOf(it.timeMillis,it.timeMillis+(it.durationMin!!*60_000).toLong()) })
                         .filter { it in a..b }.distinct().sorted()
                     cuts.zipWithNext().forEach { (start,end) ->
                         val baseline = (rates.lastOrNull { it.first <= start } ?: rates.first()).second
@@ -49,6 +51,10 @@ data class ReportBasalEstimate(val intervals: List<ReportBasalInterval>, val ass
                             }
                         }
                         states.lastOrNull { it.first <= start }?.let { if (it.second != "NORMAL_PUMPING") { programmed=0.0;change=ReportBasalChange.SUSPENDED } }
+                        if(WorkoutAnnotations.disconnected(disconnects,start,end)) {
+                            programmed=0.0;change=ReportBasalChange.DISCONNECTED
+                            notes += "User-reported pump disconnection uses FIT session bounds; estimated insulin reaching the user is zero in that interval."
+                        }
                         result += ReportBasalInterval(start,end,baseline,programmed,change)
                     }
                 }

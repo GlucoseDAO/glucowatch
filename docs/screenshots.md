@@ -259,3 +259,17 @@ asking the person the data belongs to.
 - Two runs at once share an emulator and an output folder: each run's cleanup deletes the other's
   captures, and both drive the same screen. Give a second run its own `--out` and a watch the
   first is not using.
+
+## Phone browser and document requirements
+
+`run_emulator.py phone` checks for enabled Google Chrome before opening the app.
+If missing, `install_phone_browser.py` installs the cached official Chrome and Trichrome
+APKs in ignored `data/output/testing/browser/`. With no cache, it downloads Google's
+API 36 x86_64 image (~1.9 GB), verifies its catalog checksum and extracts only those
+apps. Its ext4 reader runs through `uv --with dissect.extfs` as test tooling; it is
+not an Android app dependency. Keep these APKs out of Git and release tags. The AVD
+keeps its current OS and the required software-GPU, two-core launch configuration.
+
+Strava sign-in checks Chrome at runtime and offers its Play Store installation page
+when absent. The app includes an offline PDF viewer, so exported PDFs and PDFs opened
+from Android Files can be viewed without installing another app.
