@@ -65,6 +65,7 @@
         </activity>
 
         <activity android:name=".ExportPortalActivity" android:exported="false" android:process=":export_portal" />
+        <activity android:name=".InsulinAnalysisActivity" android:exported="false" />
 
         <activity android:name=".PdfViewerActivity" android:exported="true" android:label="GlucoPhone PDF viewer">
             <intent-filter>

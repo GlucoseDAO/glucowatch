@@ -84,40 +84,37 @@ internal object ReportInsulinPdf {
 internal object InsulinReferencePdf {
     fun draw(c: Canvas, rows: List<ExportRow>, zone: ZoneId, from: Long, until: Long, top: Float, height: Float,
              response: InsulinResponse.Result = InsulinResponse.Result(emptyList(),emptyList(),0)) {
-        fun paint(color: Int=Color.BLACK,size: Float=7f)=Paint(Paint.ANTI_ALIAS_FLAG).apply { this.color=color;textSize=size }
+        fun paint(color: Int=Color.BLACK,size: Float=7f)=Paint(Paint.ANTI_ALIAS_FLAG).apply {this.color=color;textSize=size}
         fun text(x: Float,y: Float,s: String,size: Float=7f,color: Int=Color.BLACK)=c.drawText(s,x,y,paint(color,size))
-        text(22f,top-24,"ISF / ICR: pump baseline and response estimates",10f)
-        text(22f,top-11,"Black: last pump setting (up to 24 h) / grey: Medtronic TDD reference / blue diamonds: conditional 4 h response",6.2f)
-        val times=(generateSequence(from) { it+3_600_000 }.takeWhile { it<=until }.toList()+until).distinct()
-        val points=InsulinAnalytics.series(rows,zone,times)
-        val dayEstimates=response.estimates.filter { it.time in from until until }
-        repeat(2) { panel->
-            val baseline=points.map { if(panel==0)it.recordedIsf else it.recordedIcr }
-            val reference=points.map { if(panel==0)it.referenceIsf else it.referenceIcr }
-            val estimates=dayEstimates.filter { (if(panel==0)it.isf else it.icr)!=null }
-            val all=baseline.filterNotNull()+reference.filterNotNull()+estimates.mapNotNull { if(panel==0)it.isf else it.icr }
+        text(22f,top-24,"ISF / ICR: observed response points",10f)
+        text(22f,top-11,"Blue diamonds: response estimates (hollow = provisional) / black circles: recorded pump settings / no interpolation",6.2f)
+        val day=response.estimates.filter {it.time in from until until}
+        val native=rows.filter {it.timeMillis in from until until&&(it.pumpIsfMgdlPerU!=null||it.pumpIcrGPerU!=null)}
+        repeat(2) { panel ->
+            val observations=native.mapNotNull {r->(if(panel==0)r.pumpIsfMgdlPerU else r.pumpIcrGPerU)?.let {r.timeMillis to it} }
+            val estimates=day.filter {(if(panel==0)it.isf else it.icr)!=null}
+            val all=observations.map {it.second}+estimates.mapNotNull {if(panel==0)it.isf else it.icr}
             val l=60f+panel*280;val r=l+210;val bottom=top+height;val maximum=max(1.0,ceil((all.maxOrNull()?:1.0)*1.15))
             fun x(t: Long)=l+(r-l)*((t-from).toDouble()/(until-from)).toFloat()
             fun y(v: Double)=bottom-(v/maximum).toFloat()*(height-12)
-            text(l,top-2,if(panel==0)"ISF (mg/dL/U)"else"ICR (g/U)",7f)
-            if(all.isNotEmpty()) (0..2).forEach { i->val v=maximum*i/2;c.drawLine(l,y(v),r,y(v),paint(ReportStyle.GRID));text(r+3,y(v)+2,String.format(Locale.US,"%.0f",v),5.7f,ReportStyle.GREY) }
-            fun trace(values: List<Double?>,color: Int,dashed: Boolean) {
-                val path=Path();var previous: Double?=null
-                values.forEachIndexed { i,v->if(v==null)previous=null else {
-                    if(previous==null)path.moveTo(x(times[i]),y(v))else {path.lineTo(x(times[i]),y(previous!!));path.lineTo(x(times[i]),y(v))};previous=v }
-                }
-                c.drawPath(path,paint(color).apply {style=Paint.Style.STROKE;strokeWidth=.9f;if(dashed)pathEffect=DashPathEffect(floatArrayOf(2f,2f),0f)})
-            }
-            trace(reference,Color.GRAY,true);trace(baseline,Color.BLACK,false)
-            estimates.forEach { e->val xx=x(e.time);val yy=y((if(panel==0)e.isf else e.icr)!!)
-                c.drawPath(Path().apply {moveTo(xx,yy-3);lineTo(xx+3,yy);lineTo(xx,yy+3);lineTo(xx-3,yy);close()},paint(ReportStyle.BASAL)) }
-            val last=baseline.lastOrNull {it!=null}
-            text(l+120,top-2,last?.let {"Pump %.1f".format(Locale.US,it)}?:"No pump value",6.7f)
-            if(all.isEmpty())text(l,top+height/2,points.last().unavailableReason?:"Insufficient data",6.2f,ReportStyle.GREY)
-            listOf(0,6,12,18,24).forEach { i->val t=from+(until-from)*i/24;text(x(t)-5,bottom+11,java.time.format.DateTimeFormatter.ofPattern("HH").withZone(zone).format(Instant.ofEpochMilli(t)),6f,ReportStyle.GREY) }
+            text(l,top-2,if(panel==0)"ISF (mg/dL/U)" else "ICR (g/U)",7f)
+            if(all.isNotEmpty())(0..2).forEach {i->val v=maximum*i/2;c.drawLine(l,y(v),r,y(v),paint(ReportStyle.GRID));text(r+3,y(v)+2,String.format(Locale.US,"%.0f",v),5.7f,ReportStyle.GREY)}
+            observations.forEach {(t,v)->c.drawCircle(x(t),y(v),1.9f,paint().apply {style=Paint.Style.STROKE;strokeWidth=.6f})}
+            // Thin only the drawing, retaining actual observation times and every CSV point.
+            val visible=mutableListOf<InsulinResponse.Estimate>()
+            estimates.forEach {e->if(visible.isEmpty()||x(e.time)-x(visible.last().time)>=7f)visible+=e}
+            estimates.lastOrNull()?.let {last->if(visible.lastOrNull()!=last) {
+                if(visible.isNotEmpty()&&x(last.time)-x(visible.last().time)<7f)visible.removeAt(visible.lastIndex)
+                visible+=last
+            }}
+            visible.forEach {e->val xx=x(e.time);val yy=y((if(panel==0)e.isf else e.icr)!!)
+                c.drawPath(Path().apply {moveTo(xx,yy-2.5f);lineTo(xx+2.5f,yy);lineTo(xx,yy+2.5f);lineTo(xx-2.5f,yy);close()},paint(ReportStyle.BASAL).apply {if(e.provisional) {style=Paint.Style.STROKE;strokeWidth=.7f}})}
+            val last=estimates.lastOrNull()
+            if(last!=null)text(l+105,top-2,"Latest %.1f".format(Locale.US,if(panel==0)last.isf else last.icr),6.7f)
+            else text(l+105,top-2,"No response estimate",6.2f,ReportStyle.GREY)
+            if(all.isEmpty())text(l,top+height/2,"No eligible observations",6.2f,ReportStyle.GREY)
+            listOf(0,6,12,18,24).forEach {i->val t=from+(until-from)*i/24;text(x(t)-5,bottom+11,java.time.format.DateTimeFormatter.ofPattern("HH").withZone(zone).format(Instant.ofEpochMilli(t)),6f,ReportStyle.GREY)}
         }
-        val appearances=response.appearance.filter { it.mealTime in from until until&&it.time-it.mealTime==7_200_000L }
-        val absorption=appearances.map {it.apparentG}.sorted().let { if(it.isEmpty())null else it[it.size/2] }
-        text(22f,top+height+24,"${dayEstimates.size} conditional 4 h estimates. ${absorption?.let {"Median apparent carb appearance at 2 h: %.1f g. ".format(Locale.US,it)}?:""}Model assumptions apply; no setting is changed.",6.1f,ReportStyle.GREY)
+        text(22f,top+height+24,"${day.size} response points; drawing thinned, full series in CSV. Early points are provisional. Model assumptions apply; no setting is changed.",6.1f,ReportStyle.GREY)
     }
 }

@@ -138,8 +138,8 @@ from native pool lengths or recorded motion, never the running cost model or GAP
 Cycling and other activity types use recorded speed (km/h). Missing HR/GPS/elevation
 channels and stationary/summary-only activities remain valid and visibly sparse.
 
-Every external Clarity/CareLink opening first shows the exact inclusive target interval
-and a Copy dates action. Dates stay pinned on the app's portal screen. External browsing
+Every managed Clarity/CareLink opening shows the exact inclusive target interval
+on the portal screen. Dates stay pinned on the app's portal screen. External fallback browsing
 does not initialize an unused WebView. The embedded fallback runs in its own process,
 so a native WebView failure cannot take down the main dashboard.
 
@@ -158,3 +158,5 @@ Combined reports require completed dates, ending no later than yesterday. Activi
 ## Elevation and swimming context
 
 Recorded altitude is shaded behind the time graphs, normalized within each activity; no terrain lookup or invented swim elevation is used. The saved `Pump disconnected during swimming` checkbox adds user-reported disconnection to reports/CSV, with FIT session bounds as timing approximation. Original FIT and pump rows stay unchanged. Dedicated activity reports are newest-first and place each activity immediately after its whole-day context.
+
+The download folder tree is created on app/workout/export opening. Strava Google sign-in still belongs to Chrome; importing or sharing a downloaded FIT archives an exact copy into Raw/Strava/Unedited even when Chrome left its own original in Downloads.

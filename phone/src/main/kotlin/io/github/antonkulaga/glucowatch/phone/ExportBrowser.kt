@@ -44,6 +44,7 @@ object ExportBrowser {
             ?: browsers.firstOrNull { it.activityInfo.packageName == preferred } ?: browsers.firstOrNull() ?: return false
         // The public Custom Tabs intent protocol needs no Play Services or browser SDK.
         val intent = Intent(Intent.ACTION_VIEW, Uri.parse(address)).setPackage(browser.activityInfo.packageName)
+            .addFlags(Intent.FLAG_ACTIVITY_NO_HISTORY)
             .addCategory(Intent.CATEGORY_BROWSABLE).putExtras(Bundle().apply {
                 putBinder("android.support.customtabs.extra.SESSION", null)
                 putInt("android.support.customtabs.extra.TOOLBAR_COLOR", Brand.BACKGROUND)

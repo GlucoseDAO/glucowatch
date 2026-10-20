@@ -1,0 +1,1 @@
+Matching 0.1.15 release with GlucoPhone: automatic download folders, managed sensor/pump exports and live observed insulin-response points. The watch app retains its existing behavior.

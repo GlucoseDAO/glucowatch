@@ -7,7 +7,7 @@ import java.time.LocalDate
 
 /** Local synthetic CSVs exercise real blob capture and the two-source wizard without a login or network. */
 class ExportPortalPreviewActivity : ExportPortalActivity() {
-    override fun preferExternalBrowser() = intent.getBooleanExtra("externalFixture", false)
+    override fun preferExternalBrowser() = intent.getBooleanExtra("externalFixture", false) || super.preferExternalBrowser()
     override fun externalAddress(address: String): String = intent.getStringExtra("fixtureBase")?.let { base ->
         "$base/${if (intent.getStringExtra("portal") == "CARELINK") "pump" else "sensor"}?start=${intent.getStringExtra("start")}&end=${intent.getStringExtra("end")}"
     } ?: address

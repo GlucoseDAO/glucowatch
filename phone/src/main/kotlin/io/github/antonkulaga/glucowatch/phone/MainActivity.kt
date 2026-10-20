@@ -313,7 +313,13 @@ class MainActivity : Activity() {
             setIntent(Intent(intent).setAction(Intent.ACTION_MAIN))
         }
         refreshHeartRate()
-        scope.launch(Dispatchers.IO) { ReportFiles.migrateLegacy(this@MainActivity) }
+        scope.launch {
+            try { withContext(Dispatchers.IO) {
+                ReportFiles.ensureLayout(this@MainActivity)
+                ReportFiles.migrateLegacy(this@MainActivity)
+            } } catch(e: CancellationException) {throw e}
+            catch(e: Exception) { exportError("Could not prepare Downloads/GlucoPhone: ${e.message}") }
+        }
         // Ask for Nearby devices only once a watch is paired; pairing asks too.
         if (watches.all().isNotEmpty()) withBluetooth { LinkService.update(this) }
     }
@@ -444,34 +450,7 @@ class MainActivity : Activity() {
     }.show()
 
     private fun showInsulinAnalysis() {
-        scope.launch {
-            try {
-                val now = System.currentTimeMillis()
-                val today = LocalDate.now()
-                val zone = java.time.ZoneId.systemDefault()
-                val window = ExportWindow(LatestDevice.MINIMED_PUMP,today.minusDays(2),today.minusDays(2),today,today.minusDays(2),allowIncomplete=true)
-                val tables = repository.exportTables(window)
-                val livePoint = withContext(Dispatchers.Default) { InsulinAnalytics.at(tables.rows,zone,now) }
-                val history = InsulinAnalysisStore(this@MainActivity).load(store.load())
-                val point = if(livePoint.recordedIsf==null&&livePoint.recordedIcr==null)history?.point?:livePoint else livePoint
-                fun value(v: Double?, unit: String) = v?.let { "${formatAmount(it,1)} $unit" } ?: "Unavailable"
-                val box = LinearLayout(this@MainActivity).apply {
-                    orientation = LinearLayout.VERTICAL; setPadding(dp(22),dp(10),dp(22),dp(12))
-                    addView(label(if(point===livePoint)"Current cached analysis"else"Imported history through ${java.time.Instant.ofEpochMilli(point.time-1).atZone(zone).toLocalDate()}"))
-                    addView(hint("Black baseline values come from recorded Bolus Wizard ISF/ICR. When unavailable, a Medtronic TDD reference is shown."))
-                    addView(label("ISF: ${value(point.isf,"mg/dL/U")}"))
-                    addView(label("ICR: ${value(point.icr,"g/U")}"))
-                    if(point.isf==null||point.icr==null)point.unavailableReason?.let { addView(hint(it)) }
-                    addView(hint("Medtronic protocol reference: ISF = 1800 / total daily insulin; ICR = 450 / total daily insulin. Recorded pump values take precedence. These are retrospective analyses, not dose recommendations."))
-                    addView(label("Recorded context"))
-                    addView(hint("Total insulin: ${value(point.total24h,"U")}\nRecorded bolus: ${value(point.bolus24h,"U")}\nLogged food: ${value(point.carbs24h,"g")}\nRecent reported IOB: ${value(point.iob,"U")}"))
-                    addView(hint("Uses this account’s data. Recorded settings are separate from response estimates. Held basal rates are estimates. IOB is reported at the analysis timestamp; sparse histories can leave calculated references blank."))
-                    addView(hint("Source: Medtronic 780G Therapy Management Protocol. PDF/CSV include conditional CGM-response estimates and modelled carb appearance; historical snapshots retain their date."))
-                }
-                AlertDialog.Builder(this@MainActivity).setTitle("Insulin analysis").setView(ScrollView(this@MainActivity).apply { addView(box) }).setPositiveButton("Close",null).show()
-            } catch (e: CancellationException) { throw e }
-            catch (e: Exception) { exportError(e.message ?: "Insulin analysis unavailable.") }
-        }
+        startActivity(Intent(this, InsulinAnalysisActivity::class.java))
     }
 
     private fun exportData() {

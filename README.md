@@ -302,9 +302,13 @@ show therapy data. Only combine sources belonging to the same person.
 [CareLink setup](docs/carelink.md) explains browser sign-in and the pump data available.
 On the phone, **More → Export data** uses the newest device and the day it started when those
 are already saved, then asks for an interval of 1 to 90 completed days. Select CSV, PDF, or both.
-Each portal opening shows the exact dates to select; sign in and download the native CSV yourself.
+The managed portal shows the exact dates to select; sign in and download the native CSV yourself.
+The app creates its folder tree, saves the CSV to its provider folder, closes the portal and opens the next source.
+External browsers are an explicit fallback and retain control of their own download location.
 Source files are kept in `Downloads/GlucoPhone/Raw`, split by provider, and generated reports
 in `Downloads/GlucoPhone/Exports/PDF` and `Exports/CSV`. PDFs open in the built-in offline viewer.
+**More → Insulin analysis** recomputes dated, conditional ISF/ICR response points from live sensor/pump history
+while open. Estimates are not connected into an hourly schedule and do not change dosing settings.
 **More → Workouts** imports multiple FIT files, edits pace and heart-rate zones, and creates
 separate activity reports or includes activities immediately after their day in the general report.
 Fill the newest device and its first day in `.env` (`GLUCOWATCH_LATEST_DEVICE`, `GLUCOWATCH_DEVICE_SINCE`)

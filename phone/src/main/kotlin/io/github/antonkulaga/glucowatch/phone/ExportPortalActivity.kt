@@ -53,7 +53,7 @@ open class ExportPortalActivity : Activity() {
     private var returned = false
     private var externalLaunched = false
     private var pickerOpen = false
-    private val browserPreferences by lazy { getSharedPreferences("export-browser", MODE_PRIVATE) }
+    private var fallbackDialogOpen = false
     private var blobOutput: java.io.OutputStream? = null
     private var blobBytes = 0
     private val downloadFile by lazy { cacheDir.resolve("$FILE_PREFIX${java.util.UUID.randomUUID()}.csv") }
@@ -108,6 +108,14 @@ open class ExportPortalActivity : Activity() {
                     else reloadPortal(address)
                 }
             })
+            addView(TextView(this@ExportPortalActivity).apply {
+                text = "Managed download: Downloads/${ReportFiles.raw(portal)}. This page closes after the CSV is saved."
+                setTextColor(Brand.TEXT); textSize = 13f; setPadding(20, 8, 20, 8)
+            })
+            addView(Button(this@ExportPortalActivity).apply {
+                text = "Use external browser / import downloaded CSV"; Brand.style(this, false)
+                setOnClickListener { offerExternalBrowser(address) }
+            })
             addView(webContainer, LinearLayout.LayoutParams(-1, 0, 1f))
             setOnApplyWindowInsetsListener { v, insets ->
                 if (android.os.Build.VERSION.SDK_INT >= 30) {
@@ -117,18 +125,23 @@ open class ExportPortalActivity : Activity() {
                 insets
             }
         })
+        scope.launch {
+            try { withContext(Dispatchers.IO) { ReportFiles.ensureLayout(this@ExportPortalActivity) } }
+            catch (e: CancellationException) { throw e }
+            catch (e: Exception) { status.text = "Cannot prepare Downloads/GlucoPhone: ${e.message}"; return@launch }
         if (preferExternalBrowser()) {
-            val dialog = android.app.AlertDialog.Builder(this).setTitle("${portal.label}: dates to select")
+            val dialog = android.app.AlertDialog.Builder(this@ExportPortalActivity).setTitle("${portal.label}: dates to select")
                 .setMessage("${targetDates()}\nInclude both dates.\n\nSelect this interval on the site, then download the English CSV data export. These dates also remain visible when you return to GlucoPhone.")
                 .setPositiveButton("Open site") { _, _ -> if (!openBrowser(address)) loadEmbedded(address) }
                 .setNeutralButton("Copy dates", null).setNegativeButton("Back") { _, _ -> finish() }.create()
             dialog.setOnShowListener { dialog.getButton(android.app.AlertDialog.BUTTON_NEUTRAL).setOnClickListener {
                 (getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager)
                     .setPrimaryClip(android.content.ClipData.newPlainText("Report interval", targetDates()))
-                Toast.makeText(this, "Target dates copied", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this@ExportPortalActivity, "Target dates copied", Toast.LENGTH_SHORT).show()
             } }
             dialog.show()
         } else loadEmbedded(address)
+        }
     }
 
     private fun targetDates(): String {
@@ -145,8 +158,9 @@ open class ExportPortalActivity : Activity() {
         loadPortal(web, address)
     }
 
-    protected open fun preferExternalBrowser() = javaClass == ExportPortalActivity::class.java &&
-        browserPreferences.getBoolean("external.${portal.name}", true)
+    // App-owned capture controls storage and can finish before the next provider opens.
+    // Ignore older saved browser defaults; browser selection is now an explicit fallback.
+    protected open fun preferExternalBrowser() = false
     protected open fun externalAddress(address: String) = address
 
     private fun selectBrowserCsv() {
@@ -198,8 +212,8 @@ open class ExportPortalActivity : Activity() {
                     if (request.url.toString() == "about:blank" && view in popupOrigins) return false
                     val allowed = portal.permits(request.url.toString(), country, region)
                     if (!allowed) {
-                        status.text = "This link needs a full browser. Opening ${portal.label}."
-                        if (javaClass == ExportPortalActivity::class.java) openBrowser(initialAddress)
+                        status.text = "This link needs a full browser. Use the external browser fallback if needed."
+                        if (javaClass == ExportPortalActivity::class.java) offerExternalBrowser(initialAddress)
                     }
                     return !allowed
                 }
@@ -217,7 +231,7 @@ open class ExportPortalActivity : Activity() {
                 override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
                     if (request.isForMainFrame) {
                         status.text = "${portal.label} could not load (browser error ${error.errorCode}). Check the connection."
-                        if (javaClass == ExportPortalActivity::class.java) openBrowser(initialAddress)
+                        if (javaClass == ExportPortalActivity::class.java) offerExternalBrowser(initialAddress)
                     }
                 }
                 override fun onRenderProcessGone(view: WebView, detail: RenderProcessGoneDetail): Boolean {
@@ -225,15 +239,15 @@ open class ExportPortalActivity : Activity() {
                     csvCapture.remove(view)
                     popupOrigins.remove(view); gestures.remove(view)
                     (view.parent as? ViewGroup)?.removeView(view); view.destroy()
-                    status.text = "The portal page stopped. Opening the browser. Your export dates are kept."
-                    if (javaClass == ExportPortalActivity::class.java) openBrowser(initialAddress)
+                    status.text = "The portal page stopped. Use the external browser fallback if needed. Your export dates are kept."
+                    if (javaClass == ExportPortalActivity::class.java) offerExternalBrowser(initialAddress)
                     return true
                 }
             }
             webViewRenderProcessClient = object : WebViewRenderProcessClient() {
                 override fun onRenderProcessUnresponsive(view: WebView, renderer: WebViewRenderProcess?) {
-                    status.text = "The portal page is not responding. Opening the browser. Your export dates are kept."
-                    if (javaClass == ExportPortalActivity::class.java) openBrowser(initialAddress)
+                    status.text = "The portal page is not responding. Use the external browser fallback if needed. Your export dates are kept."
+                    if (javaClass == ExportPortalActivity::class.java) offerExternalBrowser(initialAddress)
                 }
                 override fun onRenderProcessResponsive(view: WebView, renderer: WebViewRenderProcess?) {}
             }
@@ -269,8 +283,8 @@ open class ExportPortalActivity : Activity() {
         }
         status.text = "Collecting the CSV from the signed-in page…"
         if (!csvCapture.request(view, address)) {
-            status.text = "CSV capture needs a newer Android System WebView. Opening the browser."
-            if (javaClass == ExportPortalActivity::class.java) openBrowser(portal.url(country, region))
+            status.text = "CSV capture needs a newer Android System WebView. Use the external browser fallback if needed."
+            if (javaClass == ExportPortalActivity::class.java) offerExternalBrowser(portal.url(country, region))
         }
     }
 
@@ -348,13 +362,22 @@ open class ExportPortalActivity : Activity() {
         """.trimIndent(), null)
     }
 
+    private fun offerExternalBrowser(address: String) {
+        if (fallbackDialogOpen || isFinishing || returned || externalLaunched) return
+        fallbackDialogOpen = true
+        android.app.AlertDialog.Builder(this@ExportPortalActivity).setTitle("External browser fallback")
+            .setMessage("The managed portal controls the folder and closes automatically. A separate browser controls its own downloads; GlucoPhone cannot close an unrelated browser tab. After downloading, share/open the CSV with GlucoPhone to archive it and continue, or return here to choose it.\n\n${targetDates()}")
+            .setPositiveButton("Open browser") { _, _ -> openBrowser(address) }
+            .setNeutralButton("Select downloaded CSV") { _, _ -> selectBrowserCsv() }
+            .setNegativeButton("Stay here", null).setOnDismissListener { fallbackDialogOpen = false }.show()
+    }
+
     private fun openBrowser(address: String): Boolean {
         if (externalLaunched || returned || downloading) return externalLaunched
         val opened = ExportBrowser.open(this, externalAddress(address), REQUEST_BROWSER, preferChromium = portal == ExportPortal.CARELINK)
         if (opened) {
             ExportDiagnostics.event(this, "external_browser_opened", portal)
             externalLaunched = true
-            browserPreferences.edit().putBoolean("external.${portal.name}", true).apply()
             status.text = "Download ${portal.label} CSV in the browser, then open or share that CSV with GlucoPhone. Closing the browser opens the file picker directly."
         } else status.text = "A full browser is needed for downloads. The WebView test shell cannot save files; using the built-in portal."
         return opened
@@ -407,7 +430,7 @@ open class ExportPortalActivity : Activity() {
     private fun failBlob(reason: String) {
         closeBlob(); downloadFile.delete(); downloading = false
         status.text = reason
-        if (!isFinishing && javaClass == ExportPortalActivity::class.java) openBrowser(portal.url(country, region))
+        if (!isFinishing && javaClass == ExportPortalActivity::class.java) offerExternalBrowser(portal.url(country, region))
     }
 
     private fun collect(read: suspend () -> Unit) {

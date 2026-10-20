@@ -68,9 +68,10 @@ class ExportDownloadFolder(private val context: Context) {
         return runCatching {
             val media = MediaStore.getMediaUri(context, file.uri) ?: return false
             context.contentResolver.query(media, arrayOf(MediaStore.MediaColumns.SIZE,
-                MediaStore.MediaColumns.DATE_MODIFIED, MediaStore.MediaColumns.IS_PENDING), null, null, null)?.use {
+                MediaStore.MediaColumns.DATE_MODIFIED, MediaStore.MediaColumns.IS_PENDING,
+                MediaStore.MediaColumns.OWNER_PACKAGE_NAME), null, null, null)?.use {
                 it.moveToFirst() && !it.isNull(0) && it.getLong(0) == file.size &&
-                    it.getLong(1) == file.modified / 1000 && it.getInt(2) == 0
+                    it.getLong(1) == file.modified / 1000 && it.getInt(2) == 0 && it.getString(3) != context.packageName
             } == true
         }.getOrDefault(false)
     }

@@ -54,6 +54,11 @@ class WorkoutImportActivity : Activity() {
             }
         })
         render()
+        scope.launch {
+            try { withContext(Dispatchers.IO) { ReportFiles.ensureLayout(this@WorkoutImportActivity) } }
+            catch (e: CancellationException) { throw e }
+            catch (e: Exception) { status.text = "Could not prepare download folders: ${e.message}" }
+        }
         consumeReady(intent)
     }
     private fun button(label: String, parent: LinearLayout = column, action: () -> Unit) { parent.addView(Button(this).apply {

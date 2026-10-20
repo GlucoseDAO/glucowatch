@@ -13,6 +13,17 @@ class ReportPreviewActivity : Activity() {
         setContentView(label)
         Thread {
             try {
+                if(intent.getBooleanExtra("release_checks",false)) {
+                    ReleaseCheckData.verifyFolders(this)
+                    val fixture=ReleaseCheckData.fixture()
+                    val response=InsulinResponse.analyse(fixture.events,fixture.readings)
+                    check(response.estimates.any {it.isf!=null} && response.estimates.any {it.icr!=null})
+                    cacheDir.resolve("response-points-synthetic.pdf").writeBytes(ReportPdf.render(fixture))
+                    cacheDir.resolve("response-checks.txt").writeText("Folders created/recreated/idempotent; ${response.estimates.size} response points; PDF rendered; synthetic data only.")
+                    getSharedPreferences("export-browser",MODE_PRIVATE).edit().putBoolean("external.CARELINK",true).putBoolean("external.CLARITY",true).apply()
+                    runOnUiThread {label.text="Folder and response checks passed."}
+                    return@Thread
+                }
                 if(intent.getBooleanExtra("archive_matrix",false)) {
                     val store=WorkoutStore(this)
                     val checks=cacheDir.resolve("workout-cases").listFiles().orEmpty().filter { it.extension=="fit" }.sortedBy { it.name }.map { file->
