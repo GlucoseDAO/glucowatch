@@ -9,6 +9,24 @@ import java.time.ZoneOffset
 
 /** Local deterministic QA, never packaged into release APKs. */
 internal object ReleaseCheckData {
+    fun verifyCollection(context: Context) {
+        val settings = PhoneSettingsStore(context).load()
+        val end = LocalDate.of(2026, 10, 19)
+        val window = ExportWindow(LatestDevice.MINIMED_PUMP,end.minusDays(100),end.minusDays(89),end,end.minusDays(89),allowIncomplete=true)
+        val collection = ExportCollection(window.content,window.device,window)
+        val store = HistoryExportStore(context)
+        store.begin(window,true,settings,System.currentTimeMillis(),csv=true)
+        collection.ranges.getValue(ExportPortal.CARELINK).forEachIndexed { i, dates ->
+            val text = "Date,Time,Bolus Volume Delivered (U)\n${dates.start},12:00:00,1.0\n${dates.end},12:00:00,2.0\n"
+            store.record(ExportPortal.CARELINK,text,HistoricalCsv.DateOrder.DAY_FIRST,i)
+            val resumed = HistoryExportStore(context).load(settings) ?: error("Missing saved session")
+            check(resumed.csv && resumed.pdf && resumed.files.getValue(ExportPortal.CARELINK).size == i+1)
+            check(resumed.files.getValue(ExportPortal.CARELINK).map {it.index} == (0..i).toList())
+            check(resumed.files.getValue(ExportPortal.CARELINK).all { HistoricalCsv.parse(it.text,ExportPortal.CARELINK.source,ZoneOffset.UTC,it.order).isNotEmpty() })
+        }
+        store.clear()
+        check(store.load(settings)==null)
+    }
     fun verifyFolders(context: Context) {
         ReportFiles.ensureLayout(context)
         val folders=listOf(ReportFiles.raw(ExportPortal.CLARITY),ReportFiles.raw(ExportPortal.CARELINK),ReportFiles.STRAVA,ReportFiles.STRAVA_UNEDITED,ReportFiles.exports("application/pdf"),ReportFiles.exports("text/csv"))
@@ -29,7 +47,10 @@ internal object ReleaseCheckData {
     fun fixture(): GlucoseReport {
         val zone=ZoneOffset.UTC;val day=LocalDate.of(2026,10,19)
         val start=day.atTime(6,0).toInstant(zone).toEpochMilli();val meal=start+8*InsulinResponse.HOUR
-        val events=listOf(ExportRow(start,ExportRow.SOURCE_CARELINK,ExportRow.KIND_BOLUS,insulinU=2.0),
+        val dayStart=day.atStartOfDay(zone).toInstant().toEpochMilli()
+        val events=listOf(ExportRow(dayStart,ExportRow.SOURCE_CARELINK,ExportRow.KIND_REPORTED_BASAL,basalRateUPerH=1.0),
+            ExportRow(dayStart+86_100_000,ExportRow.SOURCE_CARELINK,ExportRow.KIND_REPORTED_BASAL,basalRateUPerH=1.0),
+            ExportRow(start,ExportRow.SOURCE_CARELINK,ExportRow.KIND_BOLUS,insulinU=2.0),
             ExportRow(meal,ExportRow.SOURCE_CARELINK,ExportRow.KIND_BOLUS,insulinU=6.0),
             ExportRow(meal,ExportRow.SOURCE_CARELINK,ExportRow.KIND_MEAL,carbsG=60.0),
             ExportRow(start,ExportRow.SOURCE_CARELINK,"pump_therapy_settings",pumpIsfMgdlPerU=55.0,pumpIcrGPerU=12.0))

@@ -9,8 +9,9 @@ import java.time.LocalDate
 
 /** A browser can evict the phone process. Keep only the active export in private, unbacked storage. */
 class HistoryExportStore(context: Context) {
-    data class Saved(val window: ExportWindow, val pdf: Boolean, val createdAt: Long, val files: Map<ExportPortal, Pair<String, HistoricalCsv.DateOrder>>,
-        val includeActivities: Boolean = false, val eventWorkoutIds: List<String> = emptyList(), val csv: Boolean = !pdf)
+    data class NativeFile(val text: String, val order: HistoricalCsv.DateOrder, val index: Int)
+    data class Saved(val window: ExportWindow, val pdf: Boolean, val createdAt: Long, val files: Map<ExportPortal, List<NativeFile>>,
+        val includeActivities: Boolean = false, val eventWorkoutIds: List<String> = emptyList(), val csv: Boolean = true)
     private val folder = context.filesDir.resolve("pending-history-export")
     private var sessionId: String? = null
     private val metadata get() = folder.resolve("session.json")
@@ -25,7 +26,7 @@ class HistoryExportStore(context: Context) {
         catch (e: Exception) { atomic.failWrite(output); throw e }
     }
     fun begin(window: ExportWindow, pdf: Boolean, settings: PhoneSettings, createdAt: Long,
-              includeActivities: Boolean = false, eventWorkoutIds: List<String> = emptyList(), csv: Boolean = !pdf) = synchronized(lock) {
+              includeActivities: Boolean = false, eventWorkoutIds: List<String> = emptyList(), csv: Boolean = true) = synchronized(lock) {
         clear()
         sessionId = java.util.UUID.randomUUID().toString()
         val data = JSONObject().put("id", sessionId).put("account", account(settings)).put("created", createdAt)
@@ -36,12 +37,21 @@ class HistoryExportStore(context: Context) {
             .put("activities", includeActivities).put("workouts", org.json.JSONArray(eventWorkoutIds))
         write(metadata, data.toString().toByteArray(Charsets.UTF_8))
     }
-    fun record(portal: ExportPortal, text: String, order: HistoricalCsv.DateOrder) = synchronized(lock) {
+    fun record(portal: ExportPortal, text: String, order: HistoricalCsv.DateOrder, index: Int = 0) = synchronized(lock) {
+        require(index in 0..2)
         require(text.toByteArray(Charsets.UTF_8).size <= HistoricalCsv.MAX_BYTES)
         val data = JSONObject(metadata.readText())
         require(sessionId != null && data.getString("id") == sessionId) { "The export session changed. Start again." }
-        write(folder.resolve("${portal.name}.csv"), text.toByteArray(Charsets.UTF_8))
-        data.getJSONObject("sources").put(portal.name, order.name)
+        val name = "${portal.name}-$index.csv"
+        val sources = data.getJSONObject("sources")
+        val entries = sources.optJSONArray(portal.name) ?: org.json.JSONArray().apply {
+            if (sources.has(portal.name)) put(JSONObject().put("file", "${portal.name}.csv")
+                .put("order", sources.getString(portal.name)).put("index", 0))
+        }
+        require((0 until entries.length()).none { entries.getJSONObject(it).getInt("index") == index }) { "This download interval is already saved." }
+        write(folder.resolve(name), text.toByteArray(Charsets.UTF_8))
+        entries.put(JSONObject().put("file", name).put("order", order.name).put("index", index))
+        sources.put(portal.name, entries)
         write(metadata, data.toString().toByteArray(Charsets.UTF_8))
     }
     fun load(settings: PhoneSettings): Saved? = synchronized(lock) { runCatching {
@@ -52,13 +62,22 @@ class HistoryExportStore(context: Context) {
         val window = ExportWindow(LatestDevice.valueOf(data.getString("device")), LocalDate.parse(data.getString("since")),
             LocalDate.parse(data.getString("start")), LocalDate.parse(data.getString("end")),
             LocalDate.parse(data.getString("requestedStart")), ExportContent.valueOf(data.getString("content")), data.getBoolean("incomplete"))
-        require(!window.start.isAfter(window.end) && java.time.temporal.ChronoUnit.DAYS.between(window.start,window.end) < 90)
+        require(!window.start.isAfter(window.end) && java.time.temporal.ChronoUnit.DAYS.between(window.start,window.end) < ExportWindow.MAX_DAYS)
         sessionId = data.getString("id")
         val sources = data.getJSONObject("sources")
         val files = ExportPortal.entries.filter { sources.has(it.name) }.associateWith { portal ->
-            val file = folder.resolve("${portal.name}.csv")
-            require(file.length() in 1..HistoricalCsv.MAX_BYTES.toLong())
-            file.readText() to HistoricalCsv.DateOrder.valueOf(sources.getString(portal.name))
+            val entries = sources.optJSONArray(portal.name) ?: org.json.JSONArray().put(JSONObject()
+                .put("file", "${portal.name}.csv").put("order", sources.getString(portal.name)).put("index", 0))
+            require(entries.length() in 1..3)
+            (0 until entries.length()).map { i ->
+                val entry = entries.getJSONObject(i); val index = entry.getInt("index")
+                require(index in 0..2)
+                val name = entry.getString("file")
+                require(name == "${portal.name}-$index.csv" || name == "${portal.name}.csv")
+                val file = folder.resolve(name)
+                require(file.length() in 1..HistoricalCsv.MAX_BYTES.toLong())
+                NativeFile(file.readText(), HistoricalCsv.DateOrder.valueOf(entry.getString("order")), index)
+            }.also { require(it.map { f -> f.index }.distinct().size == it.size) }
         }
         Saved(window, data.getBoolean("pdf"), data.getLong("created"), files,
             data.optBoolean("activities"), (data.optJSONArray("workouts")?.let { array -> (0 until array.length()).map { array.getString(it) } }
@@ -74,7 +93,7 @@ class HistoryExportStore(context: Context) {
     }
     fun clear() = synchronized(lock) {
         sessionId = null
-        listOf("session.json", "CARELINK.csv", "CLARITY.csv").forEach { name ->
+        (listOf("session.json", "CARELINK.csv", "CLARITY.csv") + ExportPortal.entries.flatMap { p -> (0..2).map { "${p.name}-$it.csv" } }).forEach { name ->
             AtomicFile(folder.resolve(name)).delete()
         }
     }

@@ -1,0 +1,1 @@
+Version aligned with GlucoPhone 0.1.16 and GlucoWatch. Phone updates add 90-day multi-file exports, PDF/CSV fixes and pump-parameter comparison charts. Watch face layout and complication order are unchanged.

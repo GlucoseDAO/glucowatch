@@ -86,19 +86,29 @@ internal object InsulinReferencePdf {
              response: InsulinResponse.Result = InsulinResponse.Result(emptyList(),emptyList(),0)) {
         fun paint(color: Int=Color.BLACK,size: Float=7f)=Paint(Paint.ANTI_ALIAS_FLAG).apply {this.color=color;textSize=size}
         fun text(x: Float,y: Float,s: String,size: Float=7f,color: Int=Color.BLACK)=c.drawText(s,x,y,paint(color,size))
-        text(22f,top-24,"ISF / ICR: observed response points",10f)
-        text(22f,top-11,"Blue diamonds: response estimates (hollow = provisional) / black circles: recorded pump settings / no interpolation",6.2f)
+        text(22f,top-24,"ISF / ICR: pump parameters and observed response",10f)
+        text(22f,top-11,"Blue diamonds: response estimates (hollow = provisional) / pale step: pump wizard setting held up to 24 h",6.2f)
         val day=response.estimates.filter {it.time in from until until}
         val native=rows.filter {it.timeMillis in from until until&&(it.pumpIsfMgdlPerU!=null||it.pumpIcrGPerU!=null)}
         repeat(2) { panel ->
-            val observations=native.mapNotNull {r->(if(panel==0)r.pumpIsfMgdlPerU else r.pumpIcrGPerU)?.let {r.timeMillis to it} }
+            val parameter = InsulinComparison.Parameter.entries[panel]
+            val segments = InsulinComparison.segments(rows, parameter, from, until)
+            val observations=native.mapNotNull {r->parameter.native(r)?.let {r.timeMillis to it} }
             val estimates=day.filter {(if(panel==0)it.isf else it.icr)!=null}
-            val all=observations.map {it.second}+estimates.mapNotNull {if(panel==0)it.isf else it.icr}
+            val all=segments.map {it.value}+observations.map {it.second}+estimates.mapNotNull {if(panel==0)it.isf else it.icr}
             val l=60f+panel*280;val r=l+210;val bottom=top+height;val maximum=max(1.0,ceil((all.maxOrNull()?:1.0)*1.15))
             fun x(t: Long)=l+(r-l)*((t-from).toDouble()/(until-from)).toFloat()
             fun y(v: Double)=bottom-(v/maximum).toFloat()*(height-12)
             text(l,top-2,if(panel==0)"ISF (mg/dL/U)" else "ICR (g/U)",7f)
             if(all.isNotEmpty())(0..2).forEach {i->val v=maximum*i/2;c.drawLine(l,y(v),r,y(v),paint(ReportStyle.GRID));text(r+3,y(v)+2,String.format(Locale.US,"%.0f",v),5.7f,ReportStyle.GREY)}
+            segments.forEachIndexed { i, segment ->
+                val path = Path().apply { moveTo(x(segment.start),bottom); lineTo(x(segment.start),y(segment.value)); lineTo(x(segment.end),y(segment.value)); lineTo(x(segment.end),bottom); close() }
+                c.drawPath(path,paint(ReportStyle.BASAL).apply { alpha=35 })
+                c.drawLine(x(segment.start),y(segment.value),x(segment.end),y(segment.value),paint(ReportStyle.BASAL).apply {alpha=110;strokeWidth=1f})
+                segments.getOrNull(i-1)?.takeIf {it.end==segment.start}?.let { previous ->
+                    c.drawLine(x(segment.start),y(previous.value),x(segment.start),y(segment.value),paint(ReportStyle.BASAL).apply {alpha=110;strokeWidth=1f})
+                }
+            }
             observations.forEach {(t,v)->c.drawCircle(x(t),y(v),1.9f,paint().apply {style=Paint.Style.STROKE;strokeWidth=.6f})}
             // Thin only the drawing, retaining actual observation times and every CSV point.
             val visible=mutableListOf<InsulinResponse.Estimate>()
@@ -115,6 +125,47 @@ internal object InsulinReferencePdf {
             if(all.isEmpty())text(l,top+height/2,"No eligible observations",6.2f,ReportStyle.GREY)
             listOf(0,6,12,18,24).forEach {i->val t=from+(until-from)*i/24;text(x(t)-5,bottom+11,java.time.format.DateTimeFormatter.ofPattern("HH").withZone(zone).format(Instant.ofEpochMilli(t)),6f,ReportStyle.GREY)}
         }
-        text(22f,top+height+24,"${day.size} response points; drawing thinned, full series in CSV. Early points are provisional. Model assumptions apply; no setting is changed.",6.1f,ReportStyle.GREY)
+        text(22f,top+height+24,"${day.size} response points; drawing thinned, full series in CSV. Pump curve is a held reference, not a complete programmed schedule. Estimates do not change settings.",6.1f,ReportStyle.GREY)
     }
+    fun overview(c: Canvas, rows: List<ExportRow>, response: InsulinResponse.Result, zone: ZoneId,
+                 from: Long, until: Long, top: Float, height: Float) {
+        fun paint(color: Int=Color.BLACK, size: Float=6f, alpha: Int=255)=Paint(Paint.ANTI_ALIAS_FLAG).apply {this.color=color;this.textSize=size;this.alpha=alpha}
+        fun text(x: Float,y: Float,s: String,size: Float=6f,color: Int=Color.BLACK)=c.drawText(s,x,y,paint(color,size))
+        text(22f,top-24,"ISF / ICR by hour",9f)
+        text(22f,top-12,"Pale: pump wizard settings held up to 24 h. Blue: response min-max; black: median. Early estimates are provisional.",5.8f)
+        InsulinComparison.Parameter.entries.forEachIndexed { panel, parameter ->
+            val hours = InsulinComparison.hourly(rows,response,zone,from,until,parameter)
+            val l=60f+panel*280f;val r=l+210f;val bottom=top+height
+            val maximum=max(1.0,ceil((hours.flatMap { listOfNotNull(it.pump?.maximum,it.response?.maximum) }.maxOrNull()?:1.0)*1.12))
+            fun x(h: Double)=l+(r-l)*(h/24).toFloat()
+            fun y(v: Double)=bottom-(v/maximum).toFloat()*height
+            text(l,top-2,"${parameter.label} (${parameter.unit})",6.5f)
+            listOf(0.0,maximum/2,maximum).forEach { value ->
+                c.drawLine(l,y(value),r,y(value),paint(ReportStyle.GRID));text(r+3,y(value)+2,"%.0f".format(Locale.US,value),5f,ReportStyle.GREY)
+            }
+            val w=(r-l)/24*.64f
+            val baseline=Path();var previous=false
+            hours.forEachIndexed { hour, data ->
+                val xx=x(hour+.5)
+                fun range(value: ReportRange, alpha: Int, minimumHeight: Float) {
+                    val a=y(value.maximum);val b=y(value.minimum)
+                    val box=RectF(xx-w/2,a-(minimumHeight-(b-a)).coerceAtLeast(0f)/2,xx+w/2,b+(minimumHeight-(b-a)).coerceAtLeast(0f)/2)
+                    c.drawRoundRect(box,1.5f,1.5f,paint(ReportStyle.BASAL,alpha=alpha))
+                }
+                data.pump?.let { value ->
+                    range(value,45,1f)
+                    if(previous) baseline.lineTo(x(hour.toDouble()),y(value.median)) else baseline.moveTo(x(hour.toDouble()),y(value.median))
+                    baseline.lineTo(x(hour+1.0),y(value.median)); previous=true
+                } ?: run { previous=false }
+                data.response?.let { value ->
+                    range(value,200,2.3f)
+                    c.drawLine(xx-w*.4f,y(value.median),xx+w*.4f,y(value.median),paint().apply {strokeWidth=.8f})
+                }
+            }
+            c.drawPath(baseline,paint(ReportStyle.BASAL,alpha=100).apply {style=Paint.Style.STROKE;strokeWidth=.7f})
+            (0..24 step 6).forEach { hour -> text(x(hour.toDouble())-3,bottom+10,if(hour==24)"00" else "%02d".format(hour),5.5f,ReportStyle.GREY) }
+            if(hours.all {it.pump==null&&it.response==null})text(l+5,top+height/2,"No pump settings or eligible response points",5.7f,ReportStyle.GREY)
+        }
+    }
+
 }

@@ -1,0 +1,1 @@
+Phone export improvements: collect three monthly pump files for 90-day reports, save PDF and CSV together, show summed insulin totals and compare pump ISF/ICR settings with response estimates. About shows the installed version. Watch app behavior is unchanged; keep the app, face and phone versions aligned.

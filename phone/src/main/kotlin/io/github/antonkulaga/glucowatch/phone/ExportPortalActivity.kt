@@ -82,7 +82,8 @@ open class ExportPortalActivity : Activity() {
                 text = "Back to export"; Brand.style(this, false); setOnClickListener { finish() }
             })
             addView(TextView(this@ExportPortalActivity).apply {
-                text = "Target interval: ${targetDates()} · both dates included"
+                text = "Target interval: ${targetDates()} · both dates included" +
+                    if (intent.getIntExtra("downloadCount", 1) > 1) "\nDownload ${intent.getIntExtra("downloadNumber", 1)} of ${intent.getIntExtra("downloadCount", 1)} for this source" else ""
                 textSize = 18f; setTextColor(Brand.TEXT); setTypeface(null, android.graphics.Typeface.BOLD); setPadding(20, 12, 20, 12)
             })
             addView(status)

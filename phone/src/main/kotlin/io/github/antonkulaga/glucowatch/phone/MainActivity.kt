@@ -183,9 +183,11 @@ class MainActivity : Activity() {
     private var pendingExportNote: String = ""
     private data class HistoryExport(val window: ExportWindow, val pdf: Boolean, val settings: PhoneSettings,
         var dexcom: List<ExportRow>? = null, var carelink: List<ExportRow>? = null,
-        val startedAt: Long = System.currentTimeMillis(), val includeActivities: Boolean = false, val eventWorkoutIds: List<String> = emptyList(), val csv: Boolean = !pdf) {
+        val startedAt: Long = System.currentTimeMillis(), val includeActivities: Boolean = false, val eventWorkoutIds: List<String> = emptyList(), val csv: Boolean = true) {
         val formatLabel get() = if (pdf && csv) "PDF and CSV files" else if (pdf) "PDF report" else "CSV"
-        val collection = ExportCollection(window.content, settings.latestDevice ?: window.device)
+        val collection = ExportCollection(window.content, settings.latestDevice ?: window.device, window)
+        var pumpConfirmed = false
+        var confirmingPump = false
     }
     private var historyExport: HistoryExport? = null
     private var restoringHistory = false
@@ -350,16 +352,17 @@ class MainActivity : Activity() {
                 val settings = store.load()
                 val restored = withContext(Dispatchers.IO) {
                     historyStore.load(settings)?.let { saved ->
-                        val rows = saved.files.mapValues { (portal, file) ->
-                            HistoricalCsv.parse(file.first, portal.source, java.time.ZoneId.systemDefault(), file.second)
+                        val rows = saved.files.mapValues { (portal, files) ->
+                            files.flatMap { file -> HistoricalCsv.parse(file.text, portal.source, java.time.ZoneId.systemDefault(), file.order) }
                                 .filter { saved.window.contains(it.timeMillis, java.time.ZoneId.systemDefault()) }
+                                .distinctBy { it.identity() }.sortedBy { it.timeMillis }
                         }
                         saved to rows
                     }
                 }
                 if (restored != null && historyExport == null && !isFinishing) {
                     beginHistoryExport(restored.first.window, restored.first.pdf, restored.second, resumeOnly = true, startedAt = restored.first.createdAt,
-                        includeActivities = restored.first.includeActivities, eventWorkoutIds = restored.first.eventWorkoutIds, csv = restored.first.csv)
+                        includeActivities = restored.first.includeActivities, eventWorkoutIds = restored.first.eventWorkoutIds, csv = restored.first.csv, restoredChunks = restored.first.files.mapValues { (_, files) -> files.map { it.index } })
                 }
             } catch (e: CancellationException) { throw e }
             catch (_: Exception) { historyStore.clear() }
@@ -437,6 +440,7 @@ class MainActivity : Activity() {
                 else -> AlertDialog.Builder(this@MainActivity)
                     .setTitle("About ${getString(R.string.app_name)}")
                     .setMessage(
+                        "Version ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})\n\n" +
                         "GlucoPhone combines Dexcom Share, Nightscout and CareLink data, or shows demo data, and relays it to a " +
                             "paired GlucoWatch over Bluetooth. Your login, your meal photos and any model you " +
                             "import stay in this app's private storage.\n\n" +
@@ -508,7 +512,7 @@ class MainActivity : Activity() {
         val draftContent = runCatching { ExportContent.valueOf(draft.getString("content", "").orEmpty()) }.getOrDefault(ExportContent.SENSOR_AND_PUMP)
         val content = radios(ExportContent.entries.map { it.name to it.label }, draftContent.name)
         val pdfFormat = CheckBox(this).apply { text = "PDF report"; setTextColor(Brand.TEXT); isChecked = draft.getBoolean("pdf", false) }
-        val csvFormat = CheckBox(this).apply { text = "CSV"; setTextColor(Brand.TEXT); isChecked = draft.getBoolean("csv", !draft.getBoolean("pdf", false)) }
+        val csvFormat = CheckBox(this).apply { text = "CSV"; setTextColor(Brand.TEXT); isChecked = !draft.getBoolean("independentFormats", false) || draft.getBoolean("csv", true) }
         val format = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; addView(pdfFormat); addView(csvFormat) }
         val incomplete = CheckBox(this).apply {
             text = "Allow incomplete data before the latest device started"
@@ -524,11 +528,17 @@ class MainActivity : Activity() {
             orientation = LinearLayout.VERTICAL; setPadding(dp(22), dp(8), dp(22), dp(8))
             addView(hint("Exports end on a completed day. CareLink does not export today; the latest selectable date is $today."))
             addView(label("Days (1 to 90)")); addView(days)
+            addView(Button(this@MainActivity).apply {
+                text = "Three months (90 days)"; Brand.style(this, false)
+                setOnClickListener { dates = ExportDates.endingOn(dates.end, 90); keepStart = false; renderDates(updateDays = true) }
+            })
+            addView(hint("For more than 30 days, collect each displayed Medtronic interval before Dexcom opens. All files are merged into one export."))
             addView(hint("Changing Days keeps the date you chose most recently and moves the other. Both dates are included."))
             addView(label("Start date")); addView(startDate)
             addView(label("End date")); addView(endDate); addView(span)
             addView(label("Data")); addView(content); addView(incomplete)
             addView(label("Format")); addView(format)
+            addView(hint("Select PDF, CSV, or both. CSV contains the merged native events and calculated response points."))
             addView(activities)
             addView(hint("Uses saved FIT workouts overlapping these dates. Workouts are not downloaded during export."))
         }
@@ -549,7 +559,7 @@ class MainActivity : Activity() {
                 draft.edit().putString("start", dates.start.toString()).putString("end", dates.end.toString())
                     .putBoolean("keepStart", keepStart)
                     .remove("anchor").remove("anchorKind")
-                    .putInt("days", n).putString("content", chosen.name).putBoolean("pdf", pdf).putBoolean("csv", csv)
+                    .putInt("days", n).putString("content", chosen.name).putBoolean("pdf", pdf).putBoolean("csv", csv).putBoolean("independentFormats", true)
                     .putBoolean("incomplete", allow).putBoolean("activities", activities.isChecked).apply()
                 dialog.dismiss()
                 val saved = store.load()
@@ -607,7 +617,7 @@ class MainActivity : Activity() {
 
     private fun beginHistoryExport(window: ExportWindow, pdf: Boolean,
                                    restored: Map<ExportPortal, List<ExportRow>>? = null, resumeOnly: Boolean = false, startedAt: Long = System.currentTimeMillis(),
-                                   includeActivities: Boolean = false, eventWorkoutIds: List<String> = emptyList(), csv: Boolean = !pdf) {
+                                   includeActivities: Boolean = false, eventWorkoutIds: List<String> = emptyList(), csv: Boolean = true, restoredChunks: Map<ExportPortal, List<Int>> = emptyMap()) {
         if (window.end > ExportNames.lastCompletedDay(LocalDate.now())) {
             historyStore.clear()
             exportError("Choose completed days for this export. CareLink cannot export today; the latest date is ${ExportNames.lastCompletedDay(LocalDate.now())}.")
@@ -620,7 +630,7 @@ class MainActivity : Activity() {
         val plan = HistoryExport(window, pdf, store.load(), startedAt = startedAt, includeActivities = includeActivities, eventWorkoutIds = eventWorkoutIds, csv = csv)
         restored?.forEach { (portal, rows) ->
             if (portal == ExportPortal.CARELINK) plan.carelink = rows else plan.dexcom = rows
-            plan.collection.accept(portal)
+            restoredChunks[portal].orEmpty().ifEmpty { listOf(0) }.forEach { plan.collection.accept(portal, it) }
         }
         if (restored == null) historyStore.begin(window, pdf, plan.settings, plan.startedAt, includeActivities, eventWorkoutIds, csv)
         historyExport = plan
@@ -771,6 +781,17 @@ class MainActivity : Activity() {
         val plan = historyExport ?: return
         if (!validPlan(plan)) { exportError("Sources changed. Start a new export."); return }
         val portal = nextHistoryPortal()
+        if (portal != ExportPortal.CARELINK && plan.collection.count(ExportPortal.CARELINK) > 1 &&
+            ExportPortal.CARELINK in plan.collection.portals && plan.collection.contains(ExportPortal.CARELINK) && !plan.pumpConfirmed) {
+            if (plan.confirmingPump) return
+            plan.confirmingPump = true
+            AlertDialog.Builder(this).setTitle("All Medtronic downloads collected?")
+                .setMessage("${plan.collection.collected(ExportPortal.CARELINK)} files collected for ${plan.window.start} to ${plan.window.end}. Continue to ${portal?.label ?: "the export"}? Overlapping events are merged once; missing days will be shown in coverage.")
+                .setPositiveButton("Yes, continue") { _, _ -> plan.pumpConfirmed = true; continueHistoryDownload() }
+                .setNegativeButton("Review intervals", null)
+                .setOnDismissListener { plan.confirmingPump = false }.show()
+            return
+        }
         historyActions?.visibility = if (portal == null) View.GONE else View.VISIBLE
         historyDialog?.getButton(AlertDialog.BUTTON_POSITIVE)?.isEnabled = portal == null
         if (portal == null) {
@@ -781,11 +802,13 @@ class MainActivity : Activity() {
         }
         historyInputPlan = plan; historyPortalSource = portal.source
         ExportDiagnostics.event(this, "portal_open", portal)
-        historyStatus?.text = "Waiting for ${portal.label} CSV (${plan.window.start} to ${plan.window.end})."
+        val target = plan.collection.target(portal) ?: ExportDates(plan.window.start, plan.window.end)
+        val number = (plan.collection.pending(portal) ?: 0) + 1
+        historyStatus?.text = "Waiting for ${portal.label} CSV $number/${plan.collection.count(portal)} (${target.start} to ${target.end})."
         val portalIntent = Intent(this, ExportPortalActivity::class.java)
             .putExtra("portal", portal.name).putExtra("country", plan.settings.carelinkCountry)
-            .putExtra("region", plan.settings.region.name).putExtra("start", plan.window.start.toString())
-            .putExtra("end", plan.window.end.toString())
+            .putExtra("region", plan.settings.region.name).putExtra("start", target.start.toString())
+            .putExtra("end", target.end.toString()).putExtra("downloadNumber", number).putExtra("downloadCount", plan.collection.count(portal))
         if (BuildConfig.DEBUG && intent.getBooleanExtra("exportPortalPreview", false))
             portalIntent.setClassName(this, "$packageName.ExportPortalPreviewActivity")
         if (BuildConfig.DEBUG && intent.getBooleanExtra("externalFixture", false)) {
@@ -869,15 +892,18 @@ class MainActivity : Activity() {
                 require(rows.isNotEmpty()) { "This CSV has no events in ${plan.window.start} to ${plan.window.end}. Download the selected dates." }
                 val required = if (portal == ExportPortal.CARELINK) ExportContent.PUMP else ExportContent.SENSOR
                 require(rows.any(required::includes)) { "This CSV has no ${required.label.lowercase()} events in the selected interval. Download the correct data export." }
+                val previous = if (portal == ExportPortal.CARELINK) plan.carelink.orEmpty() else plan.dexcom.orEmpty()
+                val index = plan.collection.validate(portal, rows, previous, zone)
                 withContext(Dispatchers.IO) {
                     ReportFiles.archiveCsv(this@MainActivity, portal, text.toByteArray(Charsets.UTF_8),
                         synthetic = BuildConfig.DEBUG && intent.getBooleanExtra("exportPortalPreview", false), order = order)
-                    historyStore.record(portal, text, order)
+                    historyStore.record(portal, text, order, index)
                 }
                 if (!validPlan(plan)) return@launch
-                if (portal == ExportPortal.CARELINK) { plan.carelink = rows; if (rememberOrder) historyStore.learn(plan.settings, order) }
-                else plan.dexcom = rows
-                plan.collection.accept(portal)
+                val merged = (previous + rows).distinctBy { it.identity() }.sortedBy { it.timeMillis }
+                if (portal == ExportPortal.CARELINK) { plan.carelink = merged; if (rememberOrder) historyStore.learn(plan.settings, order) }
+                else plan.dexcom = merged
+                plan.collection.accept(portal, index)
                 ExportDiagnostics.event(this@MainActivity, "import_accepted", portal)
                 historyStatus?.text = "${portal.label} ready: ${rows.size} events. Times use ${zone.id}."
                 accepted = true
@@ -2055,8 +2081,10 @@ class MainActivity : Activity() {
             when {
                 model != null -> listOfNotNull(model.displayName,
                     "Supports ${model.contract.horizonSteps * 5} min · showing ${model.defaultHorizonMinutes} min",
+                    if (model.contract.channels.any { it.contains("carb") }) "Inputs: glucose, basal U/h, bolus U, carbs g"
+                    else "Inputs: glucose, basal U/h, bolus U (no carb channel)",
                     model.lastProblem).joinToString(" · ")
-                modelStore.available -> "Imported model is ready."
+                modelStore.available -> "Imported ONNX is ready. Inputs: glucose only; this model has no pump channels."
                 else -> "Imported ONNX stays selected. Choose a GlucoseDao model or your own file."
             }
         } else ""

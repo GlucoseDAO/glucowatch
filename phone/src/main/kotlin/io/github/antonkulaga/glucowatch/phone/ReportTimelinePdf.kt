@@ -11,13 +11,13 @@ import kotlin.math.*
 
 /** The same aligned glucose / bolus / basal panels on daily and weekly overlay pages. */
 internal class ReportTimelinePdf(val report: GlucoseReport, val generated: Long, val workouts: List<Workout>,
-                                 val heartZones: List<Int>, val paceZones: List<Int>) {
+                                 val heartZones: List<Int>, val paceZones: List<Int>,
+                                 private val response: InsulinResponse.Result) {
     private val zone = ZoneId.of(report.zoneId)
     private val sensor = report.window?.content?.sensor != false
     private val pump = report.window?.content?.pump != false
     private val timelines by lazy { report.days.associate { it.date to ReportDayTimeline.build(report, it.date, generated) } }
     private val meals = ReportMeal.read(report.events)
-    private val response by lazy { InsulinResponse.analyse(report.events,report.readings) }
     private val dayColors = listOf(Color.BLACK, 0xFF5E5E5E.toInt(), 0xFF2E6D28.toInt(), 0xFF8D7512.toInt(), 0xFF713B78.toInt(), 0xFFA44F27.toInt(), 0xFF497E93.toInt())
     private val left = 60f; private val right = 490f; private val width = right - left
     private fun paint(color: Int = Color.BLACK, size: Float = 8f, bold: Boolean = false, alpha: Int = 255) = Paint(Paint.ANTI_ALIAS_FLAG).apply {

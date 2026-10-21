@@ -29,7 +29,23 @@ object ReportPdf {
         val workouts = workoutInput.filter { workout -> report.days.any { day ->
             workout.overlaps(day.date.atStartOfDay(model.zone).toInstant().toEpochMilli(), day.date.plusDays(1).atStartOfDay(model.zone).toInstant().toEpochMilli())
         } }.distinctBy { it.id }.sortedBy { it.startMillis }
-        val timeline by lazy { ReportTimelinePdf(report, generated, workouts, zoneBoundaries, paceBoundaries) }
+        val from get() = start(report.days.first().date)
+        val until get() = start(report.days.last().date.plusDays(1))
+        val response by lazy { InsulinResponse.analyse(report.events, report.readings) }
+        val total by lazy { ReportInsulinTotal.build(report.events, model.zone, from, until) }
+        val basalEstimate by lazy { ReportBasalEstimate.build(report.events, model.zone, from, until) }
+        val basalProfile by lazy {
+            if (model.basalProfile.any { it != null }) model.basalProfile else (0..23).map { hour ->
+                ReportRange.of(report.days.mapNotNull { day ->
+                    val a = day.date.atTime(hour,0).atZone(model.zone).toInstant().toEpochMilli()
+                    val b = day.date.atTime(hour,0).atZone(model.zone).plusHours(1).toInstant().toEpochMilli()
+                    val intervals = basalEstimate.intervals.filter { it.start < b && it.end > a }
+                    if (intervals.sumOf { minOf(b,it.end)-maxOf(a,it.start) } != b-a) null
+                    else intervals.sumOf { it.programmedRate * (minOf(b,it.end)-maxOf(a,it.start)) / 3_600_000.0 }
+                })
+            }
+        }
+        val timeline by lazy { ReportTimelinePdf(report, generated, workouts, zoneBoundaries, paceBoundaries, response) }
         val sensor = report.window?.content?.sensor != false
         val pump = report.window?.content?.pump != false
         val left = ReportStyle.MARGIN
@@ -183,18 +199,22 @@ object ReportPdf {
                 rect(c, RectF(left, insulinY + 45, left + 28, insulinY + 72), ReportStyle.BASAL)
                 text(c, 62f, insulinY + 23, "Bolus - delivered", 10f, true)
                 text(c, 62f, insulinY + 37, "${fmt(s.bolusPerDay)} U/day recorded", 9f)
-                text(c, 62f, insulinY + 55, if (model.programmedBasal) "Basal - inferred schedule" else "Basal - recorded delivery", 9.5f, true)
+                text(c, 62f, insulinY + 55, if (total.estimatedBasal && total.basal != null) "Basal - calculated from rates" else "Basal - recorded delivery", 9.1f, true)
                 text(c, 62f, insulinY + 69, when {
-                    model.programmedBasal -> "${fmt(model.scheduledDailyUnits, 2)} U/day programmed"
+                    total.estimatedBasal && total.basal != null -> "${fmt(total.basal!! / model.coverage.requestedDays.coerceAtLeast(1), 2)} U/day estimated"
                     model.basalPulses.isNotEmpty() -> "${fmt(s.basalPerDay)} U/day recorded"
                     else -> "Unavailable"
                 }, 9f)
-                text(c, 245f, insulinY + 22, "Total recorded delivery", 8f, true)
-                text(c, 245f, insulinY + 39, if (model.basalPulses.isEmpty()) "Unavailable" else "${fmt(s.bolusPerDay + s.basalPerDay)} U/day", 13f, true)
+                text(c, 245f, insulinY + 22, if(total.total==null) "Recorded bolus total" else if(total.estimatedBasal) "Estimated total insulin" else "Total recorded delivery", 8f, true)
+                text(c, 245f, insulinY + 39, "${fmt((total.total ?: total.bolus) / model.coverage.requestedDays.coerceAtLeast(1))} U/day", 13f, true)
                 val carbsX = if (sensor) 423f else 245f
                 val carbsY = if (sensor) insulinY + 22 else insulinY + 100
                 text(c, carbsX, carbsY, "Logged carbs", 8f, true); text(c, carbsX, carbsY + 17, "${fmt(s.carbsPerDay, 0)} g/day", 13f, true)
-                paragraph(c, insulinY + 53, if (model.basalPulses.isEmpty()) "Basal doses are not supplied. Programmed settings remain separate from delivery." else "Only recorded doses contribute to these totals.", 7.2f, 245f, 310f)
+                paragraph(c, insulinY + 53, when {
+                    total.total == null -> "Recorded bolus only; basal is unknown."
+                    total.estimatedBasal -> "${fmt(total.bolus)} U bolus + ${fmt(total.basal)} U basal from rates x duration.${if(total.partial) " Partial basal coverage." else " Reconstructed, not measured delivery."}"
+                    else -> "${fmt(total.bolus)} U bolus + ${fmt(total.basal)} U recorded basal.${if(total.partial) " Available records only." else ""}"
+                }, 7.2f, 245f, 310f)
             }
             if (sensor) {
                 report.summary.bestDay?.let { best ->
@@ -203,20 +223,21 @@ object ReportPdf {
                     text(c, 244f, 374f, "Best recorded glucose day: ${best.date}", 10f, true)
                     text(c, 244f, 386f, "${fmt(best.inRangePercent, 0)}% of recorded samples in range; ${best.readings} readings.", 7f)
                 }
-                text(c, left, 415f, "This graph shows your glucose averaged over the requested interval", 7.5f)
-                glucoseProfile(c, 431f, 92f)
+                text(c, left, 402f, "This graph shows your glucose averaged over the requested interval", 7.5f)
+                glucoseProfile(c, 415f, 82f)
             }
             if (pump) {
-                val redTop = if (sensor) 568f else 300f
+                val redTop = if (sensor) 535f else 260f
                 text(c, left, redTop - 11, "Bolus", 9f, true, ReportStyle.BOLUS)
                 text(c, 95f, redTop - 11, "Delivered hourly totals - min, median and max across observed hours", 7.1f)
-                distribution(c, model.bolusProfile, redTop, if (sensor) 44f else 110f, ReportStyle.BOLUS, false, false)
-                val blueTop = if (sensor) 655f else 495f
+                distribution(c, model.bolusProfile, redTop, if (sensor) 32f else 110f, ReportStyle.BOLUS, false, false)
+                val blueTop = if (sensor) 607f else 440f
                 text(c, left, blueTop - 11, "Basal", 9f, true, ReportStyle.BASAL)
-                text(c, 95f, blueTop - 11, if (model.programmedBasal) "Programmed U per hour - scheduled and adjusted ranges" else "Recorded delivered U per hour", 7.1f)
-                distribution(c, model.basalProfile, blueTop, if (sensor) 43f else 110f, ReportStyle.BASAL, model.programmedBasal, true)
+                text(c, 95f, blueTop - 11, if (model.programmedBasal) "Programmed U per hour - scheduled and adjusted ranges" else if (total.estimatedBasal && total.basal != null) "Calculated U per hour - rates x duration" else "Recorded delivered U per hour", 7.1f)
+                distribution(c, basalProfile, blueTop, if (sensor) 32f else 110f, ReportStyle.BASAL, model.programmedBasal, true)
             }
-            paragraph(c, 726f, "Coverage counts days with any data. Missing hours stay unavailable." + if (pump) " Insulin rectangles show min-max; black strokes mark medians." else " Glucose bars show the 15th-75th percentiles; the black line marks the mean.", 6.3f)
+            if(pump) InsulinReferencePdf.overview(c, report.events, response, model.zone, from, until, if(sensor) 692f else 645f, if(sensor) 29f else 65f)
+            paragraph(c, 735f, "Coverage counts days with any data. Missing hours stay unavailable." + if (pump) " Insulin rectangles show min-max; black strokes mark medians." else " Glucose bars show the 15th-75th percentiles; the black line marks the mean.", 6.3f)
         }
 
         fun verticalRange(c: Canvas, ranges: RangeCounts) {
@@ -305,8 +326,8 @@ object ReportPdf {
                 text(c, left, red - 17, "Bolus - recorded delivered units per hour", 11f, true, ReportStyle.BOLUS)
                 distribution(c, model.bolusProfile, red, 101f, ReportStyle.BOLUS, false, true)
                 val blue = if (sensor) 557f else 390f
-                text(c, left, blue - 17, if (model.programmedBasal) "Basal - programmed units per hour" else "Basal - recorded delivered units per hour", 11f, true, ReportStyle.BASAL)
-                distribution(c, model.basalProfile, blue, 101f, ReportStyle.BASAL, model.programmedBasal, true)
+                text(c, left, blue - 17, if (model.programmedBasal) "Basal - programmed units per hour" else if (total.estimatedBasal && total.basal != null) "Basal - calculated units per hour" else "Basal - recorded delivered units per hour", 11f, true, ReportStyle.BASAL)
+                distribution(c, basalProfile, blue, 101f, ReportStyle.BASAL, model.programmedBasal, true)
             }
             paragraph(c, 699f, if (pump) "Insulin rectangles span min-max hourly totals across observed days; black strokes mark medians. Pale blue is the inferred scheduled amount. Programmed basal units use exact rate settings and interval durations; they are separate from recorded delivery." else "Glucose bars show the 15th-75th percentiles in fifteen-minute bins. The black line marks the mean. Missing intervals break the line.", 7.4f)
         }
@@ -421,7 +442,7 @@ object ReportPdf {
                 listOf("Daily panels", "Glucose is followed by one combined insulin panel: red delivered bolus spikes (U, left), blue basal (U/h, right). Cumulative ramps rise from immediate dose to total over recorded duration; dashed ramps are unconfirmed. Exercise days add a sport graph."),
                 listOf("Daily basal", "Recorded rate settings are held between changes and to the end of days with rate data. The first unambiguous rate covers the earlier day boundary. This is an estimate, not measured delivery."),
                 listOf("Hourly insulin", "Rounded min-max rectangles, black medians and individual day traces accompany the glucose overlay on the same weekly page. Daily panels overlay bolus and basal; distributions are reserved for summaries."),
-                listOf("ISF / ICR references", "Black circles = recorded pump settings at native timestamps. Blue diamonds = conditional CGM-response points at observation times, without joining lines. ISF: isolated corrections from 90 min. ICR: meal balance from 3 h with independent ISF, or near starting glucose. Early points are provisional. Source: LoopDocs Algorithm/Prediction; explicit triangular 6 h action and neutral basal assumptions. Not prescribed settings."),
+                listOf("ISF / ICR references", "Pale steps hold recorded Bolus Wizard parameters forward for at most 24 h, stopping at new or conflicting settings. This CSV does not supply the complete programmed time schedule. Black circles mark native settings; blue diamonds show conditional CGM-response points without joining lines. Overview rectangles span hourly response min-max; black marks medians; pale pump ranges are the held reference. ISF: isolated corrections from 90 min. ICR: meal balance from 3 h with independent ISF, or near starting glucose. Early points are provisional. Source: LoopDocs Algorithm/Prediction; explicit triangular 6 h action and neutral basal assumptions. Not prescribed settings."),
                 listOf("Response model", "Apparent carbs = (glucose change / ISF + model insulin effect) x ICR. Conditional ICR = logged carbs / (model insulin effect + glucose change / baseline ISF). Fasting corrections estimate ISF independently. A 6 h triangular insulin-action approximation is assumed; exercise, overlaps, unknown delivery and gaps are excluded."),
                 listOf("Swimming", "Pump disconnection is user-reported; FIT session bounds approximate timing. Calculated basal reaching the user is zero inside this interval; raw pump records and held schedules remain available."),
                 listOf("Unknown data", "Missing schedules, doses or hours remain unavailable. Inferred programmed basal units never become measured doses or normalized CSV events."),

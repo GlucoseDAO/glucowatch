@@ -15,11 +15,18 @@ class ReportPreviewActivity : Activity() {
             try {
                 if(intent.getBooleanExtra("release_checks",false)) {
                     ReleaseCheckData.verifyFolders(this)
+                    ReleaseCheckData.verifyCollection(this)
                     val fixture=ReleaseCheckData.fixture()
                     val response=InsulinResponse.analyse(fixture.events,fixture.readings)
                     check(response.estimates.any {it.isf!=null} && response.estimates.any {it.icr!=null})
                     cacheDir.resolve("response-points-synthetic.pdf").writeBytes(ReportPdf.render(fixture))
-                    cacheDir.resolve("response-checks.txt").writeText("Folders created/recreated/idempotent; ${response.estimates.size} response points; PDF rendered; synthetic data only.")
+                    val from=fixture.days.first().date.atStartOfDay(java.time.ZoneOffset.UTC).toInstant().toEpochMilli()
+                    val until=fixture.days.last().date.plusDays(1).atStartOfDay(java.time.ZoneOffset.UTC).toInstant().toEpochMilli()
+                    val native=fixture.events + fixture.readings.map { ExportRow(it.timeMillis,ExportRow.SOURCE_DEXCOM_CLARITY,ExportRow.KIND_GLUCOSE,glucoseMgdl=it.mgdl) }
+                    cacheDir.resolve("response-points-synthetic.csv").writeBytes(ExportCsv.bytes(ExportCsv.write(MergedHealthExport.rows(native,fixture.readings,emptyList(),from,until),java.time.ZoneOffset.UTC)))
+                    val total=ReportInsulinTotal.build(fixture.events,java.time.ZoneOffset.UTC,from,until)
+                    check(total.total==32.0 && total.estimatedBasal && !total.partial)
+                    cacheDir.resolve("response-checks.txt").writeText("Folders created/recreated/idempotent; 3 pump files persisted and resumed; ${response.estimates.size} response points; PDF and CSV rendered; total=32 U (8 bolus + 24 estimated basal); synthetic data only.")
                     getSharedPreferences("export-browser",MODE_PRIVATE).edit().putBoolean("external.CARELINK",true).putBoolean("external.CLARITY",true).apply()
                     runOnUiThread {label.text="Folder and response checks passed."}
                     return@Thread
