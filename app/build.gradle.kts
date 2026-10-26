@@ -48,6 +48,7 @@ fun javaString(value: String) = "\"" + value
     .replace("\\", "\\\\").replace("\"", "\\\"").replace("\r", "\\r").replace("\n", "\\n") + "\""
 
 android {
+    sourceSets.getByName("main").kotlin.directories.add(file("../android-shared").absolutePath)
     namespace = "io.github.antonkulaga.glucowatch"
     compileSdk = 36
 
@@ -55,8 +56,8 @@ android {
         applicationId = "io.github.antonkulaga.glucowatch"
         minSdk = 33
         targetSdk = 36
-        versionCode = 17
-        versionName = "0.1.16"
+        versionCode = 18
+        versionName = "0.1.17"
     }
 
     buildFeatures {

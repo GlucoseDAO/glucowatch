@@ -16,6 +16,11 @@ class CsvImportActivity : Activity() {
             val name = runCatching { contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)?.use {
                 if (it.moveToFirst()) it.getString(0) else null
             } }.getOrNull().orEmpty()
+            if (name.endsWith(".zip", true)) {
+                startActivity(Intent(this, ExerciseActivity::class.java).setAction(Intent.ACTION_VIEW).setData(uri)
+                    .apply { clipData = ClipData.newRawUri("Strava ZIP", uri) }.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION))
+                finish(); return
+            }
             if (name.endsWith(".fit", true)) {
                 startActivity(Intent(this, WorkoutImportActivity::class.java).setAction(Intent.ACTION_VIEW).setData(uri)
                     .apply { clipData = ClipData.newRawUri("FIT workout", uri) }

@@ -112,7 +112,7 @@ class PhoneRepository(context: Context) {
                     }
                 }
             }
-            state()
+            state().also { PhoneAlerts.evaluate(appContext, it) }
         }
     }
 
@@ -169,6 +169,7 @@ class PhoneRepository(context: Context) {
             putString("notificationPackage", packageName)
             remove("notificationError")
         }
+        PhoneAlerts.evaluate(appContext, state())
     }
 
     private fun notificationProblem(settings: PhoneSettings, latest: GlucoseReading?, now: Long): String? {

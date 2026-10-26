@@ -14,6 +14,7 @@
         android:required="false" />
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <!-- The watch connects over the Bluetooth link Wear OS already has (docs/phone-link.md).
          Android 12 and later ask the user ("Nearby devices"). -->
@@ -26,6 +27,7 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.VIBRATE" />
     <!-- Optional foreground-only Health Connect heart-rate display on Android 14+. -->
     <uses-permission android:name="android.permission.health.READ_HEART_RATE" />
 
@@ -66,6 +68,24 @@
 
         <activity android:name=".ExportPortalActivity" android:exported="false" android:process=":export_portal" />
         <activity android:name=".InsulinAnalysisActivity" android:exported="false" />
+        <activity android:name=".GlucoseAlertsActivity" android:exported="false" />
+        <activity android:name=".ExerciseActivity" android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:scheme="content" />
+                <data android:mimeType="application/zip" />
+                <data android:mimeType="application/x-zip-compressed" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="application/zip" />
+                <data android:mimeType="application/x-zip-compressed" />
+            </intent-filter>
+        </activity>
+        <receiver android:name=".PhoneAlertReceiver" android:exported="false" />
+        <service android:name=".PhoneAlertJob" android:permission="android.permission.BIND_JOB_SERVICE" android:exported="false" />
 
         <activity android:name=".PdfViewerActivity" android:exported="true" android:label="GlucoPhone PDF viewer">
             <intent-filter>

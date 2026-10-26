@@ -14,7 +14,7 @@ import java.time.ZoneId
 
 /** Persistent, local, unbacked originals. The small index is queried before any FIT is decoded. */
 class WorkoutStore(private val context: Context) {
-    data class Entry(val id: String, val name: String, val file: String, val start: Long, val end: Long, val zone: String, val uri: String?) {
+    data class Entry(val id: String, val name: String, val file: String, val start: Long, val end: Long, val zone: String, val uri: String?, val sport: String = "") {
         fun overlaps(start: Long, endExclusive: Long) = this.start < endExclusive && end > start
     }
     private val folder = context.filesDir.resolve("workouts/strava")
@@ -23,7 +23,7 @@ class WorkoutStore(private val context: Context) {
         if (!index.isFile) return emptyList()
         val array = JSONArray(index.readText())
         (0 until array.length()).map { i -> array.getJSONObject(i).let { o ->
-            Entry(o.getString("id"), o.getString("name"), o.getString("file"), o.getLong("start"), o.getLong("end"), o.getString("zone"), o.optString("uri").takeIf { it.isNotBlank() })
+            Entry(o.getString("id"), o.getString("name"), o.getString("file"), o.getLong("start"), o.getLong("end"), o.getString("zone"), o.optString("uri").takeIf { it.isNotBlank() }, o.optString("sport"))
         } }.onEach { require(it.id.matches(Regex("[0-9a-f]{64}")) && it.file == java.io.File(it.file).name) }
             .sortedByDescending { it.start }
     }
@@ -31,7 +31,9 @@ class WorkoutStore(private val context: Context) {
         val entry = entries().single { it.id == id }
         val bytes = folder.resolve(entry.file).inputStream().use(::readBytes)
         require(Workout.digest(bytes) == entry.id) { "Stored workout checksum changed." }
-        return FitWorkoutReader.read(bytes, entry.name).let { it.copy(pumpDisconnected=it.isSwim&&swimPumpDisconnected()) }
+        val metadata = folder.resolve("${entry.id}.json")
+        return (if (metadata.isFile) WorkoutJson.decode(metadata.readText()) else WorkoutRecording.read(bytes, entry.file))
+            .copy(name = entry.name).let { it.copy(pumpDisconnected=it.isSwim&&swimPumpDisconnected()) }
     }
     fun swimPumpDisconnected()=context.getSharedPreferences("workout-context",Context.MODE_PRIVATE).getBoolean("swim-disconnected",false)
     fun setSwimPumpDisconnected(value: Boolean) { context.getSharedPreferences("workout-context",Context.MODE_PRIVATE).edit().putBoolean("swim-disconnected",value).apply() }
@@ -52,9 +54,15 @@ class WorkoutStore(private val context: Context) {
         // Archive before decoding, including unsupported FITs. A browser suffix says nothing
         // about the native session; only identical bytes are automatically reused.
         ReportFiles.archiveStravaOriginal(context, originalName, bytes)
+        if (originalName.endsWith(".gz", true)) {
+            val unpacked = StravaArchive.bounded(java.util.zip.GZIPInputStream(bytes.inputStream()), FitWorkoutReader.MAX_BYTES)
+            val filename = originalName.dropLast(3)
+            return import(StravaArchive.Recording(WorkoutRecording.read(unpacked, filename), unpacked, filename))
+        }
         val old = entries()
         val id = Workout.digest(bytes)
         old.firstOrNull { it.id == id }?.let { existing ->
+            if (folder.resolve("${existing.id}.json").isFile || !existing.file.endsWith(".fit")) return existing to false
             val filename=FitWorkoutReader.read(bytes,existing.name).fileName(ZoneId.of(existing.zone))
             if(filename==existing.file)return existing to false
             // Upgrade previously arranged names too, preserving the public URI and original bytes.
@@ -70,21 +78,39 @@ class WorkoutStore(private val context: Context) {
             saveIndex(old.map { if(it.id==id)entry else it })
             return entry to false
         }
-        val workout = FitWorkoutReader.read(bytes, originalName)
+        val workout = WorkoutRecording.read(bytes, originalName)
         val zone = ZoneId.systemDefault()
-        val filename = workout.fileName(zone)
+        val filename = workout.fileName(zone).removeSuffix(".fit") + "." + originalName.substringAfterLast('.', "fit").lowercase()
         folder.mkdirs()
         write(folder.resolve(filename), bytes)
+        write(folder.resolve("${workout.id}.json"), WorkoutJson.encode(workout).toByteArray())
         // MediaStore publishes only after writing. Browser originals remain untouched.
         val uri = runCatching { publish(filename, bytes) }.getOrNull()
-        val entry = Entry(workout.id, workout.name, filename, workout.startMillis, workout.endMillis, zone.id, uri?.toString())
+        val entry = Entry(workout.id, workout.name, filename, workout.startMillis, workout.endMillis, zone.id, uri?.toString(), workout.sport)
         saveIndex(old+entry)
+        entry to true
+    }
+    /** ZIP imports retain private originals and decoded metadata without publishing hundreds of copies. */
+    fun import(recording: StravaArchive.Recording): Pair<Entry, Boolean> = synchronized(lock) {
+        val w = recording.workout
+        require(w.id == Workout.digest(recording.bytes)) { "Activity checksum mismatch." }
+        val old = entries()
+        old.firstOrNull { it.id == w.id }?.let { return it to false }
+        folder.mkdirs()
+        val zone = ZoneId.systemDefault()
+        val ext = recording.filename.substringAfterLast('.', "strava").lowercase()
+        require(ext in setOf("fit", "gpx", "tcx", "strava"))
+        val filename = w.fileName(zone).removeSuffix(".fit") + ".$ext"
+        write(folder.resolve(filename), recording.bytes)
+        write(folder.resolve("${w.id}.json"), WorkoutJson.encode(w).toByteArray())
+        val entry = Entry(w.id, w.name, filename, w.startMillis, w.endMillis, zone.id, null, w.sport)
+        saveIndex(old + entry)
         entry to true
     }
     private fun saveIndex(entries: List<Entry>) {
         val array=JSONArray()
         entries.forEach { e->array.put(JSONObject().put("id",e.id).put("name",e.name).put("file",e.file)
-            .put("start",e.start).put("end",e.end).put("zone",e.zone).put("uri",e.uri.orEmpty())) }
+            .put("start",e.start).put("end",e.end).put("zone",e.zone).put("uri",e.uri.orEmpty()).put("sport", e.sport)) }
         write(index,array.toString().toByteArray())
     }
     private fun publish(name: String, bytes: ByteArray): Uri {

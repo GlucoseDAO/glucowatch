@@ -45,6 +45,13 @@ class RefreshReceiver : BroadcastReceiver() {
             val state = GlucoseRepository(context).refresh()
             updateComplications(context)
             StaleAlertReceiver.schedule(context, state)
+            if (SettingsStore(context).load().accountKey == state.settings.accountKey) runCatching {
+                glucowatch.alerts.AlertNotifications.evaluate(context,
+                    state.settings.accountKey + ":" + state.relayedAccount.orEmpty(),
+                    state.settings.source == DataSource.DEMO || state.relayedSource?.startsWith("Demo") == true, state.readings, state.prediction,
+                    io.github.antonkulaga.glucowatch.R.drawable.ic_launcher,
+                    io.github.antonkulaga.glucowatch.ui.GlucoseAlertsActivity::class.java)
+            }.onFailure { Log.w(TAG, "Could not evaluate glucose warnings", it) }
             scheduleNext(context, state)
             return state
         }

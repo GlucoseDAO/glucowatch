@@ -309,8 +309,16 @@ Source files are kept in `Downloads/GlucoPhone/Raw`, split by provider, and gene
 in `Downloads/GlucoPhone/Exports/PDF` and `Exports/CSV`. PDFs open in the built-in offline viewer.
 **More → Insulin analysis** recomputes dated, conditional ISF/ICR response points from live sensor/pump history
 while open. Estimates are not connected into an hourly schedule and do not change dosing settings.
-**More → Workouts** imports multiple FIT files, edits pace and heart-rate zones, and creates
-separate activity reports or includes activities immediately after their day in the general report.
+**More → Exercise** imports a complete Strava ZIP or individual FIT, GPX and TCX activities,
+including compressed recordings. Search the saved library and open an activity to compare interactive
+pace, heart rate, glucose, bolus and basal charts. Import historical glucose/pump CSVs to compare the
+hour before, during and after exercise. Missing data stays visible. This page is phone-only.
+**More → Workout imports & reports** edits pace and heart-rate zones and creates separate activity
+reports or includes activities immediately after their day in the general report. [Exercise details](docs/workouts.md).
+On either device, **Alarms & notifications** enables optional low, rapid-fall and high glucose warnings
+with editable thresholds and recent warning history. Enable these separately on the phone and watch,
+and allow notifications. Demo data and stale readings do not trigger warnings; Android can delay
+background checks. Warnings never control the pump. [Warning settings](docs/prediction.md#alarms-and-notifications).
 Fill the newest device and its first day in `.env` (`GLUCOWATCH_LATEST_DEVICE`, `GLUCOWATCH_DEVICE_SINCE`)
 or in the YAML import (`latest_device`, `device_since`).
 The file starts on the device day when the interval reaches further back. [Export files](docs/export.md)

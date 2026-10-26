@@ -62,12 +62,14 @@ android {
         applicationId = "io.github.antonkulaga.glucowatch.phone"
         minSdk = 29
         targetSdk = 36
-        versionCode = 17
-        versionName = "0.1.16"
+        versionCode = 18
+        versionName = "0.1.17"
+        testInstrumentationRunner = "io.github.antonkulaga.glucowatch.phone.ExerciseSmokeTest"
     }
 
     buildFeatures { buildConfig = true }
     sourceSets.getByName("main").kotlin.directories.add(file("../onnx-inference").absolutePath)
+    sourceSets.getByName("main").kotlin.directories.add(file("../android-shared").absolutePath)
 
     buildTypes {
         getByName("debug") {

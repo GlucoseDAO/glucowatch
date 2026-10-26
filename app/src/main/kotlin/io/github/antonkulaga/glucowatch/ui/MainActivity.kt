@@ -113,6 +113,10 @@ class MainActivity : Activity() {
         column.addView(check, wrap(6))
         column.addView(history, wrap(6))
         column.addView(graphs, wrap(6))
+        column.addView(Button(this).apply {
+            text = "Alarms & notifications"; Brand.style(this, primary = false)
+            setOnClickListener { startActivity(Intent(this@MainActivity, GlucoseAlertsActivity::class.java)) }
+        }, wrap(6))
         column.addView(settings, wrap(6))
         scroll = ScrollView(this).apply { isVerticalScrollBarEnabled = false; addView(column); attachRotary() }
         setContentView(scroll)

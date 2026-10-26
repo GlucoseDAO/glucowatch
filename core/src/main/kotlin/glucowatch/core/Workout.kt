@@ -34,6 +34,8 @@ data class Workout(
     val lengths: List<WorkoutLength> = emptyList(),
     val excludedSampleCount: Int = 0,
     val pumpDisconnected: Boolean = false,
+    val summaryHeartRateMean: Double? = null,
+    val summaryHeartRateMax: Double? = null,
 ) {
     val isSwim get() = sport == "Swim"
     val usesRunningGap get() = sport in setOf("Run", "Walk", "Hike")

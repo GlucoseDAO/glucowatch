@@ -422,7 +422,9 @@ class MainActivity : Activity() {
     private fun showOverflow(anchor: View) = PopupMenu(this, anchor).apply {
         menu.add(0, MENU_REFRESH, 0, "Refresh now")
         menu.add(0, MENU_EXPORT, 1, "Export data")
-        menu.add(0, MENU_WORKOUT, 2, "Workouts")
+        menu.add(0, MENU_EXERCISE, 2, "Exercise")
+        menu.add(0, MENU_WORKOUT, 3, "Workout imports & reports")
+        menu.add(0, MENU_ALERTS, 4, "Alarms & notifications")
         menu.add(0, MENU_INSULIN_ANALYSIS, 3, "Insulin analysis")
         menu.add(0, MENU_CHECK, 2, "Check prediction")
         menu.add(0, MENU_HISTORY, 3, "Prediction history")
@@ -432,6 +434,8 @@ class MainActivity : Activity() {
             when (item.itemId) {
                 MENU_REFRESH -> scope.launch { render(repository.refresh()) }
                 MENU_EXPORT -> exportData()
+                MENU_EXERCISE -> startActivity(Intent(this@MainActivity, ExerciseActivity::class.java))
+                MENU_ALERTS -> startActivity(Intent(this@MainActivity, GlucoseAlertsActivity::class.java))
                 MENU_INSULIN_ANALYSIS -> showInsulinAnalysis()
                 MENU_WORKOUT -> startActivityForResult(Intent(this@MainActivity, WorkoutImportActivity::class.java), REQUEST_WORKOUT)
                 MENU_CHECK -> checkPrediction()
@@ -898,6 +902,8 @@ class MainActivity : Activity() {
                     ReportFiles.archiveCsv(this@MainActivity, portal, text.toByteArray(Charsets.UTF_8),
                         synthetic = BuildConfig.DEBUG && intent.getBooleanExtra("exportPortalPreview", false), order = order)
                     historyStore.record(portal, text, order, index)
+                    if (!(BuildConfig.DEBUG && intent.getBooleanExtra("exportPortalPreview", false)))
+                        ExerciseHistoryStore(this@MainActivity).save(rows, plan.settings)
                 }
                 if (!validPlan(plan)) return@launch
                 val merged = (previous + rows).distinctBy { it.identity() }.sortedBy { it.timeMillis }
@@ -1806,6 +1812,7 @@ class MainActivity : Activity() {
 
     override fun onStart() {
         super.onStart()
+        PhoneAlertReceiver.schedule(this)
         updateVisibility()
         foregroundRefresh = scope.launch {
             while (isActive) {
@@ -2518,6 +2525,8 @@ class MainActivity : Activity() {
         const val MENU_EXPORT = 6
         const val MENU_WORKOUT = 7
         const val MENU_INSULIN_ANALYSIS = 8
+        const val MENU_EXERCISE = 9
+        const val MENU_ALERTS = 10
         const val MENU_CHECK = 2
         const val MENU_HISTORY = 3
         const val MENU_PRIVACY = 4

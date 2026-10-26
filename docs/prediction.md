@@ -162,3 +162,41 @@ The Model tab has Linear trend and Imported ONNX. Imported ONNX opens a source m
 The other-model page has an address and a separate optional access token. Debug builds initially fill both model token fields from `HF_TOKEN` or `HUGGINGFACE_TOKEN` in `.env`; each field can then be edited independently. **Find ONNX model** lists repositories/files and **Download & import** validates the selected bundle before replacing the previous model. **Import downloaded ONNX file** works without a token. There is one source-menu control per page and one download/import action per file.
 
 Both tokens stay in application-private preferences with backup disabled and are excluded from Android view-state/autofill. Hugging Face authorization is sent only to `huggingface.co`, never to redirected artifact hosts. Neither token nor model bytes are relayed to a watch or included in health exports. Switching back to Linear retains the imported model for later use.
+## Alarms and notifications
+
+**More → Alarms & notifications** on the phone and **Alarms & notifications** on the
+watch enable optional warnings independently on each device. They start off. Allow Android
+notification permission and configure channel sound/vibration in that page. These are
+supplementary warnings; keep the CGM's official alerts enabled.
+
+Both devices use `core/GlucoseAlerts.kt`, with these editable defaults:
+
+- Urgent low: a current reading at or below 54 mg/dL, including when no forecast exists.
+- Falling near low: current glucose at or below 90 mg/dL and a measured fall of at least
+  2 mg/dL/min. The previous reading must be 2 to 7.5 minutes earlier; gaps are excluded.
+  A falling low reading can also warn when the current forecast reaches 54 within 20 minutes.
+- High: a current reading above 220 mg/dL, or a rising observed trend whose current forecast
+  crosses 220 within 20 minutes. The 220 value is a user-requested warning threshold.
+- Repeat interval: 15 minutes, requiring a new reading. An escalation to urgent low can
+  notify sooner. The same reading does not notify repeatedly. Recovery clears the visible
+  warning; account changes reset throttling and the on-device warning history.
+
+Only valid readings up to 10 minutes old are evaluated. Future readings, old forecasts,
+demo data (including demo relayed from a phone), and historical imports cannot trigger
+warnings. Forecast warnings require a forecast beginning just after the latest reading;
+the watch uses the optional forecast already selected in Settings. The phone uses its
+selected model when warnings are enabled. These warnings do not operate the pump.
+
+Low messages ask the user to check glucose and follow their hypo treatment plan, and to
+review active insulin/pump delivery according to their care plan. High messages ask them
+to check glucose, basal and IOB before making changes. An unconditional pump-stop instruction
+is deliberately excluded. Background scheduling, data availability, Android notification
+permission, channel settings and Do Not Disturb affect delivery. The phone arms an inexact
+five-minute alarm and uses a network job for background refresh, and also evaluates new
+Dexcom notifications and foreground/watch-triggered refreshes. Boot, update and reopening
+the phone app rearm the alarm. The watch uses its existing refresh schedule. Warnings are
+local to each device, avoiding duplicate OS mirroring of a phone notification to the watch.
+
+The clinical low categories follow [ADA's 2026 standards](https://doi.org/10.2337/dc26-s006).
+Treatment wording follows [NIDDK's low-glucose guidance](https://www.niddk.nih.gov/health-information/diabetes/overview/preventing-problems/low-blood-glucose-hypoglycemia).
+Android controls [notification channel behavior](https://developer.android.com/develop/ui/views/notifications/channels).

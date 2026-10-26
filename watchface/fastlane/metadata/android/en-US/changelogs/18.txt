@@ -1,0 +1,1 @@
+Version aligned with GlucoWatch and GlucoPhone 0.1.17, build 18. The watch app adds optional configurable glucose warnings; the phone adds Strava ZIP imports and interactive exercise comparisons. Watch face layout and complication order are unchanged.

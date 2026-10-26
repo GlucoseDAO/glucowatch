@@ -1,6 +1,50 @@
 # Workout imports
 
-Use **More → Workouts** on the phone. Pace and heart-rate zones are editable directly on
+Use **More → Exercise** on the phone for the activity library. **Import Strava ZIP**
+opens Android's document picker, including Downloads and connected cloud providers. It
+accepts the complete account export without extracting it first. **Add activity** accepts
+an individual FIT, GPX or TCX recording, including gzip-compressed recordings. Open/Share
+of a ZIP also opens Exercise. No Strava account or network connection is needed to import.
+
+The library combines earlier imports with new activities, supports name/date search and
+sport filters, and displays 40 activities per page. An activity opens an interactive
+comparison with whole-day context, heart rate, pace/speed, glucose, recorded boluses and
+calculated basal on the same clock. Tap to inspect, drag to pan, pinch to zoom and double
+tap to reset. HR and estimated GAP zones and before/during/after summaries follow the
+charts. Missing measurements remain unavailable. Glucose percentages describe observed
+samples, not coverage of gaps. The baseline comparison range is one hour before, the
+activity itself and one hour after.
+
+**Import historical glucose / pump CSV** accepts the existing English Clarity and CareLink
+formats, asking for day/month order when necessary. These account-bound rows persist in
+private `files/exercise-history/` by UTC day. Future CSV imports in the export workflow
+also populate this history. Previously downloaded CSVs can be selected here again. Live
+cache data is joined when present; changing source/account hides history associated with
+the previous configuration. These retrospective imports never enter live alert evaluation.
+
+ZIP limits: 2 GB compressed and 2 GB of expanded activity recordings, 100,000 archive
+entries and 20,000 activities. Each recording remains bounded to 32 MB and 300,000
+observations. Only activity recordings and `activities.csv` are read; photos, videos and
+route files are ignored. Paths are never extracted. XML external entities and DTDs are
+disabled; gzip expansion is bounded. One recording is decoded and saved at a time.
+Exact SHA-256 duplicates are reused, including imports interrupted by closing the page.
+Keep Exercise open until import completes; retrying preserves already-saved activities.
+
+Strava's CSV repeats several column names: the last Distance column is native metres;
+the first is display kilometres. CSV names, sports and summary fields supplement native
+recordings. GPX distances between continuous observations are calculated from coordinates;
+gaps and segment boundaries are not bridged. A recording without timestamped points
+still contributes its CSV summary, with missing traces explicitly unavailable. Zero-duration
+activities are retained without inventing an elapsed interval. Summary-only records cannot
+provide detailed heart-rate or motion comparisons.
+
+ZIP imports keep decompressed native recordings and versioned derived JSON privately in
+`files/workouts/strava/`, indexed alongside earlier FITs. No hundreds-of-files publication
+to Downloads occurs for a bulk import. The selected ZIP stays at its original location;
+the temporary private staging copy is removed when import ends. Removing Downloads copies
+does not remove the private archive; uninstalling the app removes private history.
+
+Use **More → Workout imports & reports** for the existing PDF workflow. Pace and heart-rate zones are editable directly on
 this page, one boundary per field; valid edits save automatically. Existing values are
 preserved. Four HR boundaries define five zones (clear all four to omit HR zones), and
 five min:sec/km pace boundaries define six zones.
@@ -24,7 +68,9 @@ It stops after 24 hours, does not start at boot, and can be cancelled with the l
 The first version accepts one-session FIT activity files up to 32 MB and 300,000
 distinct sample timestamps, with a workout span no longer than seven days. It rejects
 truncated/corrupt files, multi-session files and files without a usable session interval. Summary-only sessions and pool-length-only swim files are accepted; missing observations are shown as unavailable.
-GPX, TCX, externally compressed FIT, bulk ZIPs and multi-session/multisport files remain unsupported and produce a per-file error. FIT compressed timestamp headers are supported, including record definitions that contain the replaced timestamp field.
+The native FIT decoder still rejects multi-session/multisport files; Exercise can retain
+their CSV summary from a Strava ZIP and reports that the detailed recording was unavailable.
+FIT compressed timestamp headers are supported, including record definitions that contain the replaced timestamp field.
 
 Import validates and decodes the original once to find the session interval. It merges
 different native fields at the same timestamp; it does not fill gaps or mix in GPX

@@ -10,6 +10,7 @@
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.VIBRATE" />
     <!-- The optional phone app, over the Bluetooth link Wear OS already has (docs/phone-link.md).
          The watch asks the user ("Nearby devices") when they pair or pick the phone as source. -->
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
@@ -46,6 +47,7 @@
             android:name=".ui.SettingsActivity"
             android:exported="false"
             android:windowSoftInputMode="adjustResize" />
+        <activity android:name=".ui.GlucoseAlertsActivity" android:exported="false" />
 
         <activity
             android:name=".ui.CareLinkSignInActivity"

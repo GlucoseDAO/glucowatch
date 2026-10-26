@@ -54,6 +54,7 @@ data class GlucoseState(
     val relayedSource: String? = null,
     /** The last fetch failures, oldest first, for the connection check. */
     val failures: List<FailureRecord> = emptyList(),
+    val relayedAccount: String? = null,
 ) {
     val latest get() = readings.lastOrNull()
     val forecastMinutes get() = prediction?.points?.lastOrNull()?.let { point ->
@@ -112,6 +113,7 @@ class GlucoseRepository(context: Context) {
             treatments = treatments,
             loop = loop,
             relayedSource = cached(settings, RELAYED_SOURCE).ifEmpty { null }.takeIf { settings.source == DataSource.PHONE },
+            relayedAccount = cached(settings, UPSTREAM).ifEmpty { null }.takeIf { settings.source == DataSource.PHONE },
             failures = NetworkFailure.decode(cache.getString(FAILURES, "").orEmpty()),
         )
     }

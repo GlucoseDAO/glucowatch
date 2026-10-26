@@ -8,5 +8,6 @@ import android.content.Intent
 class BootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         LinkService.update(context)
+        PhoneAlertReceiver.schedule(context)
     }
 }

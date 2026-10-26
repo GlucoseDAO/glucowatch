@@ -243,6 +243,14 @@ class WorkoutImportActivity : Activity() {
     }
     private fun import(uri: Uri) {
         if (busy) return
+        val name = runCatching { contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)?.use {
+            if (it.moveToFirst()) it.getString(0) else null
+        } }.getOrNull().orEmpty()
+        if (name.endsWith(".zip", true)) {
+            startActivity(Intent(this, ExerciseActivity::class.java).setAction(Intent.ACTION_VIEW).setData(uri)
+                .apply { clipData = android.content.ClipData.newRawUri("Strava ZIP", uri) }.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION))
+            finish(); return
+        }
         watch?.cancel(); busy = true; status.text = "Validating and saving FIT…"
         scope.launch {
             try { accepted(withContext(Dispatchers.IO) { store.import(uri) }) }
